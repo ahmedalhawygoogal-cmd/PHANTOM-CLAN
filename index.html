@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>『PHANTOM』HQ | المقر السري للكتيبة</title>
+    <!-- خط القاهرة الرسمي -->
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- 🔒 1. شاشة قفل الأمان ثنائية الخطوات (Security & Identity Gate) -->
+    <div id="security-gate" class="security-gate-overlay">
+        <div class="lock-card">
+            <div class="lock-icon-wrapper">
+                <span class="lock-icon">🔒</span>
+            </div>
+
+            <!-- الخطوة الأولى: رمز الدخول -->
+            <div id="gate-step-1" class="gate-step active">
+                <h2 class="gate-title">بوابة دخول الأعضاء</h2>
+                <p class="gate-subtitle">أدخل رمز الوصول المشفر للدخول إلى المقر</p>
+                <form id="gate-pass-form" onsubmit="return false;">
+                    <div class="input-group">
+                        <input type="password" id="passcode-input" placeholder="أدخل كلمة السر..." maxlength="10" autocomplete="off">
+                        <button type="submit" id="unlock-btn" class="btn-unlock">تأكيد</button>
+                    </div>
+                    <div id="gate-error-msg" class="gate-error-msg"></div>
+                </form>
+            </div>
+
+            <!-- الخطوة الثانية: تسجيل اسم العضو بالكلان -->
+            <div id="gate-step-2" class="gate-step">
+                <h2 class="gate-title">هوية المقاتل</h2>
+                <p class="gate-subtitle">اكتب اسمك داخل اللعبة (مثال: 『PH』 5ĤMƏD) لرصد تواجدك بالموقع</p>
+                <form id="gate-name-form" onsubmit="return false;">
+                    <div class="input-group">
+                        <input type="text" id="username-input" placeholder="اسمك بـ PHANTOM..." maxlength="25" autocomplete="off">
+                        <button type="submit" id="save-name-btn" class="btn-unlock">دخول المقر</button>
+                    </div>
+                    <div id="name-error-msg" class="gate-error-msg"></div>
+                </form>
+            </div>
+
+            <div class="gate-footer-tag">[SECURITY PROTOCOL 887788 ACTIVE]</div>
+        </div>
+    </div>
+
+    <!-- شريط الحالة العسكري العلوي مع شارة الموسم -->
+    <div class="military-status-bar">
+        <div class="status-content">
+            <span class="status-indicator"></span>
+            <span class="status-text">[PHANTOM HQ - LIVE NETWORK]</span>
+            <span id="season-display-badge" class="season-badge">الموسم الأول</span>
+        </div>
+        <div class="status-tag" id="current-user-display">زائر غير مسجل</div>
+    </div>
+
+    <!-- الهيدر العلوي Clean & Muted -->
+    <header class="clean-header">
+        <div class="header-container">
+            <div class="clan-brand" data-target="page-home">
+                <div class="clan-logo-img-wrapper">
+                    <img src="logo.png" alt="PHANTOM Logo" class="clan-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-block';">
+                    <span class="clan-logo-fallback" style="display:none;">🛡️</span>
+                </div>
+                <div class="brand-titles">
+                    <span class="clan-tag">『PH』</span>
+                    <span class="clan-name">PHANTOM</span>
+                </div>
+            </div>
+            <!-- زر فتح لوحة تحكم القيادة -->
+            <button id="admin-panel-trigger" class="header-admin-btn">🛡️ لوحة القيادة</button>
+        </div>
+    </header>
+
+    <!-- المحتوى الرئيسي للموقع -->
+    <main class="main-container">
+
+        <!-- 1. الصفحة الرئيسية (Home Page) -->
+        <section id="page-home" class="page-view active">
+            
+            <!-- الكرت العلوي المدمج (Compact Hero Banner) -->
+            <div class="hero-section compact-hero">
+                <div class="compact-hero-content">
+                    <span class="badge-pill">BLOOD STRIKE OFFICIAL CLAN</span>
+                    <h1 class="hero-title">كتيبة <span class="highlight">『PHANTOM』</span></h1>
+                </div>
+                <p class="hero-subtitle">المقر الرقمي الميداني للنخبة اللاغالبة</p>
+            </div>
+
+            <!-- المربعان التكتيكيان (المتواجدون بالموقع + إجمالي الأعضاء) -->
+            <div class="tactical-widgets-grid">
+                
+                <!-- المربع الأول: متواجدون بالموقع الآن -->
+                <div class="widget-card online-members-widget">
+                    <div class="widget-header">
+                        <div class="widget-title">
+                            <span class="online-pulse-dot">●</span>
+                            <h3>متواجدون بالموقع الآن</h3>
+                        </div>
+                        <span class="widget-badge" id="online-count-badge">0 متصفح</span>
+                    </div>
+                    <div class="widget-body">
+                        <div id="online-members-list" class="online-list"></div>
+                    </div>
+                </div>
+
+                <!-- المربع الثاني: إجمالي أعضاء الكلان -->
+                <div class="widget-card total-members-widget">
+                    <div class="widget-header">
+                        <div class="widget-title">
+                            <span class="widget-icon">👥</span>
+                            <h3>سجل أعضاء الكتيبة</h3>
+                        </div>
+                        <span class="widget-badge cyan" id="total-count-badge">0 عضو</span>
+                    </div>
+                    <div class="widget-body">
+                        <div class="stats-mini-bar">
+                            <div class="stat-box">
+                                <span class="stat-num" id="stat-verified-count">0</span>
+                                <span class="stat-label">موثق بشعار PH</span>
+                            </div>
+                            <div class="stat-box">
+                                <span class="stat-num" id="stat-leaders-count">0</span>
+                                <span class="stat-label">قادة ومؤسسون</span>
+                            </div>
+                        </div>
+                        <div id="roster-preview-list" class="roster-preview-list"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- كروت الوصول السريع -->
+            <div class="quick-summary-grid">
+                <div class="summary-card" data-target="page-schedule">
+                    <div class="summary-icon">📅</div>
+                    <h3>جدول الرومات والتصويت</h3>
+                    <p>مواعيد المواجهات واستطلاعات الرأي الرسمية.</p>
+                </div>
+                <div class="summary-card" data-target="page-rules">
+                    <div class="summary-icon">📜</div>
+                    <h3>الدستور والإنذارات</h3>
+                    <p>لوائح العقوبات ومتابعة الإنذارات الحية.</p>
+                </div>
+                <div class="summary-card" data-target="page-leaderboard">
+                    <div class="summary-icon">🏆</div>
+                    <h3>لوحة الصدارة</h3>
+                    <p>قائمة الأكثر تفاعلاً للموسم الحالي.</p>
+                </div>
+                <div class="summary-card" data-target="page-support">
+                    <div class="summary-icon">💬</div>
+                    <h3>الشات والمحادثات</h3>
+                    <p>غرفة اتصالات الكلان المباشرة والدعم.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. صفحة القوانين والإنذارات الحية (Rules & Yellow Cards) -->
+        <section id="page-rules" class="page-view">
+            <div class="section-header">
+                <h2>📜 الدستور الموحد ونظام الإنذارات</h2>
+                <p>اللوائح العامة لضمان الالتزام والانضباط التكتيكي</p>
+            </div>
+            
+            <!-- سجل الكروت الصفراء النشطة حالياً -->
+            <div class="active-warnings-box">
+                <h3 class="box-sub-title">⚠️ قائمة الكروت الصفراء والإنذارات النشطة</h3>
+                <div id="active-warnings-public-list" class="warnings-grid-list">
+                    <!-- يتم تحميل الكروت الصفراء ديناميكياً هنا -->
+                </div>
+            </div>
+
+            <div class="rules-wrapper">
+                <div class="rules-box main-rules">
+                    <h3>القوانين الأساسية</h3>
+                    <ul id="general-rules-list"></ul>
+                </div>
+                <div class="rules-box clearance-rules">
+                    <h3>نظام العقوبات والإنذارات</h3>
+                    <div id="clearance-system-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. صفحة الأعضاء والقيادة (Roster) -->
+        <section id="page-roster" class="page-view">
+            <div class="section-header">
+                <h2>👑 مجلس القيادة العليا</h2>
+                <p>قادة الكلان المسؤولون عن إدارة الكتائب والعمليات</p>
+            </div>
+            <div id="leadership-grid" class="cards-grid leadership-grid" style="margin-bottom: 40px;"></div>
+
+            <div class="section-header">
+                <h2>👥 سجل المقاتلين المعتمدين</h2>
+                <p>الأعضاء المسجلون بالنظام والمفعلون لشعار 『PH』</p>
+            </div>
+            <div id="roster-grid" class="cards-grid roster-grid"></div>
+        </section>
+
+        <!-- 4. صفحة الرومات واستطلاعات المواعيد (Schedule & Polls) -->
+        <section id="page-schedule" class="page-view">
+            
+            <!-- قسم استطلاع رأي مواعيد الرومات التفاعلي -->
+            <div id="poll-section-wrapper" class="poll-wrapper" style="display: none; margin-bottom: 30px;">
+                <div class="section-header">
+                    <h2>🗳️ استطلاع رأي مواعيد الرومات</h2>
+                    <p>صوّت لتحديد التوقيت المناسب واكسب (+10 نقاط) بصدارتك!</p>
+                </div>
+                <div id="active-poll-card" class="poll-card"></div>
+            </div>
+
+            <div class="section-header">
+                <h2>📅 جدول الرومات والتحديات</h2>
+                <p>مواعيد مواجهات قتال الفرق بتوقيت جمهورية مصر العربية</p>
+            </div>
+            <div id="schedule-grid" class="cards-grid schedule-grid"></div>
+        </section>
+
+        <!-- 5. صفحة لوحة الصدارة المدمجة (Compact Ranked Leaderboard) -->
+        <section id="page-leaderboard" class="page-view">
+            <div class="section-header">
+                <h2>🏆 لوحة صدارة المتفاعلين</h2>
+                <p>ترتيب النخبة الأكثر تفاعلاً - تتصفّر النقاط مع بداية كل موسم جديد</p>
+            </div>
+            <div class="leaderboard-card compact">
+                <div id="leaderboard-list" class="compact-leaderboard-list"></div>
+            </div>
+        </section>
+
+        <!-- 6. صفحة الشات والدعم المركزي (Chat & Support Tab) -->
+        <section id="page-support" class="page-view">
+            <div class="section-header">
+                <h2>💬 غرفة اتصالات الكتيبة والدعم</h2>
+                <p>تواصل مع أعضاء الكلان وانضم للغرف الرسمية</p>
+            </div>
+
+            <!-- قسم الشات التفاعلي بتصميم فقاعات الواتساب -->
+            <div class="chat-section-card">
+                <div class="chat-card-header">
+                    <span class="chat-status-dot">●</span>
+                    <h3>غرفة الدردشة التكتيكية المباشرة</h3>
+                </div>
+                <div id="chat-messages-container" class="chat-messages-feed">
+                    <!-- فقاعات المحادثة تنزل هنا -->
+                </div>
+                <form id="chat-input-form" class="chat-input-area" onsubmit="return false;">
+                    <input type="text" id="chat-message-input" placeholder="اكتب رسالتك هنا..." autocomplete="off" maxlength="300">
+                    <button type="submit" id="send-chat-btn" class="chat-send-btn">إرسال 🚀</button>
+                </form>
+            </div>
+
+            <!-- قنوات التواصل والدعم المباشر -->
+            <div class="section-header" style="margin-top: 30px;">
+                <h2>🎧 غرف الدعم والاتصالات المركزية</h2>
+            </div>
+            <div id="links-grid" class="links-grid"></div>
+        </section>
+
+    </main>
+
+    <!-- 🛠️ لوحة تحكم المؤسسين والأدمن Modal -->
+    <div id="admin-modal" class="admin-modal-overlay">
+        <div class="admin-card">
+            <div class="admin-header">
+                <h3>🛡️ غرفة القيادة العليا للمؤسسين</h3>
+                <button id="close-admin-btn" class="close-modal-btn">✖</button>
+            </div>
+
+            <!-- step 1: رمز الحماية -->
+            <div id="admin-auth-step" class="admin-body">
+                <p style="font-size:0.85rem; color:var(--silver-muted); margin-bottom:12px;">أدخل رمز حماية الأدمن للوصول للإعدادات:</p>
+                <div class="input-group">
+                    <input type="password" id="admin-pass-input" placeholder="رمز الأدمن (990099)...">
+                    <button id="admin-login-btn" class="btn-unlock">دخول</button>
+                </div>
+                <div id="admin-auth-error" class="gate-error-msg"></div>
+            </div>
+
+            <!-- step 2: أدوات لوحة التحكم -->
+            <div id="admin-tools-step" class="admin-body" style="display:none;">
+                
+                <!-- أداة 1: تسجيل حضور الروم (+30 نقطة) -->
+                <div class="admin-tool-box">
+                    <h4>✅ تسجيل حضور الروم (+30 نقطة للعضو)</h4>
+                    <select id="attendance-member-select" class="admin-input"></select>
+                    <button id="mark-attendance-btn" class="admin-action-btn">تسجيل الحضور وإضافة النقاط</button>
+                </div>
+
+                <hr class="admin-divider">
+
+                <!-- أداة 2: إدارة الكروت الصفراء والإنذارات -->
+                <div class="admin-tool-box">
+                    <h4>⚠️ إصدار كرت أصفر / إنذار</h4>
+                    <select id="warning-member-select" class="admin-input"></select>
+                    <select id="warning-type-select" class="admin-input">
+                        <option value="شتيمة أو إهانة">شتيمة أو إهانة</option>
+                        <option value="عدم احترام">عدم احترام</option>
+                        <option value="عدم التزام">عدم التزام</option>
+                    </select>
+                    <input type="text" id="warning-reason-input" class="admin-input" placeholder="سبب الإنذار والتفاصيل...">
+                    <button id="issue-warning-btn" class="admin-action-btn warning-btn">إصدار الإنذار فوراً ⚠️</button>
+
+                    <h5 style="margin-top: 12px; font-size:0.8rem; color:var(--yellow-rank);">إدارة الإنذارات الحالية:</h5>
+                    <div id="admin-warnings-manage-list" class="admin-mini-list"></div>
+                </div>
+
+                <hr class="admin-divider">
+
+                <!-- أداة 3: إنشاء استطلاع مواعيد -->
+                <div class="admin-tool-box">
+                    <h4>🗳️ إنشاء استطلاع مواعيد الرومات</h4>
+                    <input type="text" id="poll-question-input" class="admin-input" placeholder="عنوان الاستطلاع (مثال: موعد روم الجمعة؟)">
+                    <input type="text" id="poll-options-input" class="admin-input" placeholder="الخيارات تفصلها فاصلة (مثال: 8 مساءً, 9 مساءً, 10 مساءً)">
+                    <button id="create-poll-btn" class="admin-action-btn">نشر الاستطلاع بالرومات</button>
+                </div>
+
+                <hr class="admin-divider">
+
+                <!-- أداة 4: إضافة عضو جديد -->
+                <div class="admin-tool-box">
+                    <h4>👥 إضافة عضو جديد للسجل (Roster)</h4>
+                    <input type="text" id="new-member-name" class="admin-input" placeholder="اسم العضو (مثال: 『PH』 GHOST)">
+                    <input type="text" id="new-member-rank" class="admin-input" placeholder="الرتبة (مثال: مقاتل تكتيكي)">
+                    <select id="new-member-verified" class="admin-input">
+                        <option value="موثق">الشعار مفعل (موثق)</option>
+                        <option value="غير موثق">الشعار غير مفعل</option>
+                    </select>
+                    <button id="add-member-btn" class="admin-action-btn">حفظ وإضافة العضو</button>
+                </div>
+
+                <!-- أداة 5: قسم الطرد المغلق (خاص بالقائد ونائبه فقط) -->
+                <div id="restricted-kick-section" class="admin-tool-box restricted-box" style="display: none;">
+                    <hr class="admin-divider">
+                    <h4 style="color: var(--red-alert);">🛑 قسم الطرد والقيادة العليا (حسّاس)</h4>
+                    <p style="font-size:0.72rem; color:var(--silver-muted); margin-bottom:8px;">متاح حصرياً للقائد 『PH』 BLACK ونائبه ƏPH 5○M○D</p>
+                    <select id="kick-member-select" class="admin-input"></select>
+                    <button id="kick-member-btn" class="admin-action-btn danger-btn">استبعاد وطرد العضو من السجل 🛑</button>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- الشريط السفلي المثبت (Floating Bottom Navigation Dock) -->
+    <nav class="bottom-dock">
+        <button class="dock-item active" data-target="page-home">
+            <span class="dock-icon">🏠</span>
+            <span class="dock-label">الرئيسية</span>
+        </button>
+        <button class="dock-item" data-target="page-rules">
+            <span class="dock-icon">📜</span>
+            <span class="dock-label">القوانين</span>
+        </button>
+        <button class="dock-item" data-target="page-roster">
+            <span class="dock-icon">👥</span>
+            <span class="dock-label">الأعضاء</span>
+        </button>
+        <button class="dock-item" data-target="page-schedule">
+            <span class="dock-icon">📅</span>
+            <span class="dock-label">الرومات</span>
+        </button>
+        <button class="dock-item" data-target="page-leaderboard">
+            <span class="dock-icon">🏆</span>
+            <span class="dock-label">الصدارة</span>
+        </button>
+        <button class="dock-item" data-target="page-support">
+            <span class="dock-icon">💬</span>
+            <span class="dock-label">الدعم</span>
+        </button>
+    </nav>
+
+    <!-- الفوتر -->
+    <footer class="main-footer">
+        <div class="footer-content">
+            <p>جميع الحقوق محفوظة © 2026 المقر الرسمي لكيلان <strong>『PHANTOM』</strong></p>
+            <p class="footer-sub">[CYBER DEFENSE SYSTEM ENGAGED]</p>
+        </div>
+    </footer>
+
+    <!-- تحميل البرمجيات والبيانات -->
+    <script src="data.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
