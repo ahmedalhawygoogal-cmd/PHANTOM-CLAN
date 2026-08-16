@@ -1,9 +1,9 @@
 /* ========================================================
    PHANTOM HQ - SERVICE WORKER
-   PWA • Offline • Cache • Auto Update
+   PWA • Offline • Cache • Auto Update (v4)
    ======================================================== */
 
-const CACHE_NAME = "phantom-hq-v3";
+const CACHE_NAME = "phantom-hq-v4";
 
 /* ========================================================
    📦 CORE FILES
@@ -67,10 +67,17 @@ self.addEventListener("fetch", (event) => {
     const url = new URL(request.url);
 
     /*
-     * 1. استثناء طلبات API والطلبات غير التابعة لـ GET
+     * 1. استثناء طلبات API (مثل Supabase) وطلبات POST/PUT/DELETE
      * يجب أن تمر مباشرة للشبكة بدون تخزين مؤقت
      */
-    if (request.method !== "GET" || url.pathname.startsWith("/api/")) {
+    if (request.method !== "GET") {
+        // لا نتعامل مع الطلبات غير GET (POST, PUT, DELETE) في الكاش
+        return;
+    }
+
+    // استثناء أي طلب يبدأ بـ /api/ أو يحتوي على supabase.co
+    if (url.pathname.startsWith("/api/") || url.hostname.includes("supabase.co")) {
+        // يمر مباشرة للشبكة (لا نخزن)
         return;
     }
 
