@@ -2,24 +2,17 @@
   "id": "./",
   "name": "PHANTOM HQ",
   "short_name": "PHANTOM",
-  "description": "منصة القيادة والإدارة التكتيكية لكتيبة PHANTOM 『PH』",
+  "description": "منصة القيادة والإدارة التكتيكية لكتيبة PHANTOM 『PH』 - شات، صدارة، استطلاعات، ورسائل خاصة",
   "lang": "ar",
   "dir": "rtl",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "display_override": [
-    "standalone",
-    "minimal-ui"
-  ],
+  "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait",
   "background_color": "#0a0d14",
   "theme_color": "#00f2fe",
-  "categories": [
-    "games",
-    "social",
-    "utilities"
-  ],
+  "categories": ["games", "social", "utilities"],
   "icons": [
     {
       "src": "./icons/icon-192.png",
@@ -40,24 +33,35 @@
       "short_name": "الشات",
       "description": "الحديث المباشر مع أعضاء PHANTOM",
       "url": "./index.html#chat",
-      "icons": [
-        {
-          "src": "./icons/icon-192.png",
-          "sizes": "192x192"
-        }
-      ]
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
     },
     {
       "name": "لوحة الصدارة",
       "short_name": "النقاط",
       "description": "عرض ترتيب النقاط والأعضاء",
       "url": "./index.html#leaderboard",
-      "icons": [
-        {
-          "src": "./icons/icon-192.png",
-          "sizes": "192x192"
-        }
-      ]
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "الرسائل الخاصة",
+      "short_name": "الرسائل",
+      "description": "صندوق رسائلك الخاصة",
+      "url": "./index.html#private",
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "استطلاع الكلان",
+      "short_name": "استطلاع",
+      "description": "التصويت في الاستطلاعات النشطة",
+      "url": "./index.html#poll",
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "القوانين والعقوبات",
+      "short_name": "القوانين",
+      "description": "عرض قوانين الكلان والإنذارات",
+      "url": "./index.html#rules",
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }
