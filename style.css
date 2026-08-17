@@ -1,6 +1,6 @@
 /* =========================================================
    PHANTOM HQ
-   STYLE SYSTEM v2.2 (FULLY UPDATED FOR v6.0)
+   STYLE SYSTEM v2.3 (Feature Update)
    Cyber Dark / Cyan / Responsive / Smooth Animations
    ========================================================= */
 
@@ -961,7 +961,7 @@ input:focus, select:focus, textarea:focus {
 .leaderboard-card.rank-empty .points-badge { border-color: rgba(255,255,255,0.1); color: var(--muted); }
 
 /* =========================
-   21. CHAT (WHATSAPP STYLE)
+   21. CHAT (WHATSAPP STYLE + NOTES STYLE)
    ========================= */
 .chat-wrapper-card {
     height: 480px;
@@ -1000,17 +1000,35 @@ input:focus, select:focus, textarea:focus {
     from { opacity: 0; transform: scale(0.95) translateY(8px); }
     to { opacity: 1; transform: scale(1) translateY(0); }
 }
-.chat-bubble.other {
-    align-self: flex-start;
-    background: #202c33;
+/* تنسيق الرسائل بنمط "Notes" (خلفية بسيطة، خطوط مريحة) */
+.chat-bubble.note-style {
+    background: #1a222a;
+    border-radius: 12px;
+    padding: 10px 14px;
     color: #e9edef;
-    border-radius: 8px 8px 8px 0px;
+    border: 1px solid rgba(255,255,255,0.05);
+    font-family: "Cairo", sans-serif;
+    line-height: 1.6;
 }
-.chat-bubble.me {
-    align-self: flex-end;
+.chat-bubble.note-style.me {
     background: #005c4b;
-    color: #e9edef;
-    border-radius: 8px 8px 0px 8px;
+    border-color: rgba(0, 92, 75, 0.5);
+}
+.chat-bubble.note-style.other {
+    background: #202c33;
+}
+.chat-bubble.note-style small {
+    font-size: 0.75rem;
+    font-weight: 600;
+    display: block;
+    margin-bottom: 4px;
+}
+.chat-bubble.note-style .message-time {
+    font-size: 0.6rem;
+    color: rgba(241,245,249,0.5);
+    text-align: left;
+    margin-top: 6px;
+    display: block;
 }
 .chat-bubble .sender-name {
     display: flex;
@@ -1854,4 +1872,341 @@ input:focus, select:focus, textarea:focus {
 /* نافذة الرسائل الخاصة (تم إنشاؤها بواسطة JS، لكن نضمن تنسيقها) */
 .private-msg-modal {
     /* سيتم تطبيق الأنماط عبر JS باستخدام الكلاسات الموجودة */
+}
+
+/* =========================
+   48. CHAT ONLINE COUNTER (جديد)
+   ========================= */
+#chat-online-counter {
+    font-size: 0.7rem;
+    color: var(--silver-muted, #aaa);
+    display: inline-block;
+    margin-right: 8px;
+}
+
+/* =========================
+   49. CLIPS PAGE (جديد)
+   ========================= */
+#page-clips .page-header-box {
+    margin-bottom: 20px;
+}
+#clips-container {
+    padding: 10px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+#clips-container video {
+    width: 100%;
+    max-width: 600px;
+    border-radius: 12px;
+    background: #000;
+    display: block;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+#clips-container .clips-actions {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin-top: 12px;
+}
+#clips-container .clips-actions button {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    font-weight: 900;
+    cursor: pointer;
+    transition: var(--transition);
+}
+#clips-container .clips-actions button:hover {
+    transform: scale(1.05);
+}
+/* زر الإعجاب */
+#like-clip-btn {
+    background: var(--cyan-soft);
+    color: var(--cyan);
+    border: 1px solid var(--cyan);
+}
+#like-clip-btn:hover {
+    background: var(--cyan);
+    color: #000;
+}
+/* زر التعليقات */
+#open-comments-btn {
+    background: rgba(255,255,255,0.05);
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+#open-comments-btn:hover {
+    background: rgba(255,255,255,0.1);
+}
+/* زر تغيير الفيديو (للمؤسسين) */
+#change-clip-btn {
+    background: rgba(250,204,21,0.1);
+    color: var(--yellow);
+    border: 1px solid rgba(250,204,21,0.5);
+}
+#change-clip-btn:hover {
+    background: rgba(250,204,21,0.2);
+}
+
+/* =========================
+   50. CLIPS COMMENTS BOTTOM SHEET (جديد)
+   ========================= */
+#comments-bottom-sheet {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    max-height: 70vh;
+    background: rgba(16,23,34,0.98);
+    border-radius: 16px 16px 0 0;
+    border: 1px solid var(--border);
+    box-shadow: 0 -10px 40px rgba(0,0,0,0.8);
+    z-index: 99999;
+    transform: translateY(100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    direction: rtl;
+}
+#comments-bottom-sheet.active {
+    transform: translateY(0);
+}
+#comments-bottom-sheet .sheet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+}
+#comments-bottom-sheet .sheet-header h3 {
+    color: #fff;
+    margin: 0;
+}
+#comments-bottom-sheet .sheet-header button {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+#comments-list {
+    flex: 1;
+    overflow-y: auto;
+    margin-bottom: 15px;
+    padding: 0 5px;
+}
+#comments-list .comment-item {
+    margin-bottom: 10px;
+    padding: 10px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 8px;
+    border-right: 2px solid var(--gold-main);
+}
+#comments-list .comment-item strong {
+    color: var(--gold-main);
+}
+#comments-list .comment-item span {
+    font-size: 0.7rem;
+    color: var(--silver-muted);
+    margin-right: 8px;
+}
+#comments-list .comment-item div {
+    margin-top: 4px;
+    color: #fff;
+}
+#comments-bottom-sheet .comment-input-area {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+}
+#comments-bottom-sheet .comment-input-area input {
+    flex: 1;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.05);
+    color: #fff;
+}
+#comments-bottom-sheet .comment-input-area button {
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: none;
+    font-weight: 900;
+    cursor: pointer;
+    transition: var(--transition);
+    background: var(--cyan);
+    color: #000;
+}
+#comments-bottom-sheet .comment-input-area button:disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+/* =========================
+   51. REJOIN & BANNED SCREENS (جديد)
+   ========================= */
+#gate-rejoin-area {
+    display: none;
+    margin-top: 15px;
+    text-align: center;
+}
+#gate-rejoin-area .banned-alert {
+    background: rgba(255,0,0,0.2);
+    padding: 20px;
+    border-radius: 8px;
+    border: 2px solid var(--red);
+    text-align: center;
+}
+#gate-rejoin-area .banned-alert h2 {
+    color: var(--red);
+    font-size: 2rem;
+}
+#gate-rejoin-area .banned-alert p {
+    color: #fff;
+    font-weight: bold;
+    font-size: 1.2rem;
+}
+#gate-rejoin-area .rejoin-form {
+    background: rgba(255,77,77,0.1);
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid var(--red);
+}
+#gate-rejoin-area .rejoin-form p {
+    color: var(--red);
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+#gate-rejoin-area .rejoin-form input {
+    width: 100%;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.05);
+    color: #fff;
+    margin-bottom: 8px;
+}
+#gate-rejoin-area .rejoin-form button {
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    background: var(--yellow);
+    color: #000;
+    font-weight: 900;
+    border: none;
+    transition: var(--transition);
+}
+#gate-rejoin-area .rejoin-form button:hover {
+    transform: scale(1.05);
+}
+#gate-rejoin-area .pending-msg {
+    background: rgba(212,175,55,0.1);
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid var(--gold-main);
+    text-align: center;
+}
+#gate-rejoin-area .pending-msg p {
+    color: var(--gold-main);
+    font-weight: bold;
+}
+
+/* =========================
+   52. ID DISPLAY AREA (جديد)
+   ========================= */
+#gate-id-area {
+    display: none;
+    margin-top: 15px;
+    text-align: center;
+}
+#gate-id-area .id-box {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+}
+#gate-id-area .id-box .id-display {
+    background: rgba(255,255,255,0.05);
+    padding: 10px 15px;
+    border-radius: 8px;
+    border: 1px solid var(--gold-main);
+}
+#gate-id-area .id-box .id-display span {
+    font-size: 0.8rem;
+    color: var(--silver-muted);
+}
+#gate-id-area .id-box .id-display strong {
+    color: #fff;
+    display: block;
+    font-size: 1.1rem;
+    margin-top: 4px;
+}
+#gate-id-area .id-box #copy-id-btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    background: var(--cyan);
+    color: #000;
+    font-weight: 900;
+    border: none;
+    transition: var(--transition);
+}
+#gate-id-area .id-box #copy-id-btn:hover {
+    transform: scale(1.05);
+}
+#gate-id-area .id-box #enter-site-btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    background: var(--green);
+    color: #000;
+    font-weight: 900;
+    border: none;
+    opacity: 0.5;
+    pointer-events: none;
+    transition: var(--transition);
+}
+#gate-id-area .id-box #enter-site-btn.active {
+    opacity: 1;
+    pointer-events: auto;
+}
+#gate-id-area .id-box #enter-site-btn.active:hover {
+    transform: scale(1.05);
+}
+
+/* =========================
+   53. COMPLAINTS NOTIFICATIONS (جديد)
+   ========================= */
+#complaints-notifications-list .admin-mini-item {
+    background: rgba(239,68,68,0.05);
+    border-right: 3px solid var(--red);
+}
+#complaints-notifications-list .admin-mini-item:hover {
+    background: rgba(239,68,68,0.1);
+}
+
+/* =========================
+   54. VOICE CALL BUTTON (جديد)
+   ========================= */
+.icon-btn-call {
+    transition: var(--transition);
+    background: transparent;
+    border: none;
+    color: var(--cyan);
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 8px;
+}
+.icon-btn-call:hover {
+    transform: scale(1.1);
+    color: var(--green-online) !important;
+    background: rgba(0,242,254,0.1);
    }
