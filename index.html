@@ -47,7 +47,11 @@
                 <div id="name-error-msg" class="gate-error"></div>
             </div>
 
-            <!-- المرحلة الثالثة: مستخدم محفوظ -->
+            <!-- المرحلة الثالثة: مناطق ديناميكية (طلب الرجوع + ID) -->
+            <div id="gate-rejoin-area" style="display:none; margin-top:15px; text-align:center;"></div>
+            <div id="gate-id-area" style="display:none; margin-top:15px; text-align:center;"></div>
+
+            <!-- المرحلة الرابعة: مستخدم محفوظ -->
             <div id="gate-step-returning" class="gate-step">
                 <h3>مرحبًا بعودتك 👋</h3>
                 <p>تم التعرف على هويتك المحفوظة.</p>
@@ -214,8 +218,13 @@
                     <div class="wa-avatar">『PH』</div>
                     <div class="wa-header-info">
                         <h3>شات كلان PHANTOM</h3>
-                        <span class="wa-status-text">متصل الآن</span>
+                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <span class="wa-status-text">متصل الآن</span>
+                            <span id="chat-online-counter" style="font-size:0.7rem; color:var(--silver-muted);">0 متصلين حالياً</span>
+                        </div>
                     </div>
+                    <!-- زر المكالمات الصوتية -->
+                    <button id="voice-call-btn" class="icon-btn-call" type="button" aria-label="مكالمة صوتية" style="background:transparent; border:none; color:var(--cyan); font-size:1.2rem; cursor:pointer; margin-right:auto;">📞</button>
                 </div>
 
                 <div class="chat-wrapper-card whatsapp-style-card">
@@ -240,6 +249,17 @@
                     </form>
                 </div>
             </div>
+        </section>
+
+        <!-- ==============================================
+             🎬 CLIPS (أفضل فيديو في الأسبوع)
+        =============================================== -->
+        <section id="page-clips" class="page-view">
+            <div class="page-header-box">
+                <h2>🎬 Clips</h2>
+                <p>أفضل فيديو في الأسبوع من اختيار المؤسسين.</p>
+            </div>
+            <div id="clips-container" style="padding:10px 0;"></div>
         </section>
 
         <!-- ==============================================
@@ -316,6 +336,14 @@
                             <span id="founder-alert-count" class="points-tag">0</span>
                         </div>
                         <div id="founder-notifications-list" class="admin-mini-list"></div>
+                    </div>
+
+                    <!-- 📩 COMPLAINTS NOTIFICATIONS (جديد) -->
+                    <div id="complaints-notifications-card" class="admin-tool-card">
+                        <h4>📩 إشعارات الشكاوي</h4>
+                        <div id="complaints-notifications-list" class="admin-mini-list">
+                            <span style="font-size:0.8rem; color:var(--silver-muted);">لا توجد شكاوى جديدة.</span>
+                        </div>
                     </div>
 
                     <!-- ⚔️ CREATE & CANCEL EVENT -->
@@ -402,11 +430,11 @@
                         <div id="poll-admin-status" class="admin-mini-list"></div>
                     </div>
 
-                    <!-- 👤 ADD MEMBER -->
+                    <!-- 👤 ADD MEMBER (تم استبدال الرتبة بـ ID) -->
                     <div class="admin-tool-card">
                         <h4>👤 إضافة عضو</h4>
+                        <input id="new-member-id" type="text" placeholder="الـ ID الخاص بالعضو" maxlength="50" style="margin-bottom:6px;">
                         <input id="new-member-name" type="text" placeholder="اسم العضو" maxlength="40">
-                        <input id="new-member-rank" type="text" placeholder="الرتبة" maxlength="40">
                         <select id="new-member-verified">
                             <option value="موثق">موثق</option>
                             <option value="غير موثق">غير موثق</option>
@@ -479,6 +507,10 @@
             <span class="dock-icon">💬</span>
             <span class="dock-label">الشات</span>
         </a>
+        <a href="#" class="dock-item" data-target="page-clips">
+            <span class="dock-icon">🎬</span>
+            <span class="dock-label">Clips</span>
+        </a>
         <a href="#" class="dock-item" data-target="page-rules">
             <span class="dock-icon">📜</span>
             <span class="dock-label">القوانين</span>
@@ -494,6 +526,10 @@
 
     <!-- 2. ملف البيانات الثابتة -->
     <script src="data.js"></script>
+
+    <!-- ✨ إضافة مكتبة Firebase للإشعارات هنا -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 
     <!-- 3. ملف السكريبت الرئيسي -->
     <script src="script.js"></script>
@@ -643,8 +679,17 @@
             color: var(--red);
             margin-right: 6px;
         }
+
+        /* زر المكالمة الصوتية */
+        .icon-btn-call {
+            transition: var(--transition);
+        }
+        .icon-btn-call:hover {
+            transform: scale(1.1);
+            color: var(--green-online) !important;
+        }
     </style>
 
 </body>
 
-    </html>
+                            </html>
