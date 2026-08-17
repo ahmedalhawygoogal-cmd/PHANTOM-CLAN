@@ -1,9 +1,13 @@
 /* ========================================================
    PHANTOM HQ - SERVICE WORKER
-   PWA • Offline • Cache • Auto Update (v4)
+   PWA • Offline • Cache • Auto Update • Push Notifications (v5)
    ======================================================== */
 
-const CACHE_NAME = "phantom-hq-v4";
+// --- استيراد مكتبات Firebase للإشعارات ---
+importScripts("https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js");
+importScripts("https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js");
+
+const CACHE_NAME = "phantom-hq-v5";
 
 /* ========================================================
    📦 CORE FILES
@@ -14,7 +18,9 @@ const CORE_ASSETS = [
     "./style.css",
     "./script.js",
     "./data.js",
-    "./manifest.json"
+    "./manifest.json",
+    "./icon-192.png",
+    "./icon-512.png"
 ];
 
 /* ========================================================
@@ -66,25 +72,14 @@ self.addEventListener("fetch", (event) => {
     const request = event.request;
     const url = new URL(request.url);
 
-    /*
-     * 1. استثناء طلبات API (مثل Supabase) وطلبات POST/PUT/DELETE
-     * يجب أن تمر مباشرة للشبكة بدون تخزين مؤقت
-     */
     if (request.method !== "GET") {
-        // لا نتعامل مع الطلبات غير GET (POST, PUT, DELETE) في الكاش
         return;
     }
 
-    // استثناء أي طلب يبدأ بـ /api/ أو يحتوي على supabase.co
     if (url.pathname.startsWith("/api/") || url.hostname.includes("supabase.co")) {
-        // يمر مباشرة للشبكة (لا نخزن)
         return;
     }
 
-    /*
-     * 2. صفحات التنقل (HTML / Navigation)
-     * Network First -> Cache Fallback
-     */
     if (request.mode === "navigate") {
         event.respondWith(
             fetch(request)
@@ -123,14 +118,9 @@ self.addEventListener("fetch", (event) => {
         return;
     }
 
-    /*
-     * 3. الملفات الثابتة (Static Assets)
-     * Cache First + Background Network Revalidate
-     */
     event.respondWith(
         caches.match(request).then((cachedResponse) => {
             if (cachedResponse) {
-                // تحديث النسخة في الخلفية
                 fetch(request)
                     .then((networkResponse) => {
                         if (networkResponse && networkResponse.ok) {
@@ -145,7 +135,6 @@ self.addEventListener("fetch", (event) => {
                 return cachedResponse;
             }
 
-            // إذا لم تكن موجودة في الكاش
             return fetch(request)
                 .then((networkResponse) => {
                     if (networkResponse && networkResponse.ok) {
@@ -162,6 +151,102 @@ self.addEventListener("fetch", (event) => {
                         statusText: "Offline"
                     });
                 });
+        })
+    );
+});
+
+/* ========================================================
+   🔔 FIREBASE BACKGROUND MESSAGING (جديد - مهم جداً)
+   ======================================================== */
+// تهيئة Firebase داخل الـ Service Worker
+firebase.initializeApp({
+    apiKey: "AIzaSyB9BLwWu9Rwrxb8YTt2d9piYzpJSWUNJfs",
+    authDomain: "phantom-eb05d.firebaseapp.com",
+    projectId: "phantom-eb05d",
+    storageBucket: "phantom-eb05d.firebasestorage.app",
+    messagingSenderId: "140970616071",
+    appId: "1:140970616071:web:8d30ef892b5b033ba711a2"
+});
+
+const messaging = firebase.messaging();
+
+// استقبال الإشعارات عندما يكون التطبيق في الخلفية (مقفول)
+messaging.onBackgroundMessage((payload) => {
+    console.log('📩 [SW] إشعار خلفية وصل:', payload);
+    
+    const notificationTitle = payload.notification.title || "PHANTOM HQ";
+    const notificationOptions = {
+        body: payload.notification.body || "لديك إشعار جديد!",
+        icon: "./icon-192.png",
+        badge: "./icon-192.png",
+        vibrate: [200, 100, 200],
+        data: {
+            url: payload.data?.url || "./index.html"
+        }
+    };
+
+    self.registration.showNotification(notificationTitle, notificationOptions);
+});
+
+/* ========================================================
+   👆 PUSH EVENT (للتأكد من عمل الإشعارات مع كودك القديم)
+   ======================================================== */
+self.addEventListener("push", function(event) {
+    let data = {};
+    if (event.data) {
+        try {
+            data = event.data.json();
+        } catch (e) {
+            data = { title: event.data.text() };
+        }
+    }
+
+    const title = data.title || "PHANTOM HQ";
+    const body = data.body || "لديك إشعار جديد!";
+    const icon = data.icon || "./icon-192.png";
+    const badge = data.badge || "./icon-192.png";
+    const tag = data.tag || "phantom-notification";
+    const url = data.url || "./index.html";
+
+    const options = {
+        body: body,
+        icon: icon,
+        badge: badge,
+        tag: tag,
+        vibrate: [200, 100, 200],
+        data: {
+            url: url,
+            timestamp: Date.now()
+        }
+    };
+
+    event.waitUntil(
+        self.registration.showNotification(title, options)
+    );
+});
+
+/* ========================================================
+   👆 NOTIFICATION CLICK
+   ======================================================== */
+self.addEventListener("notificationclick", function(event) {
+    event.notification.close();
+
+    const urlToOpen = event.notification.data.url || "./index.html";
+
+    event.waitUntil(
+        clients.matchAll({
+            type: "window",
+            includeUncontrolled: true
+        }).then((windowClients) => {
+            for (let i = 0; i < windowClients.length; i++) {
+                const client = windowClients[i];
+                if (client.url === urlToOpen && "focus" in client) {
+                    return client.focus();
+                }
+            }
+            if (clients.openWindow) {
+                return clients.openWindow(urlToOpen);
+            }
         })
     );
 });
