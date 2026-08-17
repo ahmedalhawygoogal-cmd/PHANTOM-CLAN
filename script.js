@@ -1,8 +1,8 @@
 /* ========================================================
-   PHANTOM HQ - CORE SYSTEM (v6.4 - Final Fix)
+   PHANTOM HQ - CORE SYSTEM (v6.5 - Feature Update)
    script.js
-   - إزالة جميع مراجع PHANTOM_API (إصلاح خطأ undefined).
-   - إصلاح خطأ إرسال id نصي (bigint) في الشات.
+   - إضافة نظام ID الفريد، الطرد/الرجوع، عداد المتصلين، فلتر كلمات
+   - تجهيز لدعم الإشعارات، المكالمات، والفيديو (Clips)
    ======================================================== */
 
 "use strict";
@@ -150,6 +150,73 @@ function normalizeName(name) {
         .trim();
 }
 
+// UPDATE: دالة توليد ID فريد (نقطة 5)
+function generateUniqueId() {
+    return 'PH_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 9);
+}
+
+// UPDATE: طلب إذن الإشعارات (نقطة 7)
+function requestNotificationPermission() {
+    if (!("Notification" in window)) {
+        console.warn("هذا المتصفح لا يدعم الإشعارات.");
+        return;
+    }
+    if (Notification.permission === "granted") return;
+    if (Notification.permission !== "denied") {
+        Notification.requestPermission().then(permission => {
+            if (permission === "granted") {
+                console.log("✅ تم تفعيل الإشعارات.");
+            }
+        });
+    }
+}
+
+// UPDATE: دالة تهيئة Push Notifications (تم تفعيلها الآن بمفاتيحك)
+function setupPushNotifications() {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        console.warn("🔔 الإشعارات غير مدعومة في هذا المتصفح.");
+        return;
+    }
+
+    // ضع مفاتيحك هنا (اللي خدتها من موقع Firebase)
+    const firebaseConfig = {
+        apiKey: "AIzaSyB9BLwWu9Rwrxb8YTt2d9piYzpJSWUNJfs",
+        authDomain: "phantom-eb05d.firebaseapp.com",
+        projectId: "phantom-eb05d",
+        storageBucket: "phantom-eb05d.firebasestorage.app",
+        messagingSenderId: "140970616071",
+        appId: "1:140970616071:web:8d30ef892b5b033ba711a2"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const messaging = firebase.messaging();
+
+    Notification.requestPermission().then((permission) => {
+        if (permission === "granted") {
+            console.log("✅ إذن الإشعارات تم منحه.");
+            
+            messaging.getToken({ vapidKey: "BFN_XhhCe98hG52WSgz2SzwcBjlQro0fzrF77lJ9vQXfB2HC92DMsxpn3a96CI1TAi3Lcpx2eS1FmdZb5UUeDYs" })
+                .then((currentToken) => {
+                    if (currentToken) {
+                        console.log("✅ Token الجهاز (احفظه للاختبار):", currentToken);
+                        localStorage.setItem("phantom_push_token", currentToken);
+                    } else {
+                        console.warn("⚠️ لم يتم الحصول على Token.");
+                    }
+                }).catch((err) => {
+                    console.error("❌ خطأ في الحصول على Token:", err);
+                });
+        } else {
+            console.warn("⚠️ تم رفض إذن الإشعارات.");
+        }
+    });
+
+    messaging.onMessage((payload) => {
+        console.log("📩 إشعار أثناء فتح التطبيق:", payload);
+        showToast(payload.notification.body || "إشعار جديد", "info");
+    });
+}
+
 /* ========================================================
    2. البيانات الأساسية
    ======================================================== */
@@ -168,6 +235,42 @@ function getBasicData() {
         rooms: [],
         rules: { general: [], penalties: [], clearance: [] }
     };
+}
+
+// UPDATE: دوال مساعدة لنظام الطرد والرجوع (نقطة 4)
+function getBannedUsers() {
+    return getStorage("phantom_banned_users", {});
+}
+
+function setBannedUsers(data) {
+    setStorage("phantom_banned_users", data);
+}
+
+function getRejoinRequests() {
+    return getStorage("phantom_rejoin_requests", []);
+}
+
+function setRejoinRequests(data) {
+    setStorage("phantom_rejoin_requests", data);
+}
+
+// UPDATE: دوال مساعدة لنظام النقاط والتصفير
+function getLocalPoints() {
+    return getStorage("phantom_user_points", {});
+}
+
+function setLocalPoints(points) {
+    setStorage("phantom_user_points", points);
+}
+
+function resetSeasonPoints() {
+    setLocalPoints({});
+    // تصفير نقاط الصدارة في السيرفر أيضًا
+    if (supabaseClient) {
+        supabaseClient.from('leaderboard').delete().neq('id', 0).then(() => {
+            console.log("✅ تم تصفير نقاط الموسم في السيرفر.");
+        }).catch(err => console.warn("⚠️ فشل تصفير نقاط الموسم في السيرفر:", err));
+    }
 }
 
 /* ========================================================
@@ -419,7 +522,10 @@ const PHANTOM_MEMORY = {
     excusesKey: "phantom_excuses",
     attendanceRecordsKey: "phantom_attendance_records",
     nameChangeRequestsKey: "phantom_name_change_requests",
-    privateMessagesKey: "phantom_private_messages"
+    privateMessagesKey: "phantom_private_messages",
+    // UPDATE: مفاتيح جديدة
+    clipsKey: "phantom_clips_data",
+    commentsKey: "phantom_clips_comments"
 };
 
 /* ========================================================
@@ -442,6 +548,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     setupExcuseSystem();
     setupNameChange();
     setupPrivateMessages();
+
+    // UPDATE: تشغيل الميزات الجديدة
+    setupClips();
+    setupVoiceCalls();
+    setupPushNotifications();
+    requestNotificationPermission();
 
     await loadServerData();
 
@@ -487,6 +599,7 @@ function getArabicSeason(number) {
 }
 
 function getCurrentSeasonState() {
+    // UPDATE: تاريخ بداية الموسم الأول 20-8-2026
     const seasonStartString = "2026-08-20";
     const durationMonths = 2;
     const breakDays = 4;
@@ -517,7 +630,8 @@ function setupSeasonSystem() {
     const savedSeason = Number(localStorage.getItem("phantom_active_season")) || 0;
     if (state.seasonNumber > savedSeason) {
         localStorage.setItem("phantom_active_season", String(state.seasonNumber));
-        setStorage("phantom_user_points", {});
+        // تصفير نقاط الموسم عند بداية موسم جديد
+        resetSeasonPoints();
         addSystemUpdate("تحديث الموسم", "انتهى الموسم السابق وتصفّرت نقاط الصدارة.", true);
     }
     setSession("phantom_season_state", {
@@ -567,21 +681,23 @@ function setupSeasonInfo() {
 }
 
 /* ========================================================
-   7. هوية المستخدم
+   7. هوية المستخدم (محدثة لدعم ID)
    ======================================================== */
 
-function createIdentity(username) {
+function createIdentity(username, password = "", userId = null) {
     return {
         version: PHANTOM_MEMORY.identityVersion,
         username: username,
+        password: password, // تخزين مؤقت للدخول التلقائي (اختياري)
+        userId: userId || generateUniqueId(), // توليد ID تلقائي إذا لم يوجد
         createdAt: Date.now(),
         expiresAt: Date.now() + PHANTOM_MEMORY.identityDurationDays * 24 * 60 * 60 * 1000
     };
 }
 
-function saveIdentity(username) {
+function saveIdentity(username, password = "", userId = null) {
     if (!username) return false;
-    return setStorage(PHANTOM_MEMORY.identityKey, createIdentity(username));
+    return setStorage(PHANTOM_MEMORY.identityKey, createIdentity(username, password, userId));
 }
 
 function getSavedIdentity() {
@@ -608,6 +724,12 @@ function getCurrentUsername() {
     const identity = getSavedIdentity();
     if (identity && identity.username) return identity.username;
     return localStorage.getItem("phantom_active_username") || "";
+}
+
+function getCurrentUserId() {
+    const identity = getSavedIdentity();
+    if (identity && identity.userId) return identity.userId;
+    return null;
 }
 
 function updateCurrentUser(username) {
@@ -671,7 +793,7 @@ function updateMemberLastSeen(username) {
 }
 
 /* ========================================================
-   8. بوابة الدخول (تخطي تلقائي للمسجلين سابقاً)
+   8. بوابة الدخول (محدثة: ID، كاش، طرد/رجوع)
    ======================================================== */
 
 function setupSecurityGate() {
@@ -684,12 +806,60 @@ function setupSecurityGate() {
     const nameForm = getElement("gate-name-form");
     const nameInput = getElement("username-input");
     const nameError = getElement("name-error-msg");
+    
+    // UPDATE: عناصر جديدة للـ ID والرجوع
+    const idDisplayArea = getElement("gate-id-area") || document.createElement("div");
+    const rejoinArea = getElement("gate-rejoin-area") || document.createElement("div");
+
     if (!gate) return;
+    
+    // التحقق من وجود عناصر جديدة في HTML، وإن لم تكن موجودة نضيفها ديناميكياً
+    if (!getElement("gate-id-area")) {
+        idDisplayArea.id = "gate-id-area";
+        idDisplayArea.style.cssText = "display:none; margin-top:15px; text-align:center;";
+        idDisplayArea.innerHTML = `
+            <div style="display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap;">
+                <div style="background:rgba(255,255,255,0.05); padding:10px 15px; border-radius:8px; border:1px solid var(--gold-main,#d4af37);">
+                    <span style="font-size:0.8rem; color:var(--silver-muted,#aaa);">معرفك الفريد (ID):</span>
+                    <strong id="user-generated-id" style="color:#fff; display:block; font-size:1.1rem; margin-top:4px;">---</strong>
+                </div>
+                <button id="copy-id-btn" class="btn-primary" style="padding:8px 16px; border-radius:6px; cursor:pointer;">📋 نسخ</button>
+                <button id="enter-site-btn" class="btn-success" style="padding:8px 16px; border-radius:6px; cursor:pointer; opacity:0.5; pointer-events:none;">🚪 دخول الموقع</button>
+            </div>
+        `;
+        gate.appendChild(idDisplayArea);
+    }
+
+    if (!getElement("gate-rejoin-area")) {
+        rejoinArea.id = "gate-rejoin-area";
+        rejoinArea.style.cssText = "display:none; margin-top:15px; text-align:center;";
+        rejoinArea.innerHTML = `
+            <div style="background:rgba(255,77,77,0.1); padding:15px; border-radius:8px; border:1px solid var(--red-danger,#ff4d4d);">
+                <p style="color:var(--red-danger,#ff4d4d); font-weight:bold; margin-bottom:10px;">🚫 أنت مطرود من الكلان</p>
+                <input id="rejoin-request-input" type="text" placeholder="اكتب طلبك للرجوع..." style="width:100%; padding:10px; border-radius:6px; border:1px solid var(--border); background:rgba(255,255,255,0.05); color:#fff; margin-bottom:8px;">
+                <button id="send-rejoin-btn" class="btn-warning" style="padding:8px 16px; border-radius:6px; cursor:pointer;">إرسال طلب الرجوع</button>
+            </div>
+        `;
+        gate.appendChild(rejoinArea);
+    }
+
     const data = getBasicData();
     const correctPassword = String(data.sitePassword || "888888");
     const savedIdentity = getSavedIdentity();
+
+    // UPDATE: التحقق من حالة الطرد عند الدخول التلقائي
     if (savedIdentity && savedIdentity.username) {
         const username = savedIdentity.username;
+        const bannedUsers = getBannedUsers();
+        if (bannedUsers[username] && bannedUsers[username].status === 'banned') {
+            // إذا كان مطروداً، نعرض له شاشة الطرد
+            gate.classList.remove("unlocked");
+            step1.classList.remove("active");
+            step2.classList.remove("active");
+            showBannedScreen(username);
+            return;
+        }
+        // إذا غير مطرود، ندخل بشكل طبيعي
         ensureUserIsMember(username);
         updateMemberLastSeen(username);
         updateCurrentUser(username);
@@ -698,6 +868,8 @@ function setupSecurityGate() {
         syncCurrentUserWithServer(username).catch(() => {});
         return;
     }
+
+    // عملية الدخول العادية
     if (passForm) {
         passForm.addEventListener("submit", event => {
             event.preventDefault();
@@ -715,41 +887,171 @@ function setupSecurityGate() {
             }
         });
     }
+
     if (nameForm) {
         nameForm.addEventListener("submit", async event => {
             event.preventDefault();
             const username = nameInput ? nameInput.value.trim() : "";
+            const password = passInput ? passInput.value.trim() : ""; // تخزين الباسوورد للكاش
             if (username.length < 2) {
                 if (nameError) nameError.textContent = "اكتب اسمك بشكل صحيح.";
                 shakeElement(nameInput);
                 return;
             }
-            saveIdentity(username);
-            setStorage("phantom_active_username", username);
-            const localMember = ensureUserIsMember(username);
-            updateMemberLastSeen(username);
-            updateCurrentUser(username);
-            registerPresence(username);
-            gate.classList.add("unlocked");
-            if (nameError) nameError.textContent = "";
-            const serverMember = await syncCurrentUserWithServer(username);
-            if (serverMember) {
-                let members = getStorage("phantom_server_members", []);
-                const index = members.findIndex(m => m && m.id === serverMember.id);
-                if (index === -1) members.push(serverMember);
-                else members[index] = serverMember;
-                setStorage("phantom_server_members", members);
-                setStorage("phantom_current_server_member", serverMember);
-            } else if (localMember) {
-                setStorage("phantom_current_server_member", localMember);
+
+            // UPDATE: التحقق من حالة الطرد قبل إكمال الدخول
+            const bannedUsers = getBannedUsers();
+            if (bannedUsers[username] && bannedUsers[username].status === 'banned') {
+                // إخفاء الخطوة 2 وإظهار شاشة الطرد
+                if (step2) step2.classList.remove("active");
+                showBannedScreen(username);
+                return;
             }
-            renderAll();
+
+            // إذا كان مسموحاً، نكمل عملية الدخول
+            // توليد ID وحفظ البيانات في الكاش
+            const userId = generateUniqueId();
+            saveIdentity(username, password, userId);
+            setStorage("phantom_active_username", username);
+
+            // عرض الـ ID وزر النسخ وزر الدخول
+            const idDisplay = document.getElementById("user-generated-id");
+            const copyBtn = document.getElementById("copy-id-btn");
+            const enterBtn = document.getElementById("enter-site-btn");
+            const idArea = document.getElementById("gate-id-area");
+
+            if (idArea) idArea.style.display = "block";
+            if (idDisplay) idDisplay.textContent = userId;
+            if (copyBtn) {
+                copyBtn.onclick = function() {
+                    navigator.clipboard.writeText(userId).then(() => {
+                        showToast("✅ تم نسخ الـ ID بنجاح!", "success");
+                        if (enterBtn) {
+                            enterBtn.style.opacity = "1";
+                            enterBtn.style.pointerEvents = "auto";
+                        }
+                    }).catch(() => {
+                        // Fallback للنسخ
+                        const textArea = document.createElement("textarea");
+                        textArea.value = userId;
+                        document.body.appendChild(textArea);
+                        textArea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textArea);
+                        showToast("✅ تم نسخ الـ ID!", "success");
+                        if (enterBtn) {
+                            enterBtn.style.opacity = "1";
+                            enterBtn.style.pointerEvents = "auto";
+                        }
+                    });
+                };
+            }
+
+            if (enterBtn) {
+                enterBtn.onclick = async function() {
+                    // بعد الضغط على دخول، نفتح البوابة ونخزن الكاش
+                    const localMember = ensureUserIsMember(username);
+                    updateMemberLastSeen(username);
+                    updateCurrentUser(username);
+                    registerPresence(username);
+                    gate.classList.add("unlocked");
+                    if (nameError) nameError.textContent = "";
+                    const serverMember = await syncCurrentUserWithServer(username);
+                    if (serverMember) {
+                        let members = getStorage("phantom_server_members", []);
+                        const index = members.findIndex(m => m && m.id === serverMember.id);
+                        if (index === -1) members.push(serverMember);
+                        else members[index] = serverMember;
+                        setStorage("phantom_server_members", members);
+                        setStorage("phantom_current_server_member", serverMember);
+                    } else if (localMember) {
+                        setStorage("phantom_current_server_member", localMember);
+                    }
+                    renderAll();
+                };
+            }
         });
     }
 }
 
+// UPDATE: دالة عرض شاشة الطرد والرجوع (نقطة 4)
+function showBannedScreen(username) {
+    const gate = getElement("security-gate");
+    const rejoinArea = document.getElementById("gate-rejoin-area");
+    const step1 = getElement("gate-step-1");
+    const step2 = getElement("gate-step-2");
+
+    if (step1) step1.classList.remove("active");
+    if (step2) step2.classList.remove("active");
+    if (gate) gate.classList.remove("unlocked");
+
+    const bannedUsers = getBannedUsers();
+    const userStatus = bannedUsers[username];
+
+    // إذا كان مرفوضاً، اعرض لافتة حمراء
+    if (userStatus && userStatus.status === 'rejected') {
+        if (rejoinArea) {
+            rejoinArea.style.display = "block";
+            rejoinArea.innerHTML = `
+                <div style="background:rgba(255,0,0,0.2); padding:20px; border-radius:8px; border:2px solid var(--red-danger,#ff4d4d); text-align:center;">
+                    <h2 style="color:#ff4d4d; font-size:2rem;">🚫</h2>
+                    <p style="color:#fff; font-weight:bold; font-size:1.2rem;">تم رفض طلبك للعودة</p>
+                    <p style="color:var(--silver-muted,#aaa); font-size:0.9rem;">لا يمكنك الدخول إلا بموافقة المؤسسين</p>
+                </div>
+            `;
+        }
+        return;
+    }
+
+    // إذا كان مطروداً، اعرض نموذج طلب الرجوع
+    if (rejoinArea) {
+        rejoinArea.style.display = "block";
+        const existingForm = rejoinArea.querySelector("#send-rejoin-btn");
+        if (!existingForm) {
+            rejoinArea.innerHTML = `
+                <div style="background:rgba(255,77,77,0.1); padding:15px; border-radius:8px; border:1px solid var(--red-danger,#ff4d4d);">
+                    <p style="color:var(--red-danger,#ff4d4d); font-weight:bold; margin-bottom:10px;">🚫 أنت مطرود من الكلان</p>
+                    <input id="rejoin-request-input" type="text" placeholder="اكتب طلبك للرجوع..." style="width:100%; padding:10px; border-radius:6px; border:1px solid var(--border); background:rgba(255,255,255,0.05); color:#fff; margin-bottom:8px;">
+                    <button id="send-rejoin-btn" class="btn-warning" style="padding:8px 16px; border-radius:6px; cursor:pointer;">إرسال طلب الرجوع</button>
+                </div>
+            `;
+        }
+        const sendBtn = document.getElementById("send-rejoin-btn");
+        const input = document.getElementById("rejoin-request-input");
+        if (sendBtn && input) {
+            sendBtn.onclick = function() {
+                const message = input.value.trim();
+                if (!message) {
+                    showToast("اكتب رسالة لطلب الرجوع.", "error");
+                    return;
+                }
+                // إرسال الطلب إلى السيرفر/التخزين
+                const requests = getRejoinRequests();
+                requests.push({
+                    id: `rejoin_${Date.now()}`,
+                    username: username,
+                    message: message,
+                    timestamp: Date.now(),
+                    status: 'pending' // pending, accepted, rejected
+                });
+                setRejoinRequests(requests);
+                showToast("✅ تم إرسال طلب الرجوع للمؤسسين.", "success");
+                input.value = "";
+                // تحديث لوحة القيادة للمؤسسين تلقائياً
+                renderFounderNotifications();
+                // إظهار رسالة انتظار
+                rejoinArea.innerHTML = `
+                    <div style="background:rgba(212,175,55,0.1); padding:15px; border-radius:8px; border:1px solid var(--gold-main,#d4af37); text-align:center;">
+                        <p style="color:var(--gold-main,#d4af37); font-weight:bold;">⏳ تم إرسال طلبك، في انتظار موافقة المؤسسين</p>
+                    </div>
+                `;
+            };
+        }
+    }
+}
+
 /* ========================================================
-   9. التواجد أونلاين
+   9. التواجد أونلاين (محدث لعرض العدد فقط في الشات)
    ======================================================== */
 
 function registerPresence(username) {
@@ -768,6 +1070,7 @@ function registerPresence(username) {
     setStorage(PHANTOM_MEMORY.presenceStorageKey, users);
     updateMemberLastSeen(username);
     renderOnlineUsers();
+    renderChatOnlineCount(); // تحديث عداد الشات
 }
 
 function setupPresenceHeartbeat() {
@@ -804,6 +1107,16 @@ function renderOnlineUsers() {
     `).join("");
 }
 
+// UPDATE: عرض عدد المتصلين في الشات فقط (بدون أسماء) (نقطة 1)
+function renderChatOnlineCount() {
+    const chatCounter = getElement("chat-online-counter");
+    if (!chatCounter) return;
+    let users = getStorage(PHANTOM_MEMORY.presenceStorageKey, []);
+    const now = Date.now();
+    users = users.filter(user => user && user.time && now - user.time < 30 * 60 * 1000);
+    chatCounter.textContent = `${users.length} متصلين حالياً`;
+}
+
 /* ========================================================
    10. التنقل بين الصفحات
    ======================================================== */
@@ -825,7 +1138,7 @@ function setupNavigation() {
 }
 
 /* ========================================================
-   11. لوحة القيادة (تسجيل الدخول للمؤسسين)
+   11. لوحة القيادة (محدثة: إشعارات الشكاوي + طلبات الرجوع)
    ======================================================== */
 
 function setupAdminPanel() {
@@ -903,6 +1216,7 @@ function checkAdminPermissions() {
     restricted.style.display = isFounderSession() ? "block" : "none";
 }
 
+// UPDATE: عرض إشعارات الشكاوي وطلبات الرجوع (نقطة 3 و 4)
 function renderFounderNotifications() {
     const list = getElement("founder-notifications-list");
     const count = getElement("founder-alert-count");
@@ -911,7 +1225,8 @@ function renderFounderNotifications() {
     const nameRequests = getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []);
     const complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []);
     const excuses = getStorage(PHANTOM_MEMORY.excusesKey, []);
-    const total = warnings.length + nameRequests.length + complaints.length + excuses.length;
+    const rejoinRequests = getRejoinRequests(); // طلبات الرجوع
+    const total = warnings.length + nameRequests.length + complaints.length + excuses.length + rejoinRequests.length;
     if (count) count.textContent = String(total);
     let html = `
         <div class="admin-mini-item">
@@ -959,7 +1274,87 @@ function renderFounderNotifications() {
             </div>
         `;
     });
+    // عرض طلبات الرجوع للكلان (نقطة 4)
+    rejoinRequests.forEach(req => {
+        if (req.status === 'pending') {
+            html += `
+                <div class="admin-mini-item" style="border-right:3px solid var(--gold-main); background:rgba(212,175,55,0.05);">
+                    <span><strong>🔁 طلب رجوع من ${escapeHTML(req.username)}:</strong> ${escapeHTML(req.message)}</span>
+                    <div style="display:flex; gap:4px; margin-top:4px;">
+                        <button class="btn-success" style="padding:2px 8px;font-size:0.7rem;" onclick="approveRejoin('${req.id}')">✅ قبول</button>
+                        <button class="btn-danger" style="padding:2px 8px;font-size:0.7rem;" onclick="rejectRejoin('${req.id}')">❌ رفض</button>
+                    </div>
+                </div>
+            `;
+        }
+    });
     list.innerHTML = html;
+}
+
+// UPDATE: دوال معالجة طلبات الرجوع (قبول/رفض + 4 ساعات + تصفير نقاط)
+function approveRejoin(id) {
+    let requests = getRejoinRequests();
+    const request = requests.find(r => r.id === id);
+    if (!request) return;
+    request.status = 'accepted';
+    request.acceptedAt = Date.now();
+    setRejoinRequests(requests);
+
+    // جدولة تفعيل الحساب بعد 4 ساعات
+    const reactivationTime = Date.now() + 4 * 60 * 60 * 1000;
+    setStorage(`rejoin_reactivation_${request.username}`, reactivationTime);
+
+    // إزالة من قائمة المطرودين مؤقتاً (سيتم تفعيلها بعد 4 ساعات)
+    let bannedUsers = getBannedUsers();
+    if (bannedUsers[request.username]) {
+        bannedUsers[request.username].status = 'pending_reactivation';
+        bannedUsers[request.username].reactivationTime = reactivationTime;
+        setBannedUsers(bannedUsers);
+    }
+
+    addSystemUpdate("قبول رجوع", `تم قبول طلب رجوع ${request.username}. سيتم تفعيل الحساب بعد 4 ساعات.`, true);
+    showToast(`✅ تم قبول طلب ${request.username}، سيتم تفعيله بعد 4 ساعات.`, "success");
+    renderFounderNotifications();
+
+    // تصفير نقاط الموسم عند التفعيل (سيتم تنفيذه عند التفعيل الفعلي)
+    // سنضع مؤقتاً للتحقق
+    setTimeout(() => {
+        activateRejoinUser(request.username);
+    }, 4 * 60 * 60 * 1000);
+}
+
+function activateRejoinUser(username) {
+    let bannedUsers = getBannedUsers();
+    if (bannedUsers[username] && bannedUsers[username].status === 'pending_reactivation') {
+        delete bannedUsers[username]; // إزالة الحظر
+        setBannedUsers(bannedUsers);
+        // تصفير النقاط
+        resetSeasonPoints();
+        // إضافة إشعار
+        addSystemUpdate("تفعيل حساب", `تم تفعيل حساب ${username} بعد الموافقة، وتم تصفير نقاط الموسم.`, true);
+        showToast(`✅ تم تفعيل حساب ${username} و تصفير نقاطه.`, "success");
+        // إزالة جدولة التفعيل
+        removeStorage(`rejoin_reactivation_${username}`);
+    }
+}
+
+function rejectRejoin(id) {
+    let requests = getRejoinRequests();
+    const request = requests.find(r => r.id === id);
+    if (!request) return;
+    request.status = 'rejected';
+    setRejoinRequests(requests);
+
+    // تحديث حالة العضو إلى مرفوض نهائياً
+    let bannedUsers = getBannedUsers();
+    if (bannedUsers[request.username]) {
+        bannedUsers[request.username].status = 'rejected';
+        setBannedUsers(bannedUsers);
+    }
+
+    addSystemUpdate("رفض رجوع", `تم رفض طلب رجوع ${request.username}.`, true);
+    showToast(`❌ تم رفض طلب ${request.username}.`, "info");
+    renderFounderNotifications();
 }
 
 function renderChatMonitor() {
@@ -1319,17 +1714,16 @@ function populateAdminSelects() {
    15. لوحة الصدارة (جدول 30 مركزاً، المركز 30 فارغ)
    ======================================================== */
 
-function getLocalPoints() {
-    return getStorage("phantom_user_points", {});
-}
-
-function setLocalPoints(points) {
-    setStorage("phantom_user_points", points);
-}
-
 function addPoints(username, amount) {
     if (!username) return;
     if (amount < 0) return;
+    // UPDATE: التحقق من فترة الاستراحة (نقطة 11)
+    const state = getCurrentSeasonState();
+    if (state.isPointsLocked) {
+        // إذا كان في استراحة، لا نضيف نقاط ونعرض رسالة
+        showToast("⏳ فترة الاستراحة: لا يمكن اكتساب نقاط حالياً.", "info");
+        return;
+    }
     const points = getLocalPoints();
     const current = Number(points[username] || 0);
     points[username] = current + (Number(amount) || 0);
@@ -1579,7 +1973,7 @@ async function removeWarning(id) {
 }
 
 /* ========================================================
-   18. إضافة واستبعاد الأعضاء
+   18. إضافة واستبعاد الأعضاء (محدثة: ID بدل رتبة)
    ======================================================== */
 
 function setupAddMember() {
@@ -1590,24 +1984,26 @@ function setupAddMember() {
             showToast("⚠️ إضافة الأعضاء مخصصة للرؤساء فقط.", "error");
             return;
         }
+        const idInput = getElement("new-member-id"); // بدلاً من rank
         const nameInput = getElement("new-member-name");
-        const rankInput = getElement("new-member-rank");
         const statusInput = getElement("new-member-verified");
+        const userId = idInput ? idInput.value.trim() : "";
         const name = nameInput ? nameInput.value.trim() : "";
-        const rank = rankInput ? rankInput.value.trim() : "عضو";
         const status = statusInput ? statusInput.value : "موثق";
-        if (!name) {
-            showToast("⚠️ اكتب اسم العضو.", "error");
+        if (!userId || !name) {
+            showToast("⚠️ اكتب الـ ID الخاص بالعضو واسمه.", "error");
             return;
         }
+        // التحقق من وجود الـ ID في النظام (يمكن ربطه بالسيرفر لاحقاً)
         const exists = getFullRoster().some(m => normalizeName(m.name) === normalizeName(name));
         if (exists) {
             showToast("⚠️ العضو موجود بالفعل.", "error");
             return;
         }
-        const serverMember = await serverCreateMember(name, rank);
+        // إضافة العضو بالـ ID بدلاً من الرتبة
+        const serverMember = await serverCreateMember(name, "عضو");
         if (serverMember) {
-            serverMember.rank = rank;
+            serverMember.userId = userId; // ربط الـ ID
             serverMember.status = status;
             let members = getStorage("phantom_server_members", []);
             members.push(serverMember);
@@ -1616,8 +2012,9 @@ function setupAddMember() {
             const members = getStorage("phantom_custom_roster", []);
             members.push({
                 id: `local_${Date.now()}`,
+                userId: userId, // تخزين الـ ID
                 name: name,
-                rank: rank,
+                rank: "عضو",
                 status: status,
                 points: 0,
                 joinedAt: Date.now(),
@@ -1626,9 +2023,9 @@ function setupAddMember() {
             });
             setStorage("phantom_custom_roster", members);
         }
+        if (idInput) idInput.value = "";
         if (nameInput) nameInput.value = "";
-        if (rankInput) rankInput.value = "";
-        addSystemUpdate("إضافة عضو", `تمت إضافة ${name} برتبة (${rank}) إلى سجل PHANTOM.`);
+        addSystemUpdate("إضافة عضو", `تمت إضافة ${name} (ID: ${userId}) إلى سجل PHANTOM.`);
         showToast(`✅ تمت إضافة ${name} بنجاح.`, "success");
         renderAll();
         populateAdminSelects();
@@ -1649,10 +2046,21 @@ function setupKickMember() {
             showToast("⚠️ اختر عضواً أولاً.", "error");
             return;
         }
+        // إضافة العضو إلى قائمة المطرودين (نقطة 4)
+        let bannedUsers = getBannedUsers();
+        bannedUsers[name] = {
+            status: 'banned',
+            bannedAt: Date.now(),
+            reason: 'تم الطرد بواسطة المشرف'
+        };
+        setBannedUsers(bannedUsers);
+
+        // إزالة من القائمة النشطة
         let members = getStorage("phantom_custom_roster", []);
         members = members.filter(m => normalizeName(m.name) !== normalizeName(name));
         setStorage("phantom_custom_roster", members);
-        addSystemUpdate("استبعاد عضو", `تم استبعاد ${name} من السجل.`);
+        
+        addSystemUpdate("استبعاد عضو", `تم استبعاد ${name} من السجل وإضافته لقائمة المطرودين.`);
         showToast(`🚫 تم استبعاد ${name}.`, "info");
         renderAll();
         populateAdminSelects();
@@ -1839,13 +2247,16 @@ function renderPoll() {
 }
 
 /* ========================================================
-   20. الشات العام (مع فلترة ذكية، مربع تعديل، وإشعارات للمؤسسين)
+   20. الشات العام (محدث: فلتر كلمات كامل، مسح الإدخال)
    ======================================================== */
 
+// UPDATE: قائمة الكلمات الممنوعة الكاملة (نقطة 12)
 const FORBIDDEN_WORDS = [
+    "خول", "يا خول", "يا معرص", "كسمك", "ابن شرموطه", "ابن متناكه", "ابن لبوه", "ابن فاجره", 
+    "زبي", "كسك", "يا معرص", "عرص", "يا عرض", "يبن المره الوسخه", "يبن كوم الزواني", "يابن الجزمه",
+    "سب الدين", "سب الرسول", "سب الله", "كفر", "ملحد",
     "سبك", "غبي", "هاك", "تشفير", "كسم", "طيز", "زبي", "شرموطة", "قحبة", "منيوك",
-    "ابن وسخه", "ابن ورمة", "كسمك", "كسمك", "منيوك", "زبي", "طيز", "شرموطة",
-    "قحبة", "لعنة", "ملعون", "حرام", "نجس", "خنزير", "كلب", "عاهرة"
+    "ابن وسخه", "ابن ورمة", "كسمك", "منيوك", "لعنة", "ملعون", "حرام", "نجس", "خنزير", "كلب", "عاهرة"
 ];
 
 let blockedMessage = null;
@@ -1880,9 +2291,10 @@ function setupChat() {
     async function sendMessage(text) {
         const sender = getCurrentUsername();
         if (!text || !sender) return;
-        // تم إزالة id من الرسالة لتفادي خطأ bigint
         const message = { sender: sender, text: text, timestamp: Date.now() };
         await serverSendChat(message);
+        // UPDATE: مسح مربع الكتابة بعد الإرسال (نقطة 2)
+        if (input) input.value = "";
         renderChat();
         renderChatMonitor();
     }
@@ -1959,10 +2371,11 @@ function renderChat() {
         container.innerHTML = messages.map(msg => {
             const isMe = normalizeName(msg.sender) === normalizeName(currentUser);
             const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString("ar-EG", { hour: '2-digit', minute: '2-digit' }) : "";
+            // UPDATE: تنسيق محسن للرسائل (نقطة 9) - سيتم تطبيق الأنماط في CSS
             return `
-                <div class="chat-bubble ${isMe ? 'mine' : 'others'}" style="margin-bottom:8px; align-self:${isMe ? 'flex-end' : 'flex-start'};">
+                <div class="chat-bubble ${isMe ? 'mine' : 'others'} note-style" style="margin-bottom:8px; align-self:${isMe ? 'flex-end' : 'flex-start'};">
                     <small style="font-weight:bold; color:var(--gold-main,#d4af37); display:block;">${escapeHTML(msg.sender)} <span style="font-weight:normal; color:var(--silver-muted,#aaa); font-size:0.7rem;">🕒 ${time}</span></small>
-                    <div style="font-size:0.95rem;">${escapeHTML(msg.text)}</div>
+                    <div style="font-size:0.95rem; line-height:1.6;">${escapeHTML(msg.text)}</div>
                 </div>
             `;
         }).join("");
@@ -2042,6 +2455,7 @@ function renderAll() {
     renderPoll();
     renderChat();
     renderOnlineUsers();
+    renderChatOnlineCount(); // تحديث عداد الشات
     renderRosterAndLeadership();
     renderBasicDataUI();
     renderSystemUpdates();
@@ -2086,7 +2500,7 @@ function setupServiceWorker() {
 }
 
 /* ========================================================
-   24. نظام تفاعل الأعضاء (قلب وشكوى) - محدث: قلب واحد فقط
+   24. نظام تفاعل الأعضاء (قلب وشكوى) - محدث: قلب واحد فقط + عرض ID
    ======================================================== */
 
 function setupMemberInteraction() {
@@ -2119,8 +2533,16 @@ function openMemberActionModal(memberName) {
         text-align: center;
         direction: rtl;
     `;
+    // UPDATE: إضافة الـ ID الخاص باللاعب في النافذة (نقطة 6)
+    const roster = getFullRoster();
+    const member = roster.find(m => normalizeName(m.name) === normalizeName(memberName));
+    const userId = member ? (member.userId || "غير متوفر") : "غير متوفر";
+    
     modal.innerHTML = `
-        <h3 style="color:var(--white); margin-bottom:12px;">تفاعل مع ${escapeHTML(memberName)}</h3>
+        <h3 style="color:var(--white); margin-bottom:8px;">تفاعل مع ${escapeHTML(memberName)}</h3>
+        <div style="font-size:0.8rem; color:var(--silver-muted,#aaa); margin-bottom:12px; background:rgba(255,255,255,0.03); padding:6px; border-radius:4px;">
+            🆔 المعرف الفريد: <strong style="color:var(--cyan);">${escapeHTML(userId)}</strong>
+        </div>
         <div style="display:flex; gap:10px; justify-content:center;">
             <button id="give-heart-btn" class="btn-accent" style="flex:1;">💛 إعطاء قلب</button>
             <button id="send-complaint-btn" class="btn-danger" style="flex:1;">📩 تقديم شكوى</button>
@@ -2693,7 +3115,339 @@ function openPrivateMessages() {
 }
 
 /* ========================================================
-   28. تعديل دالة renderAll لتشمل تحديث القلوب والرسائل
+   28. نظام Clips (أفضل فيديو في الأسبوع) - نقطة 10
+   ======================================================== */
+
+function setupClips() {
+    const clipsPage = getElement("clips-view");
+    if (!clipsPage) return;
+    
+    // تحميل الفيديو الحالي
+    renderClips();
+}
+
+function getClipsData() {
+    return getStorage(PHANTOM_MEMORY.clipsKey, {
+        videoUrl: "",
+        uploadedBy: "",
+        uploadedAt: null,
+        likes: 0,
+        likedBy: []
+    });
+}
+
+function setClipsData(data) {
+    setStorage(PHANTOM_MEMORY.clipsKey, data);
+}
+
+function getComments() {
+    return getStorage(PHANTOM_MEMORY.commentsKey, []);
+}
+
+function setComments(comments) {
+    setStorage(PHANTOM_MEMORY.commentsKey, comments);
+}
+
+function renderClips() {
+    const container = getElement("clips-container");
+    if (!container) return;
+    const data = getClipsData();
+    const comments = getComments();
+    
+    let html = "";
+    if (!data.videoUrl) {
+        html = `
+            <div class="empty-state" style="text-align:center; padding:40px;">
+                <p style="font-size:1.2rem; color:var(--silver-muted,#aaa);">🎬 لا يوجد فيديو هذا الأسبوع</p>
+                ${isFounderSession() ? `<button id="upload-clip-btn" class="btn-primary" style="margin-top:15px;">رفع فيديو جديد</button>` : ""}
+            </div>
+        `;
+        container.innerHTML = html;
+        const uploadBtn = document.getElementById("upload-clip-btn");
+        if (uploadBtn) {
+            uploadBtn.addEventListener("click", () => showClipUploadForm());
+        }
+        return;
+    }
+
+    // عرض الفيديو
+    html = `
+        <div style="width:100%; max-width:600px; margin:0 auto; position:relative;">
+            <video src="${escapeHTML(data.videoUrl)}" controls style="width:100%; border-radius:12px; background:#000; display:block;" poster=""></video>
+            <div style="display:flex; justify-content:center; gap:20px; margin-top:12px;">
+                <button id="like-clip-btn" class="btn-accent" style="padding:8px 16px; border-radius:8px;">
+                    👍 ${data.likes || 0}
+                </button>
+                <button id="open-comments-btn" class="btn-secondary" style="padding:8px 16px; border-radius:8px;">
+                    💬 تعليقات (${comments.length})
+                </button>
+            </div>
+            ${isFounderSession() ? `<button id="change-clip-btn" class="btn-warning" style="margin-top:10px; width:100%; padding:8px; border-radius:8px;">تغيير الفيديو</button>` : ""}
+        </div>
+    `;
+    container.innerHTML = html;
+
+    // تفاعل الإعجاب
+    const likeBtn = document.getElementById("like-clip-btn");
+    if (likeBtn) {
+        likeBtn.addEventListener("click", () => {
+            const username = getCurrentUsername();
+            if (!username) { showToast("يجب تسجيل الدخول.", "error"); return; }
+            const data = getClipsData();
+            if (data.likedBy.includes(username)) {
+                showToast("لقد أعجبت بالفعل!", "info");
+                return;
+            }
+            data.likes = (data.likes || 0) + 1;
+            data.likedBy.push(username);
+            setClipsData(data);
+            renderClips();
+        });
+    }
+
+    // فتح التعليقات (Bottom Sheet)
+    const commentsBtn = document.getElementById("open-comments-btn");
+    if (commentsBtn) {
+        commentsBtn.addEventListener("click", () => {
+            openCommentsSheet();
+        });
+    }
+
+    // تغيير الفيديو (للمؤسسين)
+    const changeBtn = document.getElementById("change-clip-btn");
+    if (changeBtn) {
+        changeBtn.addEventListener("click", () => showClipUploadForm());
+    }
+}
+
+function showClipUploadForm() {
+    const modal = document.createElement("div");
+    modal.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 99999;
+        background: rgba(16,23,34,0.98);
+        padding: 20px;
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--border);
+        box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+        width: 90%;
+        max-width: 400px;
+        text-align: center;
+        direction: rtl;
+    `;
+    modal.innerHTML = `
+        <h3 style="color:var(--white); margin-bottom:12px;">🎬 رفع فيديو الأسبوع</h3>
+        <p style="font-size:0.8rem; color:var(--silver-muted); margin-bottom:10px;">انسخ رابط الفيديو وضعه هنا (سيتم عرضه مباشرة)</p>
+        <input id="clip-url-input" type="url" placeholder="رابط الفيديو..." style="width:100%; padding:10px; border-radius:6px; background:rgba(255,255,255,0.05); border:1px solid var(--border); color:#fff; margin-bottom:10px;">
+        <div style="display:flex; gap:10px;">
+            <button id="submit-clip-btn" class="btn-success" style="flex:1;">رفع</button>
+            <button id="close-clip-btn" class="btn-secondary" style="flex:1;">إلغاء</button>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    const overlay = document.createElement("div");
+    overlay.style.cssText = `
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.7);
+        backdrop-filter: blur(4px);
+        z-index: 99998;
+    `;
+    document.body.appendChild(overlay);
+
+    const close = () => { modal.remove(); overlay.remove(); };
+    document.getElementById("close-clip-btn").addEventListener("click", close);
+    overlay.addEventListener("click", close);
+
+    document.getElementById("submit-clip-btn").addEventListener("click", () => {
+        const url = document.getElementById("clip-url-input").value.trim();
+        if (!url) {
+            showToast("ضع رابط الفيديو.", "error");
+            return;
+        }
+        // حفظ الفيديو
+        const data = {
+            videoUrl: url,
+            uploadedBy: getCurrentUsername(),
+            uploadedAt: Date.now(),
+            likes: 0,
+            likedBy: []
+        };
+        setClipsData(data);
+        // تصفير التعليقات عند تغيير الفيديو
+        setComments([]);
+        showToast("✅ تم رفع الفيديو بنجاح!", "success");
+        close();
+        renderClips();
+    });
+}
+
+function openCommentsSheet() {
+    const comments = getComments();
+    let sheet = document.getElementById("comments-bottom-sheet");
+    if (!sheet) {
+        sheet = document.createElement("div");
+        sheet.id = "comments-bottom-sheet";
+        sheet.style.cssText = `
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            max-height: 70vh;
+            background: rgba(16,23,34,0.98);
+            border-radius: 16px 16px 0 0;
+            border: 1px solid var(--border);
+            box-shadow: 0 -10px 40px rgba(0,0,0,0.8);
+            z-index: 99999;
+            transform: translateY(100%);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            direction: rtl;
+        `;
+        sheet.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:10px;">
+                <h3 style="color:#fff; margin:0;">💬 التعليقات</h3>
+                <button id="close-comments-sheet" style="background:none; border:none; color:#fff; font-size:1.5rem; cursor:pointer;">×</button>
+            </div>
+            <div id="comments-list" style="flex:1; overflow-y:auto; margin-bottom:15px; padding:0 5px;"></div>
+            <div style="display:flex; gap:10px; align-items:center; border-top:1px solid var(--border); padding-top:10px;">
+                <input id="comment-input" type="text" placeholder="ضع تعليق هنا ..." style="flex:1; padding:10px; border-radius:8px; border:1px solid var(--border); background:rgba(255,255,255,0.05); color:#fff;">
+                <button id="send-comment-btn" class="btn-primary" disabled style="padding:10px 16px; border-radius:8px; opacity:0.5; pointer-events:none;">إرسال</button>
+            </div>
+        `;
+        document.body.appendChild(sheet);
+        
+        // إضافة الأحداث
+        const closeBtn = document.getElementById("close-comments-sheet");
+        closeBtn.addEventListener("click", () => {
+            sheet.style.transform = "translateY(100%)";
+        });
+
+        const input = document.getElementById("comment-input");
+        const sendBtn = document.getElementById("send-comment-btn");
+        input.addEventListener("input", () => {
+            if (input.value.trim()) {
+                sendBtn.disabled = false;
+                sendBtn.style.opacity = "1";
+                sendBtn.style.pointerEvents = "auto";
+            } else {
+                sendBtn.disabled = true;
+                sendBtn.style.opacity = "0.5";
+                sendBtn.style.pointerEvents = "none";
+            }
+        });
+
+        sendBtn.addEventListener("click", () => {
+            const text = input.value.trim();
+            if (!text) return;
+            const username = getCurrentUsername();
+            if (!username) { showToast("يجب تسجيل الدخول.", "error"); return; }
+            const newComments = getComments();
+            newComments.push({
+                id: Date.now(),
+                username: username,
+                text: text,
+                timestamp: Date.now()
+            });
+            setComments(newComments);
+            input.value = "";
+            sendBtn.disabled = true;
+            sendBtn.style.opacity = "0.5";
+            sendBtn.style.pointerEvents = "none";
+            renderComments();
+        });
+    }
+
+    // إظهار الشيت
+    sheet.style.transform = "translateY(0)";
+    renderComments();
+}
+
+function renderComments() {
+    const container = document.getElementById("comments-list");
+    if (!container) return;
+    const comments = getComments();
+    if (!comments.length) {
+        container.innerHTML = `<div class="empty-state" style="text-align:center; padding:20px; color:var(--silver-muted);">لا توجد تعليقات بعد. كن أول من يعلق!</div>`;
+        return;
+    }
+    container.innerHTML = comments.reverse().map(c => `
+        <div style="margin-bottom:10px; padding:10px; background:rgba(255,255,255,0.03); border-radius:8px; border-right:2px solid var(--gold-main);">
+            <strong style="color:var(--gold-main);">${escapeHTML(c.username)}</strong>
+            <span style="font-size:0.7rem; color:var(--silver-muted); margin-right:8px;">${new Date(c.timestamp).toLocaleString("ar-EG")}</span>
+            <div style="margin-top:4px; color:#fff;">${escapeHTML(c.text)}</div>
+        </div>
+    `).join("");
+}
+
+/* ========================================================
+   29. نظام المكالمات الصوتية (Voice Calls) - نقطة 8
+   ======================================================== */
+
+function setupVoiceCalls() {
+    // هنا يتم تهيئة مكتبة WebRTC الخارجية (Agora/Twilio) لاحقاً
+    console.log("📞 نظام المكالمات الصوتية جاهز للربط.");
+    // إضافة عناصر وهمية للواجهة
+    const voiceCallBtn = document.getElementById("voice-call-btn");
+    if (voiceCallBtn) {
+        voiceCallBtn.addEventListener("click", () => {
+            toggleVoiceCall();
+        });
+    }
+}
+
+function toggleVoiceCall() {
+    // دالة مؤقتة للتبديل بين الحالات (ستُستبدل بكود WebRTC)
+    const currentUser = getCurrentUsername();
+    if (!currentUser) {
+        showToast("يجب تسجيل الدخول لإجراء المكالمات.", "error");
+        return;
+    }
+    showToast("📞 جارٍ الاتصال... (سيتم تفعيل المكالمات الصوتية عبر خدمة خارجية)", "info");
+    
+    // عرض واجهة المكالمة (مشابهة لواتساب)
+    const callModal = document.createElement("div");
+    callModal.id = "voice-call-modal";
+    callModal.style.cssText = `
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.95);
+        z-index: 99999;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        color: #fff;
+        direction: rtl;
+    `;
+    callModal.innerHTML = `
+        <div style="text-align:center;">
+            <div style="width:80px; height:80px; background:var(--gold-main); border-radius:50%; display:flex; justify-content:center; align-items:center; font-size:2rem; margin:0 auto 15px;">🎧</div>
+            <h3>مكالمة جماعية</h3>
+            <p style="color:var(--silver-muted);">${escapeHTML(currentUser)} - متصل</p>
+            <div style="margin-top:30px; display:flex; gap:20px;">
+                <button id="mute-call-btn" style="background:rgba(255,255,255,0.1); border:none; color:#fff; padding:15px; border-radius:50%; font-size:1.2rem; cursor:pointer;">🔇</button>
+                <button id="end-call-btn" style="background:#ff4d4d; border:none; color:#fff; padding:15px 20px; border-radius:50%; font-size:1.2rem; cursor:pointer;">📞</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(callModal);
+
+    document.getElementById("end-call-btn").addEventListener("click", () => {
+        callModal.remove();
+        showToast("تم إنهاء المكالمة.", "info");
+    });
+
+    // هنا سيتم وضع كود ربط WebRTC الحقيقي بعدين
+}
+
+/* ========================================================
+   30. تعديل دالة renderAll لتشمل تحديث القلوب والرسائل و Clips
    ======================================================== */
 
 const originalRenderAll = renderAll;
@@ -2702,4 +3456,5 @@ renderAll = function() {
     renderHearts();
     const username = getCurrentUsername();
     if (username) updateUnreadCount(username);
+    renderClips(); // تحديث واجهة الفيديو
 };
