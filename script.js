@@ -1,6 +1,8 @@
 /* ========================================================
-   PHANTOM HQ - CORE SYSTEM (v6.3 - Supabase)
+   PHANTOM HQ - CORE SYSTEM (v6.4 - Final Fix)
    script.js
+   - إزالة جميع مراجع PHANTOM_API (إصلاح خطأ undefined).
+   - إصلاح خطأ إرسال id نصي (bigint) في الشات.
    ======================================================== */
 
 "use strict";
@@ -169,7 +171,7 @@ function getBasicData() {
 }
 
 /* ========================================================
-   3. Supabase API Layer (استبدال PHANTOM_SERVER و PHANTOM_API)
+   3. Supabase API Layer (خالٍ تماماً من PHANTOM_API)
    ======================================================== */
 
 const SUPABASE_URL = "https://dmbprvvjmgccgztrhkay.supabase.co";
@@ -242,8 +244,6 @@ async function serverGetMembers() {
 }
 
 async function serverCreateMember(username, rank) {
-    const normalized = normalizeName(username);
-    // حاول البحث عن العضو أولاً
     if (supabaseClient) {
         try {
             const { data: existing } = await supabaseClient.from('members').select('*').eq('name', username);
@@ -256,7 +256,7 @@ async function serverCreateMember(username, rank) {
 
     // fallback: local storage
     const members = getStorage("phantom_custom_roster", []);
-    const found = members.find(m => normalizeName(m.name) === normalized);
+    const found = members.find(m => normalizeName(m.name) === normalizeName(username));
     if (found) return found;
     const localMember = {
         id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -273,7 +273,7 @@ async function serverCreateMember(username, rank) {
     return localMember;
 }
 
-async function serverUpdatePresence(memberId) { return true; } // غير مستخدم حالياً
+async function serverUpdatePresence(memberId) { return true; }
 
 async function serverGetChat() {
     const result = await supabaseGet('messages', 'timestamp');
@@ -281,7 +281,8 @@ async function serverGetChat() {
 }
 
 async function serverSendChat(message) {
-    const result = await supabaseInsert('messages', [message]);
+    // تمت إزالة "id" من الرسالة ليتم إنشاؤه تلقائياً في السيرفر
+    const result = await supabaseInsert('messages', [{ sender: message.sender, text: message.text, timestamp: message.timestamp }]);
     if (result) return result;
     // fallback: local storage
     const localChat = getStorage(PHANTOM_MEMORY.chatStorageKey, []);
@@ -301,7 +302,6 @@ async function serverCreateWarning(memberId, type, reason) {
     const data = { name: memberId, type, reason, date: new Date().toLocaleDateString('ar-EG') };
     const result = await supabaseInsert('warnings', [data]);
     if (result) return result;
-    // fallback
     const warnings = getStorage("phantom_warnings", []);
     warnings.push({
         id: `warning_${Date.now()}`,
@@ -322,7 +322,6 @@ async function serverGetWarnings() {
 async function serverDeleteWarning(id) {
     const result = await supabaseDelete('warnings', 'id', id);
     if (result) return result;
-    // fallback
     let warnings = getStorage("phantom_warnings", []);
     warnings = warnings.filter(w => String(w.id) !== String(id));
     setStorage("phantom_warnings", warnings);
@@ -335,14 +334,10 @@ async function serverGetPoll() {
     return getStorage(PHANTOM_MEMORY.pollStorageKey, null);
 }
 
-async function serverVotePoll(optionId) {
-    // يتم التعامل معه محلياً حالياً
-    return true;
-}
+async function serverVotePoll(optionId) { return true; }
 
 async function serverCancelPoll() {
     if (supabaseClient) {
-        // حذف آخر استطلاع
         const polls = await supabaseGet('polls');
         if (polls && polls.length > 0) {
             const last = polls[polls.length - 1];
@@ -361,7 +356,6 @@ async function serverGetEvents() {
 async function serverCreateEvent(data) {
     const result = await supabaseInsert('events', [data]);
     if (result) return result;
-    // fallback
     const events = getStorage(PHANTOM_MEMORY.eventsKey, []);
     events.push(data);
     setStorage(PHANTOM_MEMORY.eventsKey, events);
@@ -371,7 +365,6 @@ async function serverCreateEvent(data) {
 async function serverDeleteEvent(id) {
     const result = await supabaseDelete('events', 'id', id);
     if (result) return result;
-    // fallback
     let events = getStorage(PHANTOM_MEMORY.eventsKey, []);
     events = events.filter(e => String(e.id) !== String(id));
     setStorage(PHANTOM_MEMORY.eventsKey, events);
@@ -383,7 +376,6 @@ async function serverGetUpdates() {
     return result || [];
 }
 
-// دالة للتحقق من الاتصال بالسيرفر (للتوافق مع الكود القديم)
 async function checkServerConnection() {
     const online = await checkSupabaseConnection();
     localStorage.setItem("phantom_server_online", online ? "true" : "false");
@@ -406,8 +398,6 @@ async function syncCurrentUserWithServer(username) {
     }
 }
 
-// ------------------------------------------------------------
-// نهاية استبدال دوال السيرفر
 // ------------------------------------------------------------
 
 /* ========================================================
@@ -461,7 +451,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     setupChatRealtimeBridge();
     setupServiceWorker();
 
-    // تحديث عداد الرسائل عند التحميل
     const username = getCurrentUsername();
     if (username) updateUnreadCount(username);
 
@@ -660,9 +649,10 @@ function promoteUserToFounder(username) {
         if (member && normalizeName(member.name) === normalized) member.rank = "رئيس";
     });
     setStorage("phantom_custom_roster", localMembers);
-    const serverMember = getStorage("phantom_current_server_member", null);
-    if (serverMember && serverMember.id) {
-        PHANTOM_API.updateRank(serverMember.id, "رئيس").catch(() => {});
+    if (supabaseClient) {
+        supabaseClient.from('members').update({ rank: 'رئيس' }).eq('name', username)
+            .then(() => console.log(`✅ تم ترقية ${username} إلى رئيس في السيرفر`))
+            .catch(err => console.warn("⚠️ فشل ترقية الرتبة في السيرفر:", err));
     }
 }
 
@@ -777,10 +767,6 @@ function registerPresence(username) {
     }
     setStorage(PHANTOM_MEMORY.presenceStorageKey, users);
     updateMemberLastSeen(username);
-    const currentServerMember = getStorage("phantom_current_server_member", null);
-    if (currentServerMember && currentServerMember.id) {
-        // تم إزالة استدعاء serverUpdatePresence لأنه غير مستخدم حالياً
-    }
     renderOnlineUsers();
 }
 
@@ -1584,7 +1570,7 @@ async function removeWarning(id) {
     let serverWarnings = getStorage("phantom_server_warnings", []);
     serverWarnings = serverWarnings.filter(w => String(w.id) !== String(id));
     setStorage("phantom_server_warnings", serverWarnings);
-    await serverDeleteWarning(id); // تم التعديل لاستخدام الدالة الجديدة
+    await serverDeleteWarning(id);
     if (targetWarning) addSystemUpdate("إزالة إنذار", `تمت إزالة الإنذار عن العضو ${targetWarning.name}.`);
     showToast("✅ تمت إزالة الإنذار بنجاح.", "success");
     renderWarnings();
@@ -1752,7 +1738,7 @@ function setupPollCreator() {
             if (!poll) { updatePollAdminState(null); return; }
             removeStorage(PHANTOM_MEMORY.pollStorageKey);
             removeStorage(PHANTOM_MEMORY.pollVoteKey);
-            await serverCancelPoll(); // استخدم الدالة الجديدة
+            await serverCancelPoll();
             updatePollAdminState(null);
             addSystemUpdate("إلغاء استطلاع", "تم إلغاء الاستطلاع النشط بواسطة القيادة.", true);
             showToast("تم إلغاء الاستطلاع بنجاح.", "info");
@@ -1894,8 +1880,8 @@ function setupChat() {
     async function sendMessage(text) {
         const sender = getCurrentUsername();
         if (!text || !sender) return;
-        const message = { id: `msg_${Date.now()}`, sender: sender, text: text, timestamp: Date.now() };
-        // إرسال الرسالة إلى Supabase
+        // تم إزالة id من الرسالة لتفادي خطأ bigint
+        const message = { sender: sender, text: text, timestamp: Date.now() };
         await serverSendChat(message);
         renderChat();
         renderChatMonitor();
@@ -1964,7 +1950,6 @@ function setupChat() {
 function renderChat() {
     const container = getElement("chat-messages-container");
     if (!container) return;
-    // القراءة من Supabase
     serverGetChat().then(messages => {
         const currentUser = getCurrentUsername();
         if (!messages || !messages.length) {
@@ -1986,7 +1971,6 @@ function renderChat() {
 }
 
 function setupChatRealtimeBridge() {
-    // الاستماع للتحديثات المباشرة من Supabase
     if (supabaseClient) {
         supabaseClient
             .channel('public:messages')
@@ -1996,10 +1980,6 @@ function setupChatRealtimeBridge() {
             })
             .subscribe();
     }
-}
-
-function cleanOldChatMessages() {
-    // يمكن تركها لأن البيانات الآن في السيرفر
 }
 
 /* ========================================================
@@ -2613,7 +2593,6 @@ function setupPrivateMessages() {
             openPrivateMessages();
         });
     }
-    // تحديث العداد عند التحميل
     const username = getCurrentUsername();
     if (username) updateUnreadCount(username);
 }
@@ -2634,7 +2613,6 @@ function addPrivateMessage(username, message) {
     });
     setStorage(PHANTOM_MEMORY.privateMessagesKey, allMessages);
     updateUnreadCount(username);
-    // إظهار إشعار للمستخدم
     showToast(`📩 لديك رسالة جديدة: "${message}"`, "info");
 }
 
