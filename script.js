@@ -3458,3 +3458,226 @@ renderAll = function() {
     if (username) updateUnreadCount(username);
     renderClips(); // تحديث واجهة الفيديو
 };
+/* ============================================================
+   🤖 PHANTOM MASCOT — النسخة الجديدة بالصورة
+   ============================================================ */
+(function () {
+    "use strict";
+
+    function mascotInit() {
+        const mascot = document.getElementById('phantom-mascot');
+        if (!mascot) return;
+
+        const body = document.getElementById('mascot-body');
+        const banner = document.getElementById('mascot-banner');
+        const honkBubble = document.getElementById('mascot-honk-bubble');
+        const glowWave = document.getElementById('mascot-glow-wave');
+        const hornBtn = document.getElementById('mascot-horn');
+        const eyeLeft = document.getElementById('mascot-eye-left');
+        const eyeRight = document.getElementById('mascot-eye-right');
+        const pupilLeft = eyeLeft ? eyeLeft.querySelector('.mascot-pupil') : null;
+        const pupilRight = eyeRight ? eyeRight.querySelector('.mascot-pupil') : null;
+
+        const MASCOT_EDGE_MARGIN = 15;
+        const MASCOT_PUPIL_RADIUS = 5;
+
+        // موقع أولي
+        function mascotEnsurePosition() {
+            if (!mascot.style.left) mascot.style.left = "16px";
+            if (!mascot.style.top) {
+                const top = window.innerHeight - 140 - 90;
+                mascot.style.top = Math.max(20, top) + "px";
+            }
+            mascot.style.bottom = "auto";
+        }
+        mascotEnsurePosition();
+
+        // يافطة أول مرة
+        function mascotShowBannerOnce() {
+            const shown = (typeof getStorage === "function") ? getStorage("phantom_mascot_banner_shown", false) : false;
+            if (shown || !banner) return;
+            setTimeout(() => {
+                banner.classList.add('mascot-banner-show');
+                setTimeout(() => banner.classList.remove('mascot-banner-show'), 3000);
+            }, 600);
+            if (typeof setStorage === "function") setStorage("phantom_mascot_banner_shown", true);
+        }
+        mascotShowBannerOnce();
+
+        // ===== Eye Tracking =====
+        let pointerX = window.innerWidth / 2;
+        let pointerY = window.innerHeight / 2;
+        let curLX = 0, curLY = 0, curRX = 0, curRY = 0;
+        let eyeSuspended = false;
+
+        window.addEventListener('pointermove', (e) => {
+            pointerX = e.clientX;
+            pointerY = e.clientY;
+        }, { passive: true });
+
+        function updatePupils() {
+            if (eyeSuspended || !eyeLeft || !eyeRight) return;
+
+            [[eyeLeft, 'L'], [eyeRight, 'R']].forEach(([eye, side]) => {
+                const r = eye.getBoundingClientRect();
+                const cx = r.left + r.width / 2;
+                const cy = r.top + r.height / 2;
+                const dx = pointerX - cx;
+                const dy = pointerY - cy;
+                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                const move = Math.min(MASCOT_PUPIL_RADIUS, dist / 25);
+                const nx = (dx / dist) * move;
+                const ny = (dy / dist) * move;
+
+                if (side === 'L') {
+                    curLX += (nx - curLX) * 0.12;
+                    curLY += (ny - curLY) * 0.12;
+                    if (pupilLeft) pupilLeft.style.transform = `translate(calc(-50% + ${curLX}px), calc(-50% + ${curLY}px))`;
+                } else {
+                    curRX += (nx - curRX) * 0.12;
+                    curRY += (ny - curRY) * 0.12;
+                    if (pupilRight) pupilRight.style.transform = `translate(calc(-50% + ${curRX}px), calc(-50% + ${curRY}px))`;
+                }
+            });
+        }
+
+        function eyeLoop() {
+            updatePupils();
+            requestAnimationFrame(eyeLoop);
+        }
+        requestAnimationFrame(eyeLoop);
+
+        // ===== Drag & Drop + Snap =====
+        let dragging = false;
+        let startX = 0, startY = 0, originLeft = 0, originTop = 0;
+        let moved = 0;
+        let pointerId = null;
+
+        function onDown(e) {
+            if (e.target === hornBtn) return;
+            pointerId = e.pointerId;
+            mascot.setPointerCapture(e.pointerId);
+            dragging = true;
+            moved = 0;
+            startX = e.clientX;
+            startY = e.clientY;
+            const rect = mascot.getBoundingClientRect();
+            originLeft = rect.left;
+            originTop = rect.top;
+            mascot.classList.add('mascot-dragging');
+        }
+
+        function onMove(e) {
+            if (!dragging || e.pointerId !== pointerId) return;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            moved = Math.max(moved, Math.sqrt(dx * dx + dy * dy));
+
+            let left = originLeft + dx;
+            let top = originTop + dy;
+            left = Math.max(0, Math.min(window.innerWidth - mascot.offsetWidth, left));
+            top = Math.max(0, Math.min(window.innerHeight - mascot.offsetHeight, top));
+
+            mascot.style.left = left + "px";
+            mascot.style.top = top + "px";
+        }
+
+        function onUp(e) {
+            if (!dragging || e.pointerId !== pointerId) return;
+            dragging = false;
+            mascot.classList.remove('mascot-dragging');
+            try { mascot.releasePointerCapture(e.pointerId); } catch (err) {}
+            pointerId = null;
+
+            // Snap to edge
+            const rect = mascot.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const goRight = centerX > window.innerWidth / 2;
+            const targetLeft = goRight
+                ? window.innerWidth - rect.width - MASCOT_EDGE_MARGIN
+                : MASCOT_EDGE_MARGIN;
+            mascot.style.left = Math.max(0, targetLeft) + "px";
+
+            const maxTop = window.innerHeight - rect.height - 20;
+            const curTop = parseFloat(mascot.style.top) || 0;
+            mascot.style.top = Math.min(Math.max(20, curTop), Math.max(20, maxTop)) + "px";
+
+            if (moved > 8) {
+                // Greeting
+                if (body) {
+                    body.classList.remove('mascot-greet');
+                    void body.offsetWidth;
+                    body.classList.add('mascot-greet');
+                    setTimeout(() => body.classList.remove('mascot-greet'), 1200);
+                }
+                if (glowWave) {
+                    glowWave.classList.remove('mascot-glow-play');
+                    void glowWave.offsetWidth;
+                    glowWave.classList.add('mascot-glow-play');
+                }
+            }
+        }
+
+        mascot.addEventListener('pointerdown', onDown);
+        window.addEventListener('pointermove', onMove, { passive: true });
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onUp);
+
+        window.addEventListener('resize', () => {
+            if (!dragging) {
+                const rect = mascot.getBoundingClientRect();
+                const centerX = rect.left + rect.width / 2;
+                const goRight = centerX > window.innerWidth / 2;
+                mascot.style.left = (goRight
+                    ? window.innerWidth - rect.width - MASCOT_EDGE_MARGIN
+                    : MASCOT_EDGE_MARGIN) + "px";
+            }
+        });
+
+        // ===== البوق =====
+        let audioCtx = null;
+        function playHonk() {
+            if (!audioCtx) {
+                const AC = window.AudioContext || window.webkitAudioContext;
+                if (AC) audioCtx = new AC();
+            }
+            if (!audioCtx) return;
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            const now = audioCtx.currentTime;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(320, now);
+            osc.frequency.exponentialRampToValueAtTime(180, now + 0.28);
+            gain.gain.setValueAtTime(0.0001, now);
+            gain.gain.exponentialRampToValueAtTime(0.35, now + 0.03);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.32);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(now);
+            osc.stop(now + 0.35);
+        }
+
+        if (hornBtn) {
+            hornBtn.addEventListener('pointerdown', e => e.stopPropagation());
+            hornBtn.addEventListener('click', e => {
+                e.stopPropagation();
+                playHonk();
+                hornBtn.classList.remove('mascot-horn-bounce');
+                void hornBtn.offsetWidth;
+                hornBtn.classList.add('mascot-horn-bounce');
+                if (honkBubble) {
+                    honkBubble.classList.add('mascot-honk-show');
+                    setTimeout(() => honkBubble.classList.remove('mascot-honk-show'), 900);
+                }
+            });
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', mascotInit);
+    } else {
+        mascotInit();
+    }
+})();
