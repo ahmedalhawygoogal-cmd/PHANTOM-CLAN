@@ -2210,3 +2210,219 @@ input:focus, select:focus, textarea:focus {
     color: var(--green-online) !important;
     background: rgba(0,242,254,0.1);
    }
+
+/* ============================================================
+   🤖 PHANTOM MASCOT — النسخة الجديدة بالصورة
+   ============================================================ */
+
+#phantom-mascot {
+    position: fixed;
+    left: 16px;
+    bottom: 90px;
+    width: 140px;
+    height: 140px;
+    z-index: 99999;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+    transition: left 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+                top 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: left, top, filter;
+    filter: drop-shadow(0 0 12px rgba(0, 242, 254, 0.7));
+    animation: mascotGlowCycle 180s linear infinite; /* كل 3 دقائق تقريباً */
+}
+
+#phantom-mascot.mascot-dragging {
+    cursor: grabbing;
+    transition: none;
+    z-index: 100000;
+}
+
+/* الصورة كخلفية */
+#mascot-body {
+    width: 100%;
+    height: 100%;
+    background-image: url('phantom-mascot.png');
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    position: relative;
+    border-radius: 20px;
+}
+
+/* طبقة العيون */
+#mascot-eyes {
+    position: absolute;
+    top: 32%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 70%;
+    height: 28%;
+    display: flex;
+    justify-content: space-between;
+    pointer-events: none;
+}
+
+.mascot-eye {
+    width: 22px;
+    height: 22px;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.mascot-pupil {
+    width: 9px;
+    height: 9px;
+    background: #0a0d14;
+    border-radius: 50%;
+    box-shadow: 0 0 6px rgba(0, 242, 254, 0.9);
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    transition: transform 0.12s ease-out;
+}
+
+/* زر البوق */
+#mascot-horn {
+    position: absolute;
+    bottom: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(0, 242, 254, 0.5);
+    color: #00f2fe;
+    font-size: 1rem;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 5;
+    transition: all 0.2s ease;
+}
+
+#mascot-horn:hover {
+    background: rgba(0, 242, 254, 0.25);
+    transform: translateX(-50%) scale(1.15);
+}
+
+#mascot-horn.mascot-horn-bounce {
+    animation: mascotHornBounce 0.4s ease;
+}
+
+@keyframes mascotHornBounce {
+    0%, 100% { transform: translateX(-50%) scale(1); }
+    50% { transform: translateX(-50%) scale(1.35); }
+}
+
+/* اليافطة */
+#mascot-banner {
+    position: absolute;
+    bottom: 105%;
+    left: 50%;
+    transform: translateX(-50%) translateY(-6px);
+    background: rgba(10, 15, 25, 0.92);
+    color: #00ff9d;
+    font-size: 0.65rem;
+    font-weight: 800;
+    padding: 4px 10px;
+    border-radius: 20px;
+    white-space: nowrap;
+    border: 1px solid rgba(0, 255, 150, 0.4);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s ease, transform 0.4s ease;
+}
+
+#mascot-banner.mascot-banner-show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(-12px);
+}
+
+/* فقاعة البوق */
+#mascot-honk-bubble {
+    position: absolute;
+    top: -30px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    font-size: 0.75rem;
+    padding: 4px 10px;
+    border-radius: 12px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+#mascot-honk-bubble.mascot-honk-show {
+    opacity: 1;
+}
+
+/* موجة الزجاج */
+#mascot-glow-wave {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(0, 255, 170, 0.45) 0%, transparent 70%);
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 0;
+    pointer-events: none;
+}
+
+#mascot-glow-wave.mascot-glow-play {
+    animation: glass-wave 1.1s ease-out forwards;
+}
+
+@keyframes glass-wave {
+    0%   { transform: translate(-50%, -50%) scale(0.3); opacity: 0.8; }
+    100% { transform: translate(-50%, -50%) scale(4.5); opacity: 0; }
+}
+
+/* أنيميشن تغيير لون التوهج كل 3 دقائق تقريباً */
+@keyframes mascotGlowCycle {
+    0%   { filter: drop-shadow(0 0 12px rgba(0, 242, 254, 0.75)); }   /* سماوي */
+    16%  { filter: drop-shadow(0 0 12px rgba(0, 255, 136, 0.75)); }   /* أخضر */
+    33%  { filter: drop-shadow(0 0 12px rgba(255, 105, 180, 0.75)); } /* بينك */
+    50%  { filter: drop-shadow(0 0 12px rgba(155, 89, 182, 0.75)); }  /* بنفسجي */
+    66%  { filter: drop-shadow(0 0 12px rgba(255, 152, 0, 0.75)); }   /* برتقالي */
+    83%  { filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.6)); }  /* أبيض */
+    100% { filter: drop-shadow(0 0 12px rgba(0, 242, 254, 0.75)); }   /* رجوع سماوي */
+}
+
+/* تأثيرات الغضب والدوخة (لو لسه مستخدمة) */
+#mascot-body.mascot-greet {
+    animation: mascotGreet 1.2s ease;
+}
+@keyframes mascotGreet {
+    0%, 100% { transform: scale(1); }
+    40% { transform: scale(1.18); }
+}
+
+#mascot-body.mascot-dizzy {
+    animation: mascotSpin 0.9s ease-in-out;
+}
+@keyframes mascotSpin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+#mascot-body.mascot-rage {
+    animation: mascotRageShake 0.12s linear infinite;
+}
+@keyframes mascotRageShake {
+    0%, 100% { transform: translate(0, 0); }
+    25% { transform: translate(-3px, 1px); }
+    75% { transform: translate(3px, -1px); }
+}
