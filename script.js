@@ -6737,22 +6737,31 @@ function setupAIChat() {
         recognition.start();
     };
 
-   window.sendVoiceToAI = async function(userText) {
+  window.sendVoiceToAI = async function(userText) {
     try {
-        // الطلب من ملفات المشروع نفسها بدلاً من سيرفر خارجي (هذا يمنع الحظر)
+        const body = document.getElementById('phantom-chat-body');
+        const typing = showTyping();
+        body.appendChild(typing);
+
         const response = await fetch("https://dmbprvvjmgccgztrhkay.supabase.co/functions/v1/Bobert-ai-", {
-    method: "POST",
-    headers: { 
-        "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ message: text })
-})
+            method: "POST",
+            headers: { 
+                "Content-Type": "application/json",
+                "apikey": "sb_publishable_R9U_-JY91tV87uLBaZjCWQ_wRhVshA5",
+                "Authorization": "Bearer sb_publishable_R9U_-JY91tV87uLBaZjCWQ_wRhVshA5"
+            },
+            body: JSON.stringify({ message: userText })
+        });
 
-        if (!response.ok) throw new Error("Server Error");
-
+        if (!response.ok) throw new Error("Edge Function Error");
         const data = await response.json();
-        const aiResponse = data.response;
-        window.speakBobert(aiResponse); // نطق الرد
+        const aiResponse = data.response || data.reply || "عذراً، لم أستطع الفهم.";
+
+        typing.remove();
+        
+        // ✅ نطق الرد (تأكد أنك سمحت للميكروفون!)
+        window.speakBobert(aiResponse);
+        addMessage(aiResponse, 'bot');
 
         if (userText.includes("العب معي") || userText.includes("العاب")) {
             setTimeout(() => {
@@ -6762,7 +6771,9 @@ function setupAIChat() {
         }
     } catch (error) {
         console.error("AI Error:", error);
+        typing.remove();
         showToast("⚠️ تعذر الاتصال بالذكاء الاصطناعي.", "error");
+        addMessage("عذراً، حدث خطأ في الاتصال.", 'bot');
     }
 };
 
@@ -6879,7 +6890,7 @@ function addMessage(text, sender) {
     body.scrollTop = body.scrollHeight;
 }
 
-function sendMessage() {
+async function sendMessage() {
     const input = document.getElementById('phantom-chat-input');
     const text = input.value.trim();
     if (!text) return;
@@ -6887,27 +6898,44 @@ function sendMessage() {
     addMessage(text, 'user');
     input.value = '';
 
-    // ✅ إظهار مؤشر الكتابة (الشبح اللي بيترسم) زي ما كان بالظبط
+    // ✅ إظهار مؤشر الكتابة (الشبح اللي بيترسم)
     const body = document.getElementById('phantom-chat-body');
     const typing = showTyping();
     body.appendChild(typing);
     body.scrollTop = body.scrollHeight;
 
-    // محاكاة رد بوبرت بعد فترة
-    setTimeout(() => {
+    try {
+        // ✅ الاتصال بالـ Edge Function بتاعتك
+        const response = await fetch("https://dmbprvvjmgccgztrhkay.supabase.co/functions/v1/Bobert-ai-", {
+            method: "POST",
+            headers: { 
+                "Content-Type": "application/json",
+                "apikey": "sb_publishable_R9U_-JY91tV87uLBaZjCWQ_wRhVshA5",
+                "Authorization": "Bearer sb_publishable_R9U_-JY91tV87uLBaZjCWQ_wRhVshA5"
+            },
+            body: JSON.stringify({ message: text })
+        });
+
+        if (!response.ok) throw new Error("Edge Function Error");
+        const data = await response.json();
+        const aiResponse = data.response || "عذراً، لم أستطع الفهم.";
+
+        // ✅ حذف مؤشر الكتابة وإظهار الرد
         typing.remove();
-        const replies = [
-            'تمام يا شبح، تم استلام رسالتك.',
-            'أنا هنا لمساعدتك في أي شيء.',
-            'PHANTOM NODE يعمل بكفاءة.',
-            'اسألني عن أي ميزة في الموقع!'
-        ];
-        const randomReply = replies[Math.floor(Math.random() * replies.length)];
-        addMessage(randomReply, 'bot');
-    }, 7000); // مدة 7 ثواني عشان الشبح يكمل رسمته
+        addMessage(aiResponse, 'bot');
+        
+        // ✅ نطق الرد (لو صوتك شغال)
+        window.speakBobert(aiResponse);
+        
+    } catch (error) {
+        typing.remove();
+        console.error("AI Error:", error);
+        showToast("⚠️ تعذر الاتصال بالذكاء الاصطناعي.", "error");
+        addMessage("عذراً، حدث خطأ في الاتصال.", 'bot');
+    }
 }
 
-// ✅ دالة مؤشر الكتابة (الشبح اللي بيترسم بالنقط) - زي ما كان بالظبط
+// ✅ دالة مؤشر الكتابة (فضلت زي ما هي بالظبط)
 function showTyping() {
     const div = document.createElement('div');
     div.className = 'thinking-ghost-container';
@@ -7921,3 +7949,5 @@ function logoutUser() {
     startLogoutFlow();
 }
 
+
+           
