@@ -8,12 +8,12 @@
     <meta name="description" content="PHANTOM HQ - المقر الإلكتروني الرسمي لكلان PHANTOM">
     <title>PHANTOM HQ | 『PH』</title>
     <link rel="manifest" href="manifest.json">
-    <!-- أيقونة للتطبيق على الآيفون -->
     <link rel="apple-touch-icon" href="./icons/icon-192.png">
-    <!-- إعدادات عرض التطبيق على الآيفون -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="stylesheet" href="style.css">
+    <!-- مكتبة Agora RTC للمكالمات الصوتية -->
+    <script src="https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.21.1/agora-rtc-sdk-ng.min.js"></script>
 </head>
 
 <body>
@@ -24,8 +24,6 @@
     <div id="security-gate" class="gate-overlay">
         <div class="gate-card">
             <div class="gate-logo">『PH』 PHANTOM</div>
-
-            <!-- المرحلة الأولى: رمز دخول الموقع -->
             <div id="gate-step-1" class="gate-step active">
                 <h3>بوابة PHANTOM</h3>
                 <p>أدخل رمز الدخول للوصول إلى مقر الكلان.</p>
@@ -35,23 +33,19 @@
                 </form>
                 <div id="gate-error-msg" class="gate-error"></div>
             </div>
-
-            <!-- المرحلة الثانية: تسجيل الهوية -->
             <div id="gate-step-2" class="gate-step">
                 <h3>تسجيل الهوية</h3>
-                <p>اكتب اسمك داخل الكلان لأول مرة فقط.</p>
+                <p>اكتب اسمك داخل الكلان ومعرفك من اللعبة.</p>
                 <form id="gate-name-form">
                     <input id="username-input" type="text" autocomplete="off" placeholder="اسمك داخل الكلان" maxlength="30" required>
-                    <button type="submit" class="btn-primary">تأكيد الهوية</button>
+                    <input id="user-game-id-input" type="text" autocomplete="off" placeholder="معرفك الفريد (ID) من اللعبة" maxlength="50" required style="margin-top:10px;">
+                    <small style="color:var(--muted); display:block; margin-top:4px; font-size:0.7rem;">سيُستخدم هذا المعرف لربط حسابك.</small>
+                    <button type="submit" class="btn-primary" style="margin-top:10px;">تأكيد الهوية</button>
                 </form>
                 <div id="name-error-msg" class="gate-error"></div>
             </div>
-
-            <!-- المرحلة الثالثة: مناطق ديناميكية (طلب الرجوع + ID) -->
             <div id="gate-rejoin-area" style="display:none; margin-top:15px; text-align:center;"></div>
-            <div id="gate-id-area" style="display:none; margin-top:15px; text-align:center;"></div>
-
-            <!-- المرحلة الرابعة: مستخدم محفوظ -->
+            
             <div id="gate-step-returning" class="gate-step">
                 <h3>مرحبًا بعودتك 👋</h3>
                 <p>تم التعرف على هويتك المحفوظة.</p>
@@ -62,391 +56,768 @@
     </div>
 
     <!-- ==================================================
+         📝 ONBOARDING MODAL (التسجيل الإجباري الأولي)
+    =================================================== -->
+    <div id="onboarding-modal" class="gate-overlay" style="display:none;">
+        <div class="gate-card">
+            <div class="gate-logo">『PH』 PHANTOM</div>
+            <div id="onboarding-step-1" class="gate-step active">
+                <h3>🔐 الرقم السري</h3>
+                <p>أنشئ رقم سري خاص بك للوصول الآمن.</p>
+                <input id="onboarding-password" type="password" inputmode="numeric" autocomplete="off" placeholder="الرقم السري" maxlength="20" required>
+                <button id="onboarding-next-1" type="button" class="btn-primary">التالي</button>
+            </div>
+            <div id="onboarding-step-2" class="gate-step">
+                <h3>🎮 اسم اللاعب في اللعبة</h3>
+                <input id="onboarding-ign" type="text" autocomplete="off" placeholder="اسمك داخل اللعبة" maxlength="30" required>
+                <button id="onboarding-next-2" type="button" class="btn-primary">التالي</button>
+            </div>
+            <div id="onboarding-step-3" class="gate-step">
+                <h3>🆔 معرف اللاعب (ID)</h3>
+                <input id="onboarding-game-id" type="text" autocomplete="off" placeholder="معرفك الفريد (ID) من اللعبة" maxlength="50" required>
+                <button id="onboarding-save-btn" type="button" class="btn-primary">حفظ وبدء</button>
+                <div id="onboarding-error" class="gate-error"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================================================
          🌐 HEADER
     =================================================== -->
     <header class="main-header">
         <div class="header-brand">
-            <div class="brand-logo-wrapper">
-                <div class="brand-logo-text">PH</div>
-            </div>
+            <div class="brand-logo-wrapper"><div class="brand-logo-text"></div></div>
             <div class="brand-titles">
-                <h1>PHANTOM HQ</h1>
-                <button id="season-display-badge" class="season-pill" type="button" aria-label="تفاصيل الموسم">الموسم الأول</button>
+                <h1>PHANTOM 『PH』</h1>
+                <div style="display:flex; align-items:center; gap:5px;">
+                    <button id="season-display-badge" class="season-pill" type="button">الموسم الأول</button>
+                    <button id="settings-trigger" class="season-pill" type="button" style="cursor:pointer;">『PH』</button>
+                </div>
             </div>
         </div>
         <div class="header-actions">
-            <!-- زر القائمة (ثلاثة خطوط) لفتح صندوق الرسائل الخاصة -->
-            <button id="menu-btn" class="icon-btn-menu" type="button" aria-label="الرسائل الخاصة" style="background:transparent; border:none; color:var(--text); font-size:1.5rem; cursor:pointer; position:relative; margin-left:6px;">
-                ☰
-                <span id="unread-badge" style="position:absolute; top:-4px; right:-4px; background:var(--red); color:#fff; border-radius:50%; padding:0 4px; font-size:0.6rem; font-weight:900; min-width:16px; text-align:center; display:none;">0</span>
+            <button id="phantom-ghost-trigger" onclick="toggleGhostMenu()" style="background:transparent; border:none; cursor:pointer; padding:5px; line-height:0; position:relative; z-index:999999;">
+                <svg viewBox="0 0 100 100" width="32" height="32" fill="none" stroke="#00f2fe" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 80 V50 C20 25 35 10 50 10 C65 10 80 25 80 50 V80 L70 70 L60 80 L50 70 L40 80 L30 70 Z"></path>
+                    <circle cx="40" cy="45" r="4" fill="#00f2fe" stroke="none"></circle>
+                    <circle cx="60" cy="45" r="4" fill="#00f2fe" stroke="none"></circle>
+                </svg>
             </button>
-            <!-- زر تعديل الاسم -->
-            <button id="edit-name-btn" class="icon-btn-edit" type="button" aria-label="تعديل الاسم" style="margin-right:6px; background:transparent; border:none; color:var(--cyan); font-size:1.1rem; cursor:pointer;">✏️</button>
-            <button id="admin-panel-trigger" class="icon-btn-shield" type="button" aria-label="لوحة القيادة">🛡️</button>
+            <button type="button" class="btn" id="open-bobert-chat-btn" onclick="openBobertChat()">
+                <strong>CHAT</strong>
+                <div id="container-stars"><div id="stars"></div></div>
+                <div id="glow"><div class="circle"></div><div class="circle"></div></div>
+            </button>
         </div>
     </header>
 
+<!-- ==================================================
+     🌐 MAIN APP
+=================================================== -->
+<main class="app-container">
+    <section id="page-home" class="page-view active">
+        <div class="hero-summary-card">
+            <span class="hero-badge">『PH』 OFFICIAL HQ</span>
+            <h2>مرحبًا بك في مقر PHANTOM ⚡</h2>
+            <p>كلان منظم، لعب جماعي، منافسة ومتعة بدون ضغط.</p>
+            <div class="stats-counters-grid">
+                <div class="stat-box small-box"><span id="total-count-badge" class="stat-num">0</span><span class="stat-lbl">إجمالي الأعضاء</span></div>
+                <div class="stat-box small-box"><span id="stat-leaders-count" class="stat-num">0</span><span class="stat-lbl">القيادة</span></div>
+                <div class="stat-box small-box"><span id="stat-attendance-rate" class="stat-num">0%</span><span class="stat-lbl">نسبة حضور الرومات</span></div>
+            </div>
+        </div>
+
+       <div id="poll-section-wrapper" style="display: none;">
+    <div class="section-title-wrap"><h3>📊 استطلاع الكلان</h3><span class="points-tag">+10 نقطة</span></div>
+    <div id="active-poll-card" class="poll-main-card"></div>
+</div>
+
+        <div class="presence-widget-card">
+            <div class="presence-header"><h3>🟢 المتواجدون الآن</h3><span id="online-count-badge" class="online-indicator">0 متواجد الآن</span></div>
+            <div id="online-members-list" class="online-list-container"></div>
+        </div>
+
+        <div class="quick-roster-card">
+            <div class="section-title-wrap"><h3>👥 أعضاء الكلان</h3><a href="#" class="view-all-link" data-target="page-roster">✨ عرض الكل</a></div>
+            <div id="roster-preview-list" class="roster-chips-wrap"></div>
+        </div>
+    </section>
+
+    <section id="page-roster" class="page-view">
+        <div class="page-header-box"><h2>👥 سجل أعضاء PHANTOM</h2><p>القائمة الرسمية لأعضاء الكلان.</p></div>
+        <div class="wide-roster-container">
+            <div class="wide-roster-header"><span>أعضاء الكلان</span><span class="wide-roster-count">العدد: <strong id="roster-total-count">0</strong></span></div>
+            <div id="roster-grid" class="wide-roster-body"></div>
+        </div>
+    </section>
+
+    <section id="page-leadership" class="page-view">
+        <div class="page-header-box"><h2>👑 قيادة PHANTOM</h2><p>المؤسسون والقيادة الرسمية للكلان.</p></div>
+        <div id="leadership-grid" class="leadership-cards-grid"></div>
+    </section>
+
+    <section id="page-schedule" class="page-view">
+        <div class="page-header-box"><h2>📅 مواعيد وفعاليات الرومات</h2><p>جدول ومواعيد الفعاليات والرومات القادمة والنشطة.</p></div>
+        <div id="schedule-grid" class="schedule-cards-grid"></div>
+        <button id="send-excuse-btn" class="btn-warning" type="button" style="margin-top:15px; width:100%;">⏳ إرسال عذر لعدم الحضور</button>
+    </section>
+
+    <section id="page-leaderboard" class="page-view">
+        <div class="page-header-box leaderboard-hero"><h2>🏆 صدارة الموسم</h2><p>ترتيب أعضاء الكلان حسب النقاط والمشاركات.</p><div class="leaderboard-highlight-banner"><span class="badge-fire">🔥 تنافس الصدارة</span><span>احصل على أكبر عدد من النقاط لتصدر القائمة!</span></div></div>
+        <div id="leaderboard-list" class="leaderboard-container"></div>
+    </section>
+
+    <section id="page-chat" class="page-view">
+        <div class="whatsapp-chat-container">
+            <div class="whatsapp-chat-header">
+                <div class="wa-avatar">『PH』</div>
+                <div class="wa-header-info"><h3>شات كلان PHANTOM</h3><div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;"><span class="wa-status-text">متصل الآن</span><span id="chat-online-counter" style="font-size:0.7rem; color:var(--silver-muted);">0 متصلين حالياً</span></div></div>
+                <button id="voice-call-btn" class="icon-btn-call" type="button" style="background:transparent; border:none; color:var(--cyan); font-size:1.2rem; cursor:pointer; margin-right:auto;">📞</button>
+            </div>
+            <div class="chat-wrapper-card whatsapp-style-card">
+                <div id="chat-messages-container" class="chat-bubbles-area whatsapp-messages-area"></div>
+                <div id="chat-edit-container" style="display:none;">
+                    <div class="edit-warning-header">
+                        <span id="chat-warning-icon" class="warning-icon">🚨</span>
+                        <span class="warning-text">تم حظر الرسالة بسبب كلمات مسيئة! يرجى تعديل النص لإرسالها.</span>
+                    </div>
+                    <input id="chat-edit-input" type="text" placeholder="عدل النص هنا...">
+                    <div class="edit-actions">
+                        <button id="chat-edit-save-btn" class="btn-danger" style="border:1px solid #fff;">حفظ وإرسال</button>
+                        <button id="chat-edit-cancel-btn" class="btn-secondary">إلغاء</button>
+                    </div>
+                </div>
+                <form id="chat-input-form" class="chat-form-bar whatsapp-form-bar">
+                    <!-- قائمة اختيار الأعضاء للمنشن -->
+                    <div id="mention-menu" style="display:none; position:absolute; bottom:80px; right:15px; background:#0b1019; border:1px solid var(--cyan); border-radius:10px; padding:10px; z-index:9999; max-width:280px; width:90%; box-shadow:0 4px 20px rgba(0,242,254,0.3);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <strong style="color:var(--cyan); font-size:0.85rem;">اختر الأعضاء:</strong>
+                            <button id="mention-done-btn" style="background:var(--green); color:#000; border:none; padding:4px 12px; border-radius:6px; font-weight:900; cursor:pointer;">تم</button>
+                        </div>
+                        <div id="mention-members-list" style="max-height:200px; overflow-y:auto; display:flex; flex-direction:column; gap:5px;"></div>
+                    </div>
+                    <input id="chat-message-input" type="text" autocomplete="off" maxlength="300" placeholder="اكتب رسالة..." required>
+                    <button type="submit" class="btn-send-chat whatsapp-send-btn">إرسال</button>
+                </form>
+            </div>
+        </div>
+        <div id="voice-room-panel" style="display:none; margin-top:15px; background:rgba(0,242,254,0.05); border:1px solid rgba(0,242,254,0.3); border-radius:12px; padding:15px;">
+            <h4 style="margin:0 0 10px; color:var(--cyan);">🎙️ الغرفة الصوتية النشطة</h4>
+            <div id="voice-members-list" style="display:flex; flex-direction:column; gap:8px; max-height:150px; overflow-y:auto;"></div>
+            <button id="leave-voice-room-btn" class="btn-danger" style="width:100%; margin-top:10px;">🚪 مغادرة الغرفة</button>
+        </div>
+    </section>
+
+    <section id="page-clips" class="page-view">
+        <div class="page-header-box"><h2>🎬 Clips</h2><p>أفضل فيديو في الأسبوع من اختيار المؤسسين.</p></div>
+        <div id="clips-container" style="padding:10px 0;"></div>
+    </section>
+
+    <section id="page-rules" class="page-view">
+        <div class="page-header-box"><h2>📜 قوانين PHANTOM</h2><p>نظام الكلان والخطوط الحمراء.</p></div>
+        <div class="rules-block-card"><h3>📌 القوانين العامة</h3><ul id="general-rules-list" class="styled-rules-list"></ul></div>
+        <div class="rules-block-card"><h3>⚠️ نظام العقوبات</h3><div id="clearance-system-list"></div></div>
+        <div class="rules-block-card warnings-public-card"><h3>🚨 سجل الإنذارات الحالية</h3><div id="active-warnings-public-list" class="warnings-live-list"></div></div>
+    </section>
+
+    <section id="page-links" class="page-view">
+        <div class="page-header-box"><h2>🔗 روابط التواصل الرسمي</h2><p>المجتمعات الحصرية (واتساب، ديسكورد).</p></div>
+        <div id="links-grid" class="links-cards-grid"></div>
+    </section>
+</main>
     <!-- ==================================================
-         🌐 MAIN APP
-    =================================================== -->
-    <main class="app-container">
+     🪪 SEASON INFO MODAL
+=================================================== -->
+<div id="season-info-modal" class="side-drawer" aria-hidden="true">
+    <div id="season-info-overlay" class="drawer-overlay"></div>
+    <div class="drawer-content">
+        <div class="drawer-header"><h2>🏆 معلومات الموسم</h2><button id="close-season-info-btn" class="drawer-close-btn" type="button"> [PH]</button></div>
+        <div class="drawer-body">
+            <div class="admin-tool-card"><h4>الموسم الحالي</h4><div id="season-name-display" class="stat-num">الموسم الأول</div></div>
+            <div class="admin-tool-card"><h4>⏳ الوقت المتبقي</h4><div id="season-days-remaining" class="stat-num">حساب الأيام...</div><p>يتم تجديد الموسم تلقائيًا كل شهرين.</p></div>
+        </div>
+    </div>
+</div>
 
-        <!-- ==============================================
-             🏠 HOME
-        =============================================== -->
-        <section id="page-home" class="page-view active">
-            <div class="hero-summary-card">
-                <span class="hero-badge">『PH』 OFFICIAL HQ</span>
-                <h2>مرحبًا بك في مقر PHANTOM ⚡</h2>
-                <p>كلان منظم، لعب جماعي، منافسة ومتعة بدون ضغط.</p>
+<!-- ==================================================
+     🎛️ PHANTOM HUB (مركز الخدمات)
+=================================================== -->
+<div id="phantom-hub-overlay" class="hub-overlay" style="display:none;">
+    <div class="hub-container">
+        <div class="hub-header">
+            <h2>🎛️ PHANTOM Hub</h2>
+            <button id="hub-close-btn" class="hub-close-btn" type="button"> [PH]</button>
+        </div>
+        <div id="hub-grid" class="hub-grid">
+            <div class="hub-card" id="open-pacman-fullscreen-btn"><div class="hub-card-icon">👾</div><div class="hub-card-title">PHANTOM MAZE</div><div class="hub-card-desc">متاهة الوحوش والأشباح</div><span class="hub-badge">جديد!</span></div>
+            <div class="hub-card" id="open-wheel-fullscreen-btn"><div class="hub-card-icon">🎡</div><div class="hub-card-title">عجلة الحظ</div><div class="hub-card-desc">محاولة يومية لجوائز عشوائية</div></div>
+            <div class="hub-card" id="open-game-fullscreen-btn"><div class="hub-card-icon">🎮</div><div class="hub-card-title">الميني جيم</div><div class="hub-card-desc">اختبار سرعة الأصابع ونقاط إضافية</div></div>
+            <div class="hub-card" id="open-vault-fullscreen-btn"><div class="hub-card-icon">🔒</div><div class="hub-card-title">الخزنة الاستثمارية</div><div class="hub-card-desc">تجميد واستثمار النقاط</div></div>
+            <div class="hub-card" id="open-store-fullscreen-btn"><div class="hub-card-icon">🛒</div><div class="hub-card-title">المتجر والمزايا</div><div class="hub-card-desc">ألقاب، إطارات نيون، وكروت</div></div>
+            <div class="hub-card" id="open-battle-fullscreen-btn"><div class="hub-card-icon">⚔️</div><div class="hub-card-title">معركة الشعبية 1v1</div><div class="hub-card-desc">ساحة التنافس ودعم الـ PK</div></div>
+        </div>
+    </div>
+</div>
 
-                <div class="stats-counters-grid">
-                    <div class="stat-box small-box">
-                        <span id="total-count-badge" class="stat-num">0</span>
-                        <span class="stat-lbl">إجمالي الأعضاء</span>
+<!-- ==================================================
+     🏆 الصفحات الكاملة (Full Screen) للخدمات الستة
+=================================================== -->
+
+<!-- 👾 1. PHANTOM MAZE (Pac-Man) -->
+<div id="pacman-overlay" class="fullscreen-overlay" style="display:none;">
+    <div class="fullscreen-container">
+        <div class="fullscreen-header">
+            <h2>👾 PHANTOM MAZE</h2>
+            <button id="pacman-close-btn" class="fullscreen-close-btn" type="button">[PH]</button>
+        </div>
+        <div id="pacman-menu" style="text-align:center; flex:1; display:flex; flex-direction:column; justify-content:center;">
+            <p style="color:var(--cyan); font-size:1.4rem; font-weight:900; margin-bottom:20px;">اختر مستوى التحدي</p>
+            <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+                <button id="pacman-easy" class="btn-success" style="padding:15px 30px; border-radius:10px; font-size:1.1rem; font-weight:900;">🟢 سهل</button>
+                <button id="pacman-medium" class="btn-warning" style="padding:15px 30px; border-radius:10px; font-size:1.1rem; font-weight:900;">🟡 متوسط</button>
+                <button id="pacman-hard" class="btn-danger" style="padding:15px 30px; border-radius:10px; font-size:1.1rem; font-weight:900;">🔴 صعب</button>
+            </div>
+            <p style="color:var(--muted); margin-top:20px; font-size:0.9rem;">💡 كلما زادت الصعوبة، زادت سرعة الأشباح وزادت الجوائز!</p>
+        </div>
+        <div id="pacman-game" style="display:none; flex:1; flex-direction:column; align-items:center; justify-content:center;">
+            <div style="display:flex; justify-content:space-between; width:100%; max-width:800px; margin-bottom:10px;">
+                <span style="color:var(--white); font-weight:900;">الأرواح: <span id="pacman-lives" style="color:var(--red);">♥♥♥</span></span>
+            </div>
+            <div id="pacman-reward-msg" style="display:none; background:rgba(0,255,136,0.1); border:1px solid var(--green); color:var(--green); padding:10px; border-radius:8px; margin-bottom:10px; font-weight:900; text-align:center;"></div>
+            <canvas id="pacman-canvas" style="width:100%; max-width:1000px; height:auto; border:2px solid #00ffff; box-shadow:0 0 20px rgba(0,255,255,0.5); background:#000; border-radius:10px; touch-action:none;"></canvas>
+            <div id="pacman-result-msg" style="display:none; margin-top:10px; padding:12px; border-radius:10px; text-align:center; font-weight:900; font-size:1.05rem;"></div>
+            <div style="display:flex; gap:10px; margin-top:15px; width:100%; max-width:800px;">
+                <button id="pacman-restart" class="btn-primary" style="flex:1; height:45px;">🔄 إعادة اللعبة</button>
+                <button id="pacman-exit" class="btn-danger" style="flex:1; height:45px;">🚪 خروج</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 🎡 2. عجلة الحظ -->
+<div id="wheel-overlay" class="fullscreen-overlay" style="display:none;">
+    <div class="fullscreen-container">
+        <div class="fullscreen-header">
+            <h2>🎡 عجلة الحظ</h2>
+            <button id="wheel-close-btn" class="fullscreen-close-btn" type="button">[PH]</button>
+        </div>
+        <div class="daily-content-wrapper">
+            <div class="streak-header-box" style="text-align:center;">
+                <div class="streak-row" style="justify-content:center;">
+                    <span class="streak-icon" style="font-size:2rem;">🎡</span>
+                    <span style="font-size:1.05rem; font-weight:700;">المحاولات المتاحة اليوم: <strong id="wheel-attempts" class="cyan-text">1</strong></span>
+                </div>
+                <div class="streak-hint">💡 جرب حظك واربح نقاطاً أو لقباً مميزاً!</div>
+            </div>
+            <div id="wheel-content" style="flex:1; display:flex; align-items:center; justify-content:center; flex-direction:column;">
+                <div class="wheel-container" style="position:relative; width:300px; height:300px; margin:0 auto;">
+                    <div style="position:absolute; top:-15px; left:50%; transform:translateX(-50%); z-index:10; color:var(--cyan); font-size:2rem; text-shadow:0 0 15px var(--cyan-glow); filter:drop-shadow(0 4px 8px rgba(0,0,0,0.6));">▼</div>
+                    <canvas id="wheel-canvas" width="300" height="300" style="border-radius:50%; border:4px solid var(--cyan); box-shadow:0 0 30px var(--cyan-glow);"></canvas>
+                </div>
+                <button id="spin-btn" class="btn-primary pulse-active" style="width:100%; margin-top:20px; height:50px; font-size:1.1rem;">🎡 إدارة العجلة الآن</button>
+                <button id="buy-spin-btn" class="btn-accent" style="width:100%; margin-top:10px; height:40px; font-size:0.9rem;">💰 شراء محاولة إضافية (50 نقطة)</button>
+                <div id="wheel-result-msg" style="display:none; margin-top:15px; padding:12px; border-radius:10px; text-align:center; font-weight:900; font-size:1.05rem;"></div>    
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 🎮 3. الميني جيم (Snake Game) -->
+<div id="game-overlay" class="fullscreen-overlay" style="display:none;">
+    <div class="fullscreen-container">
+        <div class="fullscreen-header">
+            <h2>🐍 لعبة الثعبان (Phantom Snake)</h2>
+            <button id="game-close-btn" class="fullscreen-close-btn" type="button">[PH]</button>
+        </div>
+        <div class="daily-content-wrapper">
+            <div class="streak-header-box" style="text-align:center;">
+                <div class="streak-row" style="justify-content:center; flex-wrap:wrap; gap:15px;">
+                    <span>🍎 الفواكه: <strong id="game-fruits" class="cyan-text">0</strong></span>
+                    <span>💰 النقاط المكتسبة: <strong id="game-points" class="cyan-text">0</strong></span>
+                    <span>🏆 الأفضل: <strong id="game-best" class="cyan-text">0</strong></span>
+                </div>
+            </div>
+            <div id="game-content" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:15px;">
+                <div style="position:relative; width:100%; max-width:400px;">
+                    <canvas id="game-canvas" width="400" height="400" style="width:100%; height:auto; aspect-ratio:1/1; border-radius:var(--radius-md); border:2px solid var(--cyan); box-shadow:0 0 30px var(--cyan-glow); background:#0a0d14;"></canvas>
+                </div>
+                <div style="display:flex; gap:10px; width:100%; max-width:400px;">
+                    <button id="game-start-btn" class="btn-primary pulse-active" style="flex:1; height:45px; font-size:1rem;">🚀 بدء اللعبة</button>
+                    <button id="game-restart-btn" class="btn-accent" style="flex:1; height:45px; font-size:1rem;">🔄 إعادة المحاولة</button>
+                </div>
+                <div style="text-align:center; color:var(--muted); font-size:0.8rem; margin-top:5px;">
+                    📱 التحكم: اسحب بأصبعك في أي اتجاه للتوجيه<br>🛡️ حماية: نظام منع الانعكاس المفاجئ مفعّل
+                    <div id="snake-result-msg" style="display:none; margin-top:12px; padding:12px; border-radius:10px; text-align:center; font-weight:900; font-size:1.05rem;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 🔒 4. الخزنة الاستثمارية (Phantom Vault) -->
+<div id="vault-overlay" class="fullscreen-overlay luxury-vault" style="display:none;">
+    <div class="fullscreen-container luxury-bg">
+        <div class="fullscreen-header">
+            <h2 style="font-size: 1.3rem; font-weight: 900; color: #d4af37;">خزنة الاستثمار</h2>
+            <button id="vault-close-btn" class="fullscreen-close-btn">『PH』</button>
+        </div>
+        
+        <div class="vault-luxury-wrapper">
+            <!-- الرصيد المتاح -->
+            <div class="luxury-card">
+                <div class="luxury-label">الرصيد المتاح</div>
+                <div class="luxury-value"><span id="vault-user-balance">0</span> <span style="font-size:0.8rem;">نقطة</span></div>
+            </div>
+
+            <!-- عائد سنوي APR -->
+            <div class="apr-circle">
+                <div class="apr-inner">
+                    <span class="apr-title">عائد سنوي</span>
+                    <span class="apr-rate">25%</span>
+                    <span class="apr-sub">APR</span>
+                </div>
+            </div>
+
+            <!-- حقل الإدخال -->
+            <label class="luxury-label" style="margin-top:15px;">أدخل المبلغ (نقطة)</label>
+            <div class="luxury-input-wrap">
+                <input type="number" id="vault-deposit-input" value="0" min="0" class="luxury-input" style="text-align:center;">
+                <span style="color:var(--gold); font-weight:bold;">(نقطة)</span>
+            </div>
+
+            <!-- أزرار النسب -->
+            <div class="luxury-percent-btns">
+                <button class="vault-percent-btn luxury-btn" data-percent="0.25">25%</button>
+                <button class="vault-percent-btn luxury-btn" data-percent="0.5">50%</button>
+                <button class="vault-percent-btn luxury-btn" data-percent="0.75">75%</button>
+                <button class="vault-percent-btn luxury-btn" data-percent="1">كل الرصيد</button>
+            </div>
+
+            <!-- مدة التجميد والأرباح المتوقعة -->
+            <div class="luxury-info-grid">
+                <div class="luxury-small-card">
+                    <div class="luxury-small-label">مدة التجميد</div>
+                    <div class="luxury-small-value">3 أيام</div>
+                </div>
+                <div class="luxury-small-card">
+                    <div class="luxury-small-label">الأرباح المتوقعة</div>
+                    <div class="luxury-small-value" style="color:#ffd700;">+<span id="vault-expected-profit">0</span></div>
+                    <div style="font-size:0.7rem; color:var(--muted);" id="vault-expected-total">(الإجمالي: 0)</div>
+                </div>
+            </div>
+
+            <!-- زر التأكيد الذهبي -->
+            <button id="vault-confirm-btn" class="luxury-confirm-btn" style="margin-top:20px; width:100%; height:55px; border-radius:12px;">🔒 تأكيد تجميد المبلغ</button>
+            
+            <!-- قسم الخزنة النشطة -->
+            <div id="vault-active-section" style="display:none; margin-top:15px; background:rgba(212,175,55,0.1); border:1px solid var(--gold); border-radius:12px; padding:15px;">
+                <div style="display:flex; justify-content:space-between; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:5px;">
+                    <span style="color:#ffd700;">⏱️ استثمار نشط:</span>
+                    <div style="color:#fff;"> <span id="vault-active-deposit">0</span> ⬅️ <span id="vault-active-target" style="color:#ffd700;">0</span></div>
+                </div>
+                <div style="text-align:center; padding:5px;">
+                    <span style="color:var(--muted);">باقي:</span>
+                    <span id="vault-countdown-timer" style="color:#ffd700; font-weight:900; display:block; margin-top:4px;">00 يوم : 00 ساعة : 00 دقيقة : 00 ثانية</span>
+                </div>
+                <button id="vault-action-btn" class="btn-danger" style="width:100%; margin-top:10px; height:45px; background:linear-gradient(135deg,#ff4d4d,#d4af37); color:#fff; font-weight:900;">⚠️ كسر الخزنة (بدون أرباح)</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 🛒 5. المتجر والمزايا (Phantom Shop) -->
+<div id="store-overlay" class="fullscreen-overlay" style="display:none;">
+    <div class="fullscreen-container" style="background:#1a202c !important;">
+        <div class="fullscreen-header">
+            <h2 style="font-size: 1.1rem; font-weight: 900; color: var(--text);">متجر العشيرة</h2>
+            <button id="store-close-btn" class="fullscreen-close-btn">『PH』</button>
+        </div>
+        
+        <!-- رأس المتجر -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding: 0 10px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <div style="width: 32px; height: 32px; border-radius: 50%; background: rgba(212, 175, 55, 0.15); display: flex; align-items: center; justify-content: center; font-size: 1rem;">💰</div>
+                <div style="display: flex; flex-direction: column; line-height: 1.2;">
+                    <span style="font-size: 0.6rem; color: var(--muted);">الرصيد</span>
+                    <strong id="shop-user-balance" style="font-size: 1rem; color: var(--gold); font-weight: 900;">0</strong>
+                </div>
+            </div>
+            
+            <!-- زر الفلاتر الدائري -->
+            <div style="position: relative;">
+                <button id="shop-filter-trigger" style="width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text); font-size: 1.1rem; cursor: pointer; transition: 0.3s; display:flex; align-items:center; justify-content:center;">☰</button>
+                
+                <!-- القائمة المنسدلة (Dropdown - Fixed لتظهر فوق المحتوى وتمنع تحريك الشاشة) -->
+                <div id="shop-filter-menu" style="display: none; position: fixed; top: 100px; left: 20px; right: 20px; background: rgba(16, 23, 34, 0.98); border: 1px solid var(--border-light); border-radius: 12px; padding: 10px; z-index: 9999; box-shadow: 0 10px 30px rgba(0,0,0,0.6);">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                        <button class="shop-filter-option active" data-filter="all" style="padding: 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-weight: bold; cursor: pointer;">📦 الكل</button>
+                        <button class="shop-filter-option" data-filter="frame" style="padding: 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-weight: bold; cursor: pointer;">🖼️ الإطارات</button>
+                        <button class="shop-filter-option" data-filter="title" style="padding: 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-weight: bold; cursor: pointer;">🏷️ الألقاب</button>
+                        <button class="shop-filter-option" data-filter="name_color" style="padding: 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-weight: bold; cursor: pointer;">🎨 الألوان</button>
+                        <button class="shop-filter-option" data-filter="background" style="padding: 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-weight: bold; cursor: pointer;">🌌 الخلفيات</button>
+                        <button class="shop-filter-option" data-filter="chat_effect" style="padding: 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-weight: bold; cursor: pointer;">💬 التأثيرات</button>
+                        <button class="shop-filter-option" data-filter="card" style="padding: 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-weight: bold; cursor: pointer;">💳 الكروت</button>
                     </div>
-                    <div class="stat-box small-box">
-                        <span id="stat-leaders-count" class="stat-num">0</span>
-                        <span class="stat-lbl">القيادة</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- شبكة المتجر -->
+        <div id="shop-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 0 10px 20px 10px;"></div>
+    </div>
+</div>
+
+        <!-- شبكة المتجر الأنيقة -->
+        <div id="shop-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 0 10px 20px 10px;"></div>
+    </div>
+</div>
+
+<!-- ⚔️ 6. معركة الشعبية 1v1 -->
+<div id="battle-overlay" class="fullscreen-overlay" style="display:none;">
+    <div class="fullscreen-container">
+        <div class="fullscreen-header">
+            <h2>⚔️ معركة الشعبية 1v1</h2>
+            <button id="battle-close-btn" class="fullscreen-close-btn" type="button">[PH]</button>
+        </div>
+        <div class="daily-content-wrapper">
+            <div id="battle-lobby">
+                <div class="streak-header-box" style="text-align:center;">
+                    <div class="streak-row" style="justify-content:center;">
+                        <span class="streak-icon" style="font-size:3rem;">⚔️</span>
                     </div>
-                    <!-- تم استبدال إجمالي النقاط بنسبة حضور الرومات -->
-                    <div class="stat-box small-box">
-                        <span id="stat-attendance-rate" class="stat-num">0%</span>
-                        <span class="stat-lbl">نسبة حضور الرومات</span>
-                    </div>
+                    <p style="color:var(--white); font-weight:900; font-size:1.3rem; margin:10px 0 5px;">انضم لساحة المعركة</p>
+                    <div class="streak-hint">💡 اضغط "استعد" لبدء البحث عن خصم وابدأ المواجهة!</div>
                 </div>
+                <button id="battle-ready-btn" class="btn-primary pulse-active" style="width:100%; height:50px; font-size:1.1rem; border-radius:12px; margin-top:10px;">⚔️ استعد</button>
             </div>
-
-            <!-- 📊 ACTIVE POLL -->
-            <div id="poll-section-wrapper" class="poll-wrapper-box">
-                <div class="section-title-wrap">
-                    <h3>📊 استطلاع الكلان</h3>
-                    <span class="points-tag">+10 نقطة</span>
+            <div id="battle-arena" style="display:none; flex-direction:column; gap:15px;">
+                <div class="streak-header-box" style="border:none; background:transparent; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
+                    <div style="font-size:1.1rem; font-weight:900; color:var(--white); display:flex; align-items:center; gap:8px;">⏱️ <span id="battle-timer" style="color:var(--cyan);">05:00</span></div>
+                    <div style="font-size:1rem; font-weight:900; color:var(--gold);">🏆 جائزة الفائز: 500 نقطة</div>
                 </div>
-                <div id="active-poll-card" class="poll-main-card"></div>
-            </div>
-
-            <!-- 🟢 ONLINE MEMBERS -->
-            <div class="presence-widget-card">
-                <div class="presence-header">
-                    <h3>🟢 المتواجدون الآن</h3>
-                    <span id="online-count-badge" class="online-indicator">0 متواجد الآن</span>
-                </div>
-                <div id="online-members-list" class="online-list-container"></div>
-            </div>
-
-            <!-- 👥 QUICK ROSTER -->
-            <div class="quick-roster-card">
-                <div class="section-title-wrap">
-                    <h3>👥 أعضاء الكلان</h3>
-                    <a href="#" class="view-all-link" data-target="page-roster">✨ عرض الكل</a>
-                </div>
-                <div id="roster-preview-list" class="roster-chips-wrap"></div>
-            </div>
-        </section>
-
-        <!-- ==============================================
-             👥 MEMBERS
-        =============================================== -->
-        <section id="page-roster" class="page-view">
-            <div class="page-header-box">
-                <h2>👥 سجل أعضاء PHANTOM</h2>
-                <p>القائمة الرسمية لأعضاء الكلان.</p>
-            </div>
-            <div class="wide-roster-container">
-                <div class="wide-roster-header">
-                    <span>أعضاء الكلان</span>
-                    <span class="wide-roster-count">العدد: <strong id="roster-total-count">0</strong></span>
-                </div>
-                <div id="roster-grid" class="wide-roster-body"></div>
-            </div>
-            <!-- مربع أكثر الأعضاء نشاطاً -->
-            <div class="wide-roster-container" style="margin-top:20px;">
-                <div class="wide-roster-header">
-                    <span>🔥 أكثر الأعضاء نشاطاً</span>
-                </div>
-                <div id="most-active-container" class="wide-roster-body"></div>
-            </div>
-        </section>
-
-        <!-- ==============================================
-             👑 LEADERSHIP
-        =============================================== -->
-        <section id="page-leadership" class="page-view">
-            <div class="page-header-box">
-                <h2>👑 قيادة PHANTOM</h2>
-                <p>المؤسسون والقيادة الرسمية للكلان.</p>
-            </div>
-            <div id="leadership-grid" class="leadership-cards-grid"></div>
-        </section>
-
-        <!-- ==============================================
-             📅 ROOMS & SCHEDULE
-        =============================================== -->
-        <section id="page-schedule" class="page-view">
-            <div class="page-header-box">
-                <h2>📅 مواعيد وفعاليات الرومات</h2>
-                <p>جدول ومواعيد الفعاليات والرومات القادمة والنشطة.</p>
-            </div>
-            <div id="schedule-grid" class="schedule-cards-grid"></div>
-            <!-- زر إرسال عذر -->
-            <button id="send-excuse-btn" class="btn-warning" type="button" style="margin-top:15px; width:100%;">⏳ إرسال عذر لعدم الحضور</button>
-        </section>
-
-        <!-- ==============================================
-             🏆 LEADERBOARD
-        =============================================== -->
-        <section id="page-leaderboard" class="page-view">
-            <div class="page-header-box leaderboard-hero">
-                <h2>🏆 صدارة الموسم</h2>
-                <p>ترتيب أعضاء الكلان حسب النقاط والمشاركات.</p>
-                <div class="leaderboard-highlight-banner">
-                    <span class="badge-fire">🔥 تنافس الصدارة</span>
-                    <span>احصل على أكبر عدد من النقاط لتصدر القائمة!</span>
-                </div>
-            </div>
-            <div id="leaderboard-list" class="leaderboard-container"></div>
-        </section>
-
-        <!-- ==============================================
-             💬 CHAT
-        =============================================== -->
-        <section id="page-chat" class="page-view">
-            <div class="whatsapp-chat-container">
-                <!-- هيدر الشات -->
-                <div class="whatsapp-chat-header">
-                    <div class="wa-avatar">『PH』</div>
-                    <div class="wa-header-info">
-                        <h3>شات كلان PHANTOM</h3>
-                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                            <span class="wa-status-text">متصل الآن</span>
-                            <span id="chat-online-counter" style="font-size:0.7rem; color:var(--silver-muted);">0 متصلين حالياً</span>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0;">
+                    <div class="battle-fighter" id="battle-fighter-a" style="text-align:center; flex:1;">
+                        <div class="fighter-avatar" id="avatar-a" style="width:80px; height:80px; border-radius:50%; border:4px solid #9ca3af; box-shadow:0 0 20px #9ca3af; display:flex; align-items:center; justify-content:center; background:#1f2937; margin:0 auto;">
+                            <svg viewBox="0 0 24 24" width="45" height="45" fill="#9ca3af"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
                         </div>
+                        <div class="fighter-name" id="fighter-name-a" style="font-weight:900; color:var(--white); font-size:1rem; margin-top:5px;">[اللاعب أ]</div>
+                        <div class="fighter-points" id="fighter-points-a" style="color:var(--cyan); font-size:0.9rem; font-weight:900;">+0</div>
                     </div>
-                    <!-- زر المكالمات الصوتية -->
-                    <button id="voice-call-btn" class="icon-btn-call" type="button" aria-label="مكالمة صوتية" style="background:transparent; border:none; color:var(--cyan); font-size:1.2rem; cursor:pointer; margin-right:auto;">📞</button>
-                </div>
-
-                <div class="chat-wrapper-card whatsapp-style-card">
-                    <div id="chat-messages-container" class="chat-bubbles-area whatsapp-messages-area"></div>
-
-                    <!-- مربع التعديل للكلمات المسيئة -->
-                    <div id="chat-edit-container" style="display:none;">
-                        <div class="edit-warning-header">
-                            <span id="chat-warning-icon" class="warning-icon">⚠️</span>
-                            <span class="warning-text">تم حظر الرسالة بسبب كلمات مسيئة. عدل النص لإرسالها.</span>
+                    <div style="font-size:2.5rem; font-weight:900; color:var(--red); text-shadow:0 0 30px rgba(255,0,0,0.5); animation:cardPulse 1.5s ease-in-out infinite;">VS</div>
+                    <div class="battle-fighter" id="battle-fighter-b" style="text-align:center; flex:1;">
+                        <div class="fighter-avatar" id="avatar-b" style="width:80px; height:80px; border-radius:50%; border:4px solid #fbbf24; box-shadow:0 0 20px #fbbf24; display:flex; align-items:center; justify-content:center; background:#1f2937; margin:0 auto;">
+                            <svg viewBox="0 0 24 24" width="45" height="45" fill="#fbbf24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
                         </div>
-                        <input id="chat-edit-input" type="text" placeholder="عدل النص هنا...">
-                        <div class="edit-actions">
-                            <button id="chat-edit-save-btn" class="btn-success">حفظ وإرسال</button>
-                            <button id="chat-edit-cancel-btn" class="btn-secondary">إلغاء</button>
-                        </div>
+                        <div class="fighter-name" id="fighter-name-b" style="font-weight:900; color:var(--white); font-size:1rem; margin-top:5px;">[اللاعب ب]</div>
+                        <div class="fighter-points" id="fighter-points-b" style="color:var(--cyan); font-size:0.9rem; font-weight:900;">+0</div>
                     </div>
-
-                    <form id="chat-input-form" class="chat-form-bar whatsapp-form-bar">
-                        <input id="chat-message-input" type="text" autocomplete="off" maxlength="300" placeholder="اكتب رسالة..." required>
-                        <button type="submit" class="btn-send-chat whatsapp-send-btn" aria-label="إرسال">إرسال</button>
-                    </form>
+                </div>
+                <div class="pk-bar-container" style="background:rgba(255,255,255,0.05); border-radius:50px; height:25px; position:relative; border:1px solid var(--border); overflow:hidden; display:flex;">
+                    <div id="pk-bar-fill" style="width:50%; height:100%; background:#00ff88; position:absolute; left:0; top:0; border-radius:50px; transition:width 0.5s ease; z-index:2; box-shadow:0 0 15px rgba(0,255,136,0.3);"></div>
+                    <div style="flex:1; display:flex; justify-content:space-between; padding:0 15px; align-items:center; position:relative; z-index:3;">
+                        <span style="font-size:0.8rem; font-weight:900; color:var(--cyan);" id="pk-left-label">[اللاعب أ] 50%</span>
+                        <span style="font-size:0.8rem; font-weight:900; color:var(--red);" id="pk-right-label">[اللاعب ب] 50%</span>
+                    </div>
+                </div>
+                <div class="betting-section" style="background:rgba(0,242,254,0.03); border:1px solid rgba(0,242,254,0.15); border-radius:12px; padding:15px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <span style="font-weight:700; color:var(--white);">💰 رصيدك: <span id="betting-balance" style="color:var(--cyan);">0</span> نقطة</span>
+                        <button id="battle-cancel-btn" class="btn-danger" style="padding:4px 12px; font-size:0.7rem;">استسلام</button>
+                    </div>
+                    <div style="display:flex; gap:8px; margin-bottom:10px;">
+                        <input type="number" id="bet-amount" value="10" min="1" style="flex:2; padding:8px; background:rgba(0,0,0,0.5); border:1px solid rgba(0,242,254,0.3); border-radius:6px; color:#fff; font-weight:900;">
+                        <button class="bet-preset-btn" style="flex:1; padding:4px; background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:6px; color:#fff; font-size:0.75rem;" onclick="document.getElementById('bet-amount').value=Math.floor(Number(document.getElementById('betting-balance').innerText)/2)">50%</button>
+                        <button class="bet-preset-btn" style="flex:1; padding:4px; background:rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:6px; color:#fff; font-size:0.75rem;" onclick="document.getElementById('bet-amount').value=document.getElementById('betting-balance').innerText">MAX</button>
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <button id="vote-btn-a" class="btn-primary" style="flex:1; padding:10px; background:#3498db; box-shadow:0 0 15px rgba(52,152,219,0.3);">🔵 صوّت لـ [اللاعب أ]</button>
+                        <button id="vote-btn-b" class="btn-primary" style="flex:1; padding:10px; background:#e74c3c; box-shadow:0 0 15px rgba(231,76,60,0.3);">🔴 صوّت لـ [اللاعب ب]</button>
+                        <div id="battle-result-msg" style="display:none; margin-top:15px; padding:14px; border-radius:10px; text-align:center; font-weight:900; font-size:1.1rem;"></div>
+                    </div>
                 </div>
             </div>
-        </section>
+        </div>
+    </div>
+</div>
+<!-- ==================================================
+     📂 INVENTORY OVERLAY (صفحة كاملة + قائمة جانبية)
+=================================================== -->
+<div id="inventory-overlay" class="fullscreen-overlay" style="display:none;">
+    <div class="fullscreen-container inventory-full-page">
+        <div class="fullscreen-header">
+            <h2 style="font-size:1.2rem;">📂 المخزون الخاص بك</h2>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <button id="inventory-filter-trigger" class="btn-primary" style="padding:8px 15px; border-radius:8px;">☰ فلاتر</button>
+                <button id="inventory-close-btn" class="fullscreen-close-btn">『PH』</button>
+            </div>
+        </div>
 
-        <!-- ==============================================
-             🎬 CLIPS (أفضل فيديو في الأسبوع)
-        =============================================== -->
-        <section id="page-clips" class="page-view">
-            <div class="page-header-box">
-                <h2>🎬 Clips</h2>
-                <p>أفضل فيديو في الأسبوع من اختيار المؤسسين.</p>
-            </div>
-            <div id="clips-container" style="padding:10px 0;"></div>
-        </section>
+        <!-- القائمة الجانبية المنزلقة (Drawer) -->
+        <div id="inventory-drawer-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:100001;"></div>
+        <div id="inventory-drawer" style="display:none; position:fixed; top:0; right:-320px; width:300px; height:100%; background:#0b1019; border-left:2px solid var(--gold); z-index:100002; transition:right 0.3s ease; padding:20px;">
+            <h3 style="color:var(--gold); text-align:center; margin-bottom:20px;">التصنيفات</h3>
+            <button class="inv-filter-btn active-filter" data-filter="all" style="width:100%; margin-bottom:8px; padding:12px; border-radius:8px; cursor:pointer; background:rgba(212,175,55,0.2); border:1px solid var(--gold); color:var(--gold);">📦 الكل</button>
+            <button class="inv-filter-btn" data-filter="titles" style="width:100%; margin-bottom:8px; padding:12px; border-radius:8px; cursor:pointer; background:rgba(255,255,255,0.05); border:1px solid var(--border); color:#fff;">🏷️ ألقاب</button>
+            <button class="inv-filter-btn" data-filter="frames" style="width:100%; margin-bottom:8px; padding:12px; border-radius:8px; cursor:pointer; background:rgba(255,255,255,0.05); border:1px solid var(--border); color:#fff;">🖼️ إطارات</button>
+            <button class="inv-filter-btn" data-filter="backgrounds" style="width:100%; margin-bottom:8px; padding:12px; border-radius:8px; cursor:pointer; background:rgba(255,255,255,0.05); border:1px solid var(--border); color:#fff;">🌌 خلفيات</button>
+            <button class="inv-filter-btn" data-filter="chat_effects" style="width:100%; margin-bottom:8px; padding:12px; border-radius:8px; cursor:pointer; background:rgba(255,255,255,0.05); border:1px solid var(--border); color:#fff;">💬 تأثيرات</button>
+            <button class="inv-filter-btn" data-filter="name_colors" style="width:100%; margin-bottom:8px; padding:12px; border-radius:8px; cursor:pointer; background:rgba(255,255,255,0.05); border:1px solid var(--border); color:#fff;">🎨 ألوان</button>
+            <button class="inv-filter-btn" data-filter="cards" style="width:100%; margin-bottom:8px; padding:12px; border-radius:8px; cursor:pointer; background:rgba(255,255,255,0.05); border:1px solid var(--border); color:#fff;">💳 كروت</button>
+        </div>
 
-        <!-- ==============================================
-             📜 RULES & WARNINGS
-        =============================================== -->
-        <section id="page-rules" class="page-view">
-            <div class="page-header-box">
-                <h2>📜 قوانين PHANTOM</h2>
-                <p>نظام الكلان والخطوط الحمراء.</p>
-            </div>
-            <div class="rules-block-card">
-                <h3>📌 القوانين العامة</h3>
-                <ul id="general-rules-list" class="styled-rules-list"></ul>
-            </div>
-            <div class="rules-block-card">
-                <h3>⚠️ نظام العقوبات</h3>
-                <div id="clearance-system-list"></div>
-            </div>
-            <div class="rules-block-card warnings-public-card">
-                <h3>🚨 سجل الإنذارات الحالية</h3>
-                <div id="active-warnings-public-list" class="warnings-live-list"></div>
-            </div>
-        </section>
+        <!-- شبكة المنتجات -->
+        <div id="inventory-items-grid" style="display:grid; grid-template-columns: repeat(2, 1fr); gap:12px; padding-top:15px;"></div>
+    </div>
+</div>
 
-        <!-- ==============================================
-             🔗 LINKS
-        =============================================== -->
-        <section id="page-links" class="page-view">
-            <div class="page-header-box">
-                <h2>🔗 روابط التواصل الرسمي</h2>
-                <p>المجتمعات الحصرية (واتساب، ديسكورد).</p>
+<!-- ==================================================
+     🎛️ ADMIN DASHBOARD (لوحة القيادة)
+=================================================== -->
+<div id="admin-dashboard-overlay" class="admin-overlay" style="display:none;">
+    <div class="admin-container">
+        <button id="admin-close-btn" class="admin-close-btn">✕</button>
+        <h2>لوحة القيادة الرئيسية</h2>
+        <div id="admin-welcome-msg" style="display:none; background:rgba(0,255,136,0.1); border:1px solid var(--green); color:var(--green); padding:10px; border-radius:8px; margin-bottom:10px; text-align:center; font-weight:900;">مرحبًا بك يا قائد 👑</div>
+        <div class="admin-grid">
+            <div class="admin-card" data-admin-page="admin-page-1" style="border-color:#00a8ff; box-shadow:0 0 20px rgba(0,168,255,0.2);">
+                <div class="admin-card-icon">👥</div>
+                <div class="admin-card-title">إدارة الأعضاء والسلوك</div>
             </div>
-            <div id="links-grid" class="links-cards-grid"></div>
-        </section>
+            <div class="admin-card" data-admin-page="admin-page-2" style="border-color:#d4af37; box-shadow:0 0 20px rgba(212,175,55,0.2);">
+                <div class="admin-card-icon">🎮</div>
+                <div class="admin-card-title">إدارة الرومات والفعاليات</div>
+            </div>
+            <div class="admin-card" data-admin-page="admin-page-3" style="border-color:#00ff88; box-shadow:0 0 20px rgba(0,255,136,0.2);">
+                <div class="admin-card-icon">📊</div>
+                <div class="admin-card-title">النقاط والاستطلاعات والإشعارات</div>
+            </div>
+            <div class="admin-card" data-admin-page="admin-page-4" style="border-color:#ff4757; box-shadow:0 0 20px rgba(255,71,87,0.2);">
+                <div class="admin-card-icon">📡</div>
+                <div class="admin-card-title">المراقبة والرسائل</div>
+            </div>
+            <div class="admin-card" data-admin-page="admin-page-5" style="border-color:#00ff88; box-shadow:0 0 20px rgba(0,255,136,0.2);">
+                <div class="admin-card-icon">📡</div>
+                <div class="admin-card-title">مركز معلومات القيادة</div>
+            </div>
+           
+        </div>
+    </div>
+</div>
 
-    </main>
+<!-- ==================================================
+     📄 ADMIN PAGE 1
+=================================================== -->
+<div id="admin-page-1" class="admin-full-page" style="display:none;">
+    <button class="admin-back-btn" onclick="document.getElementById('admin-page-1').style.display='none'; document.getElementById('admin-dashboard-overlay').style.display='flex';">[PH]</button>
+    <div class="admin-page-content">
+        <div class="admin-section">
+            <h3>➕ إضافة وتوثيق عضو جديد</h3>
+            <input type="text" id="new-member-id" placeholder="معرف اللعبة (ID)">
+            <input type="text" id="new-member-name" placeholder="اسم اللاعب">
+            <select id="new-member-verified"><option>موثق</option><option>غير موثق</option></select>
+            <button id="add-member-btn" class="btn-success" style="margin-top:10px;">➕ إضافة العضو</button>
+        </div>
+        <div class="admin-section">
+            <h3>🚨 إصدار العقوبات والإنذارات</h3>
+            <select id="warning-member-select"><option>اختر من القائمة ▼</option></select>
+            <select id="warning-type-select">
+                <option value="">اختر نوع العقوبة</option>
+                <option value="إنذار">إنذار</option>
+                <option value="تنبيه">تنبيه</option>
+            </select>
+            <input type="text" id="warning-reason-input" placeholder="سبب المخالفة">
+            <button id="issue-warning-btn" class="btn-warning" style="margin-top:10px;">🚨 إصدار العقوبة</button>
+        </div>
+        <div class="admin-section">
+            <h3>🚫 منطقة الاستبعاد والحظر</h3>
+            <select id="kick-member-select"><option>اختر من القائمة ▼</option></select>
+            <button id="kick-member-btn" class="btn-danger" style="margin-top:10px;">🚫 استبعاد العضو</button>
+            <div class="admin-popup-confirm" style="display:none; background:rgba(255,0,0,0.1); border:1px solid red; padding:10px; border-radius:8px; margin-top:10px;">
+                <p>هل أنت متأكد من طرد هذا العضو؟</p>
+                <button class="btn-success">✅ تأكيد</button>
+                <button class="btn-danger">❌ إلغاء</button>
+            </div>
+        </div>
+        <div class="admin-section">
+            <h3>✅ إلغاء إنذار</h3>
+            <select id="cancel-warning-member-select">
+                <option value="">اختر عضواً لديه إنذار...</option>
+            </select>
+            <button id="cancel-warning-btn" class="btn-success" style="margin-top:10px;">✅ إلغاء الإنذار</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================================================
+     📄 ADMIN PAGE 2
+=================================================== -->
+<div id="admin-page-2" class="admin-full-page" style="display:none;">
+    <button class="admin-back-btn" onclick="document.getElementById('admin-page-2').style.display='none'; document.getElementById('admin-dashboard-overlay').style.display='flex';">[PH]</button>
+    <div class="admin-page-content">
+        <div class="admin-section">
+            <h3>➕ إنشاء روم جديد</h3>
+            <select id="room-mode-select">
+                <option value="">اختر المود</option>
+                <option value="سيد سلاح">سيد سلاح</option>
+                <option value="صيد جامع">صيد جامع</option>
+                <option value="قتال فرق">قتال فرق</option>
+                <option value="معركة ملكية">معركة ملكية</option>
+            </select>
+            <input type="text" id="event-title-input" placeholder="اسم الروم">
+            <input type="text" id="event-description-input" placeholder="الوصف">
+            <input type="text" id="event-rules-input" placeholder="الشروط">
+            <input type="text" id="event-timing-select" placeholder="الموعد">
+            <button id="create-event-btn" class="btn-primary" style="margin-top:10px;">🚀 نشر الروم</button>
+        </div>
+        <div class="admin-section">
+            <h3>🗑️ إلغاء الروم النشطة</h3>
+            <select id="active-events-select"><option>اختر من القائمة ▼</option></select>
+            <button id="cancel-room-btn" class="btn-danger" style="margin-top:10px;">🗑️ إلغاء الروم</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================================================
+     📄 ADMIN PAGE 3
+=================================================== -->
+<div id="admin-page-3" class="admin-full-page" style="display:none;">
+    <button class="admin-back-btn" onclick="document.getElementById('admin-page-3').style.display='none'; document.getElementById('admin-dashboard-overlay').style.display='flex';">[PH]</button>
+    <div class="admin-page-content">
+        <div class="admin-section">
+            <h3>✅ تسجيل حضور الرومات والنقاط</h3>
+            <select id="attendance-member-select"><option>اختر من القائمة ▼</option></select>
+            <div style="display:flex; align-items:center; gap:8px; margin-top:5px;">
+                <button id="attendance-minus-btn" type="button" class="btn-danger" style="width:42px; height:42px; padding:0; font-size:1.2rem;">−</button>
+                <input type="number" id="attendance-extra-points" value="0" style="flex:1; text-align:center; height:42px;">
+                <button id="attendance-plus-btn" type="button" class="btn-success" style="width:42px; height:42px; padding:0; font-size:1.2rem;">+</button>
+            </div>
+            <button id="mark-attendance-btn" class="btn-success" style="margin-top:10px;">✅ +30 نقطة حضور</button>
+            <button class="btn-accent" style="margin-top:10px;">💾 تطبيق النقاط</button>
+        </div>
+        <div class="admin-section">
+            <h3>📊 صانع استطلاعات الرأي</h3>
+            <input type="text" id="poll-question-input" placeholder="السؤال">
+            <div id="poll-options-container">
+                <input type="text" class="poll-option-input" placeholder="خيار 1">
+                <input type="text" class="poll-option-input" placeholder="خيار 2">
+            </div>
+            <button id="add-poll-option-btn" type="button" class="btn-accent" style="margin-top:8px; width:100%;">+ إضافة خيار</button>
+            <label style="display:flex; align-items:center; gap:8px; margin:10px 0; color:var(--muted); font-size:0.85rem;">
+                <input type="checkbox" id="poll-multiple-choice"> السماح باختيار متعدد
+            </label>
+            <div style="display:flex; gap:8px; margin-top:8px;">
+                <button id="create-poll-btn" class="btn-primary" style="flex:1;">🚀 نشر الاستطلاع</button>
+                <button id="cancel-poll-btn" class="btn-danger" style="flex:1;">❌ إلغاء الاستطلاع</button>
+            </div>
+        </div>
+        <div class="admin-section">
+            <h3>📢 إرسال إشعار جماعي للأعضاء</h3>
+            <input type="text" id="notification-text-input" placeholder="نص الإشعار">
+            <button id="send-notification-btn" class="btn-warning" style="margin-top:10px;">📢 إرسال للجميع</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================================================
+     📄 ADMIN PAGE 4
+=================================================== -->
+<div id="admin-page-4" class="admin-full-page" style="display:none;">
+    <button class="admin-back-btn" onclick="document.getElementById('admin-page-4').style.display='none'; document.getElementById('admin-dashboard-overlay').style.display='flex';">[PH]</button>
+    <div class="admin-page-content">
+        <div class="admin-section">
+            <h3>📥 صندوق الرسائل والطلبات</h3>
+            <div id="admin-inbox-container" style="background:rgba(255,255,255,0.05); padding:10px; border-radius:8px;">
+                <p style="margin:0;">النوع: شكوى / طلب رجوع / عذر عدم حضور / طلب تغيير اسم</p>
+                <p style="margin:5px 0;">الشخص: [الاسم] - التفاصيل: [النص]</p>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn-success">✅ قبول</button>
+                    <button class="btn-danger">❌ رفض</button>
+                </div>
+            </div>
+        </div>
+        <div class="admin-section">
+            <h3>💡 صندوق الاقتراحات</h3>
+            <div id="suggestions-container"></div>
+        </div>
+        <div class="admin-section">
+            <h3>📡 رادار الشات المباشر</h3>
+            <div id="radar-chat-container" style="height:200px; overflow-y:auto; background:rgba(0,0,0,0.5); border-radius:8px; padding:10px; color:var(--muted);">
+                (هنا تظهر رسائل الأعضاء لحظة بلحظة - بدون أي أزرار إرسال)
+            </div>
+            <p style="font-size:0.8rem; color:var(--muted); margin-top:5px;">للكتم: اضغط مطولاً على اسم/رسالة العضو</p>
+            <div id="mute-popup" style="display:none; background:rgba(0,0,0,0.9); border:1px solid var(--red); padding:10px; border-radius:8px; margin-top:10px;">
+                <p class="mute-user-name" style="color:var(--red); font-weight:900;">⚠️ كتم العضو: [اسم العضو]</p>
+                <div style="display:flex; gap:5px;">
+                    <button class="mute-duration-btn btn-danger" data-duration="3600" style="flex:1;">ساعة</button>
+                    <button class="mute-duration-btn btn-danger" data-duration="86400" style="flex:1;">يوم</button>
+                    <button class="mute-duration-btn btn-danger" data-duration="172800" style="flex:1;">يومين</button>
+                    <button class="mute-duration-btn btn-danger" data-duration="259200" style="flex:1;">3 أيام</button>
+                </div>
+                <button class="execute-mute-btn btn-danger" style="width:100%; margin-top:5px;">🚫 تنفيذ الكتم</button>
+                <button class="close-mute-btn btn-secondary" style="width:100%; margin-top:5px;">إلغاء</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================================================
+     📄 ADMIN PAGE 5: مركز معلومات القيادة
+=================================================== -->
+<div id="admin-page-5" class="admin-full-page" style="display:none;">
+    <button class="admin-back-btn" onclick="document.getElementById('admin-page-5').style.display='none'; document.getElementById('admin-dashboard-overlay').style.display='flex';">[PH]</button>
+    <div class="admin-page-content">
+        <div class="admin-section">
+            <h3>📡 مركز معلومات القيادة</h3>
+            <div id="clan-health-center-container"></div>
+        </div>
+    </div>
+</div>
 
     <!-- ==================================================
-         🛡️ ADMIN / FOUNDERS DRAWER
+         👤 PROFILE OVERLAY
     =================================================== -->
-    <div id="admin-modal" class="side-drawer">
-        <div class="drawer-overlay" id="admin-overlay"></div>
-        <div class="drawer-content">
-            <div class="drawer-header">
-                <h2>🛡️ لوحة قيادة PHANTOM</h2>
-                <button id="close-admin-btn" class="drawer-close-btn" type="button" aria-label="إغلاق">×</button>
+    <div id="profile-overlay" class="hub-overlay" style="display:none; z-index:9999999;">
+        <div class="hub-container profile-container">
+            <div class="profile-header hub-header" style="border-bottom:none; justify-content: space-between;">
+                <h2 style="color:var(--cyan); font-size:1.2rem; margin-left:auto; margin-right:auto; padding-right:30px;">PHANTOM HQ</h2>
+                <button id="profile-close-btn" class="hub-close-btn" style="position:absolute; top:20px; right:20px;">✕</button>
             </div>
-            <div class="drawer-body">
-                <!-- 🔐 ADMIN AUTH -->
-                <div id="admin-auth-step" class="admin-tool-card">
-                    <h4>🔐 دخول المؤسسين</h4>
-                    <p>إدخال رمز المؤسسين يفتح صلاحيات لوحة القيادة.</p>
-                    <input id="admin-pass-input" type="password" inputmode="numeric" placeholder="رمز المؤسسين" autocomplete="off" maxlength="20">
-                    <button id="admin-login-btn" class="btn-primary" type="button">فتح لوحة القيادة</button>
-                    <div id="admin-auth-error" class="gate-error"></div>
+            <div class="profile-body" id="profile-info-section" style="display:flex; flex-direction:column; align-items:center; gap:8px; padding-top:10px;">
+                <div class="profile-rank-circle" style="position:relative; width:120px; height:120px; display:flex; align-items:center; justify-content:center;">
+                    <div id="profile-badge-container" style="width:80px; height:80px; z-index:2; display:flex; align-items:center; justify-content:center;">
+                        <svg viewBox="0 0 100 100" width="100%" height="100%">
+                            <polygon points="50,5 95,25 95,75 50,95 5,75 5,25" fill="#1a222a" stroke="#00ff88" stroke-width="3"/>
+                            <text x="50" y="65" font-size="28" font-weight="900" fill="#00ff88" text-anchor="middle" id="badge-text">0</text>
+                        </svg>
+                    </div>
+                    <div class="progress-ring" id="profile-progress-ring" style="position:absolute; width:120px; height:120px; border-radius:50%; background:conic-gradient(#00ff88 0%, #1a222a 0%); z-index:1; box-shadow:0 0 20px rgba(0,255,136,0.2);">
+                        <div style="position:absolute; top:10px; left:10px; right:10px; bottom:10px; background:#0b1019; border-radius:50%; z-index:2;"></div>
+                    </div>
+                    <div id="profile-level-display" style="position:absolute; bottom:-5px; z-index:3; color:#ffd700; font-weight:900; font-size:1.1rem; text-shadow:0 0 10px rgba(255,215,0,0.6);">LVL 1</div>
                 </div>
-
-                <!-- 💬 SUPPORT LINKS -->
-                <div class="admin-tool-card">
-                    <h4>💬 الدعم الفني والتواصل</h4>
-                    <p>روابط التواصل الرسمية للدعم والانضمام:</p>
-                    <div class="support-links">
-                        <a href="https://chat.whatsapp.com/ICnXUBwS61lG99NZjt8CXF?s=cl&p=a&ilr=4" target="_blank" class="btn-success" style="text-decoration:none; text-align:center; display:block; padding:10px; border-radius:8px;">📱 مجتمع الواتساب</a>
-                        <a href="https://discord.gg/7fz84T8KD" target="_blank" class="btn-primary" style="text-decoration:none; text-align:center; display:block; padding:10px; border-radius:8px; margin-top:6px;">🎮 سيرفر الديسكورد</a>
-                    </div>
+                <div class="profile-info" style="text-align:center; margin-top:15px;">
+                    <h3 id="profile-username" style="color:#fff; font-size:1.4rem; font-weight:900; margin:0;">اسم اللاعب</h3>
+                    <div style="font-size:0.8rem; color:var(--muted); margin-top:4px;">المعرف الفريد: <strong id="profile-user-id" style="color:var(--cyan);">PH-XXXXX</strong></div>
                 </div>
-
-                <!-- 👑 ADMIN TOOLS -->
-                <div id="admin-tools-step" style="display:none;">
-                    <!-- 🔔 FOUNDER NOTIFICATIONS -->
-                    <div id="founder-notifications-card" class="admin-tool-card">
-                        <div class="section-title-wrap">
-                            <h4>🚨 إشعارات المؤسسين</h4>
-                            <span id="founder-alert-count" class="points-tag">0</span>
-                        </div>
-                        <div id="founder-notifications-list" class="admin-mini-list"></div>
+                <div style="display:flex; gap:8px; margin-top:4px; justify-content:center; flex-wrap:wrap;">
+                    <button id="give-heart-btn" class="btn-accent" style="padding:6px 14px; font-size:0.75rem; border-radius:20px; width:auto;">💛 إعطاء قلب</button>
+                    <button id="profile-complaint-btn" class="btn-danger" style="padding:6px 14px; font-size:0.75rem; border-radius:20px; width:auto;">📩 تقديم شكوى</button>
+                </div>
+                <div class="profile-stats-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; width:100%; margin-top:12px;">
+                    <div class="stat-card" style="background:rgba(255,255,255,0.04); border:1px solid rgba(0,242,254,0.2); border-radius:12px; padding:10px; text-align:center;">
+                        <div class="stat-header" style="font-size:0.7rem; color:var(--muted);">القلوب</div>
+                        <div class="stat-value" style="font-size:1.1rem; font-weight:900; color:#fff; display:flex; align-items:center; justify-content:center; gap:4px; margin:4px 0;"><span>💛</span> <span id="profile-hearts">0</span></div>
+                        <div class="stat-bar" style="width:100%; height:4px; background:rgba(255,255,255,0.1); border-radius:4px; overflow:hidden;"><div class="stat-bar-fill" style="height:100%; width:0%; background:#00ff88; border-radius:4px;"></div></div>
                     </div>
-
-                    <!-- 📩 COMPLAINTS NOTIFICATIONS (جديد) -->
-                    <div id="complaints-notifications-card" class="admin-tool-card">
-                        <h4>📩 إشعارات الشكاوي</h4>
-                        <div id="complaints-notifications-list" class="admin-mini-list">
-                            <span style="font-size:0.8rem; color:var(--silver-muted);">لا توجد شكاوى جديدة.</span>
-                        </div>
+                    <div class="stat-card" style="background:rgba(255,255,255,0.04); border:1px solid rgba(0,242,254,0.2); border-radius:12px; padding:10px; text-align:center;">
+                        <div class="stat-header" style="font-size:0.7rem; color:var(--muted);">حضور الرومات</div>
+                        <div class="stat-value" style="font-size:1.1rem; font-weight:900; color:#fff; display:flex; align-items:center; justify-content:center; gap:4px; margin:4px 0;"><span>📅</span> <span id="profile-attendance">0</span></div>
+                        <div class="stat-bar" style="width:100%; height:4px; background:rgba(255,255,255,0.1); border-radius:4px; overflow:hidden;"><div class="stat-bar-fill" style="height:100%; width:0%; background:#00ff88; border-radius:4px;"></div></div>
                     </div>
-
-                    <!-- ⚔️ CREATE & CANCEL EVENT -->
-                    <div class="admin-tool-card">
-                        <h4>🎮 إنشاء روم / فاعلية</h4>
-                        <select id="room-mode-select">
-                            <option value="" disabled selected>اختر المود</option>
-                            <option value="قتال الفرق">قتال الفرق</option>
-                            <option value="صيد جامع">صيد جامع</option>
-                            <option value="سيد سلاح">سيد سلاح</option>
-                            <option value="معركة ملكية">معركة ملكية</option>
-                        </select>
-                        <input id="event-title-input" type="text" placeholder="اسم الروم" maxlength="100">
-                        <input id="event-description-input" type="text" placeholder="وصف الفاعلية" maxlength="200" style="margin-top:6px;">
-                        <input id="event-rules-input" type="text" placeholder="قوانين الفاعلية (اختياري)" maxlength="200" style="margin-top:6px;">
-                        
-                        <select id="event-timing-select" style="margin-top:6px;">
-                            <option value="none">بدون وقت محدد</option>
-                            <option value="5min">5 دقائق</option>
-                            <option value="1hour">ساعة واحدة</option>
-                            <option value="1day">يوم واحد</option>
-                            <option value="custom">تحديد تاريخ ووقت</option>
-                        </select>
-                        <input id="event-datetime-input" type="datetime-local" style="display:none; margin-top:6px;">
-
-                        <button id="create-event-btn" class="btn-success" type="button" style="margin-top:10px; margin-bottom:15px; width:100%;">🚀 إنشاء روم</button>
-                        <hr style="border:0; border-top:1px solid rgba(255,255,255,0.1); margin:12px 0;">
-                        
-                        <h4>❌ إلغاء الفاعليات النشطة</h4>
-                        <button id="open-cancel-room-btn" class="btn-danger" type="button" style="margin-top:6px; width:100%;">🗑️ إلغاء الروم</button>
-                        <div id="cancel-room-popup" class="cancel-room-popup" style="display:none;">
-                            <select id="active-events-select" style="margin-top:6px;">
-                                <option value="">اختر الفاعلية أو الروم للإلغاء</option>
-                            </select>
-                            <div class="cancel-room-popup-actions">
-                                <button id="confirm-cancel-event-btn" class="btn-danger" type="button">تأكيد الإلغاء</button>
-                                <button id="close-cancel-room-popup-btn" class="btn-secondary" type="button">إغلاق</button>
-                            </div>
-                            <div id="cancel-room-empty-msg" class="gate-error" style="display:none;">لا توجد رومات نشطة حالياً للإلغاء.</div>
-                        </div>
-                    </div>
-
-                    <!-- 👁️ CHAT MONITORING -->
-                    <div id="chat-monitor-card" class="admin-tool-card">
-                        <h4>👁️ مراقبة الشات المباشر</h4>
-                        <div id="chat-monitor-container" class="admin-mini-list"></div>
-                    </div>
-
-                    <!-- 🟢 ATTENDANCE -->
-                    <div class="admin-tool-card">
-                        <h4>🟢 تسجيل حضور الرومات</h4>
-                        <select id="attendance-member-select"></select>
-                        <button id="mark-attendance-btn" class="btn-success" type="button">✅ +30 نقطة حضور</button>
-                    </div>
-
-                    <!-- ⚠️ WARNING SYSTEM -->
-                    <div class="admin-tool-card">
-                        <h4>⚠️ إدارة الإنذارات</h4>
-                        <select id="warning-member-select"></select>
-                        <select id="warning-type-select">
-                            <option value="إنذار">إنذار</option>
-                            <option value="تنبيه">تنبيه</option>
-                            <option value="طرد">طرد</option>
-                        </select>
-                        <input id="warning-reason-input" type="text" placeholder="سبب الإنذار" maxlength="200">
-                        <button id="issue-warning-btn" class="btn-warning" type="button">🚨 إصدار الإنذار</button>
-                        <div id="admin-warnings-manage-list" class="admin-mini-list"></div>
-                    </div>
-
-                    <!-- 📊 CREATE POLL (مع اختيار متعدد) -->
-                    <div class="admin-tool-card">
-                        <h4>📊 إدارة استطلاع الكلان</h4>
-                        <input id="poll-question-input" type="text" placeholder="سؤال الاستطلاع" maxlength="150">
-                        <div id="poll-options-container">
-                            <input type="text" class="poll-option-input" placeholder="خيار 1" style="width:100%; padding:8px; margin-bottom:6px;">
-                            <input type="text" class="poll-option-input" placeholder="خيار 2" style="width:100%; padding:8px; margin-bottom:6px;">
-                        </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-                            <input type="checkbox" id="poll-multiple-choice">
-                            <label for="poll-multiple-choice" style="color:var(--text); font-size:0.85rem;">السماح باختيار متعدد</label>
-                        </div>
-                        <button id="create-poll-btn" class="btn-accent" type="button">📢 نشر الاستطلاع</button>
-                        <button id="cancel-poll-btn" class="btn-danger" type="button" disabled>❌ إلغاء الاستطلاع</button>
-                        <div id="poll-admin-status" class="admin-mini-list"></div>
-                    </div>
-
-                    <!-- 👤 ADD MEMBER (تم استبدال الرتبة بـ ID) -->
-                    <div class="admin-tool-card">
-                        <h4>👤 إضافة عضو</h4>
-                        <input id="new-member-id" type="text" placeholder="الـ ID الخاص بالعضو" maxlength="50" style="margin-bottom:6px;">
-                        <input id="new-member-name" type="text" placeholder="اسم العضو" maxlength="40">
-                        <select id="new-member-verified">
-                            <option value="موثق">موثق</option>
-                            <option value="غير موثق">غير موثق</option>
-                        </select>
-                        <button id="add-member-btn" class="btn-success" type="button">➕ إضافة العضو</button>
-                    </div>
-
-                    <!-- 🚨 KICK MEMBER -->
-                    <div id="restricted-kick-section" class="admin-tool-card danger-zone" style="display:none;">
-                        <h4>🚨 منطقة الاستبعاد</h4>
-                        <select id="kick-member-select"></select>
-                        <button id="kick-member-btn" class="btn-danger" type="button">🚫 استبعاد العضو</button>
+                    <div class="stat-card" style="background:rgba(255,255,255,0.04); border:1px solid rgba(0,242,254,0.2); border-radius:12px; padding:10px; text-align:center;">
+                        <div class="stat-header" style="font-size:0.7rem; color:var(--muted);">نقاط الموسم</div>
+                        <div class="stat-value" style="font-size:1.1rem; font-weight:900; color:#fff; display:flex; align-items:center; justify-content:center; gap:4px; margin:4px 0;"><span>⭐</span> <span id="profile-points">0</span></div>
+                        <div class="stat-bar" style="width:100%; height:4px; background:rgba(255,255,255,0.1); border-radius:4px; overflow:hidden;"><div class="stat-bar-fill" style="height:100%; width:0%; background:#00ff88; border-radius:4px;"></div></div>
                     </div>
                 </div>
             </div>
@@ -454,95 +825,271 @@
     </div>
 
     <!-- ==================================================
-         🪪 SEASON INFO MODAL
+         🎙️ VOICE ROOM JOIN POPUP (إشعار المكالمة)
     =================================================== -->
-    <div id="season-info-modal" class="side-drawer" aria-hidden="true">
-        <div id="season-info-overlay" class="drawer-overlay"></div>
-        <div class="drawer-content">
-            <div class="drawer-header">
-                <h2>🏆 معلومات الموسم</h2>
-                <button id="close-season-info-btn" class="drawer-close-btn" type="button" aria-label="إغلاق">×</button>
-            </div>
-            <div class="drawer-body">
-                <div class="admin-tool-card">
-                    <h4>الموسم الحالي</h4>
-                    <div id="season-name-display" class="stat-num">الموسم الأول</div>
-                </div>
-                <div class="admin-tool-card">
-                    <h4>⏳ الوقت المتبقي</h4>
-                    <div id="season-days-remaining" class="stat-num">حساب الأيام...</div>
-                    <p>يتم تجديد الموسم تلقائيًا كل شهرين.</p>
-                </div>
-                <div class="admin-tool-card updates-widget-card">
-                    <div class="section-title-wrap">
-                        <h4>📰 آخر تحديثات المنصة</h4>
-                    </div>
-                    <div id="system-updates-list" class="updates-list-container"></div>
-                </div>
-            </div>
+    <div id="voice-join-popup" style="display:none; position:fixed; bottom:80px; right:20px; z-index:999999; background:#0b1019; border:1px solid var(--cyan); border-radius:12px; box-shadow:0 0 20px rgba(0,242,254,0.4); padding:15px; max-width:280px;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+            <span style="font-size:1.5rem;">🎙️</span>
+            <strong style="color:var(--white); font-size:0.9rem;">غرفة صوتية نشطة</strong>
         </div>
+        <div style="color:var(--muted); font-size:0.8rem; margin-bottom:10px;">انضم للأعضاء المتواجدين الآن في المكالمة.</div>
+        <button id="join-voice-room-btn" class="btn-success" style="width:100%; padding:8px;">🟢 انضمام</button>
     </div>
 
     <!-- ==================================================
          ⚓ BOTTOM NAVIGATION
     =================================================== -->
     <nav class="bottom-dock">
-        <a href="#" class="dock-item active" data-target="page-home">
-            <span class="dock-icon">🏠</span>
-            <span class="dock-label">الرئيسية</span>
-        </a>
-        <a href="#" class="dock-item" data-target="page-roster">
-            <span class="dock-icon">👥</span>
-            <span class="dock-label">الأعضاء</span>
-        </a>
-        <a href="#" class="dock-item" data-target="page-schedule">
-            <span class="dock-icon">📅</span>
-            <span class="dock-label">الرومات</span>
-        </a>
-        <a href="#" class="dock-item" data-target="page-leaderboard">
-            <span class="dock-icon">🏆</span>
-            <span class="dock-label">الصدارة</span>
-        </a>
-        <a href="#" class="dock-item" data-target="page-chat">
-            <span class="dock-icon">💬</span>
-            <span class="dock-label">الشات</span>
-        </a>
-        <a href="#" class="dock-item" data-target="page-clips">
-            <span class="dock-icon">🎬</span>
-            <span class="dock-label">Clips</span>
-        </a>
-        <a href="#" class="dock-item" data-target="page-rules">
-            <span class="dock-icon">📜</span>
-            <span class="dock-label">القوانين</span>
-        </a>
+        <a href="#" class="dock-item active" data-target="page-home"><span class="dock-icon">🏠</span><span class="dock-label">الرئيسية</span></a>
+        <a href="#" class="dock-item" data-target="page-roster"><span class="dock-icon">👥</span><span class="dock-label">الأعضاء</span></a>
+        <a href="#" class="dock-item" data-target="page-schedule"><span class="dock-icon">📅</span><span class="dock-label">الرومات</span></a>
+        <a href="#" class="dock-item" data-target="page-leaderboard"><span class="dock-icon">🏆</span><span class="dock-label">الصدارة</span></a>
+        <a href="#" class="dock-item" data-target="page-chat"><span class="dock-icon">💬</span><span class="dock-label">الشات</span></a>
+        <a href="#" class="dock-item" data-target="page-clips"><span class="dock-icon">🎬</span><span class="dock-label">Clips</span></a>
+        <a href="#" class="dock-item" data-target="page-rules"><span class="dock-icon">📜</span><span class="dock-label">القوانين</span></a>
     </nav>
+
+<!-- ==================================================
+     🎨 نافذة دخول المؤسسين - Glassmorphism
+=================================================== -->
+<div id="admin-access-panel" class="glass-admin-modal" aria-hidden="true">
+    <div id="admin-access-overlay" class="glass-admin-overlay"></div>
+    <div class="glass-admin-card">
+        <button id="close-admin-access-btn" class="glass-admin-close">✕</button>
+        
+        <!-- الشعار -->
+        <div class="glass-admin-logo">『PH』 PHANTOM</div>
+        
+        <!-- العنوان -->
+        <h2 class="glass-admin-title">🔐 دخول المؤسسين</h2>
+        
+        <!-- حقل كلمة المرور -->
+        <div class="glass-admin-body">
+            <label class="glass-admin-label">كلمة مرور المؤسسين</label>
+            <input type="password" id="admin-pass-input" placeholder="••••••••" class="glass-admin-input">
+            <div id="admin-pass-error" class="glass-admin-error">كلمة المرور غير صحيحة</div>
+            
+            <!-- زر الدخول -->
+            <button id="admin-pass-submit" class="glass-admin-btn">دخول</button>
+            
+            <!-- روابط التواصل -->
+            <div class="glass-admin-links">
+                <a href="https://discord.gg/7fz84T8KD" target="_blank" class="glass-link discord">🎮 ديسكورد</a>
+                <a href="https://chat.whatsapp.com/ICnXUBwS61lG99NZjt8CXF" target="_blank" class="glass-link whatsapp">📱 واتساب</a>
+            </div>
+        </div>
+    </div>
+</div>
 
     <!-- ==================================================
          📦 JAVASCRIPT
     =================================================== -->
-
-    <!-- 1. مكتبة Supabase (يجب تحميلها أولاً) -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
-    <!-- 2. ملف البيانات الثابتة -->
-    <script src="data.js"></script>
-
-    <!-- ✨ إضافة مكتبة Firebase للإشعارات هنا -->
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
+    
+    <script>
+        "use strict";
+        const phantomData = {
+            sitePassword: "888888",
+            adminPanelCode: "246810",
+            socialLinks: [
+                { name: "مجتمع الواتساب الرسمي", icon: "📱", url: "https://chat.whatsapp.com/ICnXUBwS61lG99NZjt8CXF?s=cl&p=a&ilr=4" },
+                { name: "سيرفر الديسكورد", icon: "🎮", url: "https://discord.gg/7fz84T8KD" },
+                { name: "قناة التليجرام", icon: "✈️", url: "https://t.me/phantom_hq" }
+            ],
+            supportLinks: {
+                whatsapp: "https://chat.whatsapp.com/ICnXUBwS61lG99NZjt8CXF?s=cl&p=a&ilr=4",
+                discord: "https://discord.gg/7fz84T8KD",
+                telegram: "https://t.me/phantom_hq"
+            },
+            rules: {
+                general: [
+                    "وضع شعار الكلان 『PH』 في اسمك داخل اللعبة خلال 24 ساعة من الانضمام.",
+                    "التواجد قبل موعد الروم بـ10 دقائق على الأقل لتجهيز السكوادات.",
+                    "الالتزام بالتشكيلة والسكواد المحدد من قِبل إدارة الكلان.",
+                    "ممنوع الانسحاب أثناء الماتش أو الخروج المفاجئ بدون عذر مقبول.",
+                    "الالتزام بشروط الأسلحة والأطوار المحددة لكل روم.",
+                    "التواصل الصوتي أثناء اللعب يكون بأسلوب محترم وموجه للعب فقط.",
+                    "الأعذار الخاصة بالدراسة أو الظروف الشخصية مقبولة بشرط التبليغ المسبق.",
+                    "يحظر استخدام أي برامج أو أدوات غش (Cheats) تحت أي ظرف.",
+                    "احترام جميع أعضاء الكلان والمنافسين داخل وخارج اللعبة.",
+                    "عدم التحدث في مواضيع سياسية أو دينية داخل الشات أو الرومات."
+                ],
+                penalties: [
+                    { violation: "الشتيمة أو الإهانة (لفظيًا أو كتابيًا)", steps: ["تنبيه رسمي + إيقاف عن الشات 24 ساعة", "كرت أصفر (إنذار شديد) + حرمان من الرومات 3 أيام", "استبعاد نهائي من الكلان"] },
+                    { violation: "عدم الاحترام والتطاول على القيادة أو الأعضاء", steps: ["إنذار رسمي كتابي", "حرمان من الرومات 5 أيام", "استبعاد نهائي من الكلان"] },
+                    { violation: "عدم الالتزام بالمواعيد أو الغياب المتكرر بدون عذر", steps: ["تنبيه (إنذار خفيف)", "إيقاف من الرومات 3 أيام", "استبعاد من الكلان"] },
+                    { violation: "استخدام الغش أو الإخلال بقواعد اللعبة", steps: ["إنذار نهائي فوري", "استبعاد نهائي من الكلان دون إعادة"] },
+                    { violation: "التحدث بمواضيع غير مناسبة أو مخالفة للآداب العامة", steps: ["تنبيه", "إيقاف عن الشات 12 ساعة", "كرت أصفر + حرمان من الرومات 2 يومين"] }
+                ],
+                clearance: [
+                    "إنذار الشتيمة: يُلغى بعد 15 يوماً من الالتزام الكامل وعدم تكرار المخالفة.",
+                    "إنذار عدم الاحترام: يُلغى بعد 10 أيام من الالتزام.",
+                    "إنذار عدم الالتزام بالرومات: يُلغى بعد 5 أيام من الالتزام.",
+                    "إنذار الغش: لا يُلغى ويُعتبر إنذاراً نهائياً.",
+                    "إيقاف الشات: يُلغى تلقائياً بعد انتهاء المدة المحددة."
+                ]
+            }
+        };
+        console.log("✅ [PHANTOM HQ] تم حذف التحدي اليومي بالكامل. جاهز لفكرة جديدة!");
+        
+        function isFounderSession() {
+            return localStorage.getItem('admin_authenticated') === 'true';
+        }
+    </script>
 
-    <!-- 3. ملف السكريبت الرئيسي -->
-    <script src="script.js"></script>
-
-    <!-- إضافة تنسيقات إضافية لتلبية الطلبات -->
+    <!-- تم إضافة مكتبة Agora في الـ Head، وإضافة عناصر الـ HTML الجديدة هنا -->
+    <script src="script.js?v=20260905"></script>
+  <style>
+.toast, #phantom-toast-container, .notification-toast, .popup-msg, .custom-toast, .alert-box, .message-popup {
+    z-index: 999999999 !important;
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    width: 90% !important;
+    max-width: 400px !important;
+    pointer-events: none !important;
+}
+</style>
     <style>
-        /* تحسين شكل النقاط في لوحة الصدارة - إضافة مسافة */
+        /* ⚙️ إعدادات فتح PHANTOM Hub من الجنب (Slide-in) */
+        #phantom-hub-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 100000;
+            background: rgba(3, 5, 9, 0.95);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transform: translateX(-100%);
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        #phantom-hub-overlay.active {
+            transform: translateX(0);
+        }
+        #phantom-hub-overlay {
+            animation: none !important;
+        }
+
+        /* ✅ تصغير وتنحيف الكروت بشكل نهائي */
+        .hub-grid {
+            display: grid !important;
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 8px !important;
+            width: 100%;
+        }
+        .hub-card {
+            aspect-ratio: 1 / 1 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            padding: 8px !important;
+            border-radius: var(--radius-sm) !important;
+            background: rgba(255,255,255,0.03) !important;
+            border: 1px solid var(--border) !important;
+            cursor: pointer;
+            transition: var(--transition);
+            position: relative;
+            text-align: center;
+            box-sizing: border-box;
+        }
+        .hub-card:hover {
+            transform: translateY(-2px);
+            border-color: #00ff88;
+            box-shadow: 0 4px 15px rgba(0,255,136,0.15);
+        }
+        .hub-card-icon {
+            font-size: 1.4rem !important;
+            margin-bottom: 4px;
+        }
+        .hub-card-title {
+            color: var(--white);
+            font-size: 0.75rem !important;
+            font-weight: 900;
+            margin-bottom: 2px;
+        }
+        .hub-card-desc {
+            color: var(--muted);
+            font-size: 0.6rem !important;
+        }
+        .hub-badge {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            background: #00ff88;
+            color: #000;
+            padding: 2px 6px;
+            border-radius: 20px;
+            font-size: 0.5rem;
+            font-weight: 900;
+            box-shadow: 0 0 10px rgba(0,255,136,0.4);
+        }
+
+        /* ✅ تحسين شكل لوحة القيادة (Admin) */
+        .admin-tool-card {
+            padding: 15px;
+        }
+        #admin-auth-step h4 {
+            margin-bottom: 4px;
+        }
+        #admin-auth-step p {
+            margin-bottom: 12px;
+            font-size: 0.85rem;
+        }
+
+        /* تعديل الرأس */
+        .hub-header {
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border);
+        }
+        .hub-header h2 {
+            font-size: 1.2rem !important;
+            margin: 0;
+        }
+        .hub-close-btn {
+            background: transparent;
+            border: none;
+            color: var(--muted);
+            font-size: 1.8rem;
+            cursor: pointer;
+            transition: var(--transition);
+            padding: 0 4px;
+            line-height: 1;
+        }
+        .hub-close-btn:hover {
+            color: #00ff88;
+            transform: rotate(90deg) scale(1.1);
+        }
+        
+        /* إخفاء الـ sub-page القديمة لعدم استخدامها في الـ Hub الجديد */
+        .sub-page { display: none; } 
+        .sub-page-header, .sub-page-back-btn, .sub-page-body { display: none; }
+
+        /* تنسيق أزرار الهيدر الجديدة */
+        .icon-btn-shield, .icon-btn-edit, .icon-btn-menu {
+            transition: var(--transition);
+        }
+        .icon-btn-shield:hover, .icon-btn-edit:hover, .icon-btn-menu:hover {
+            transform: scale(1.1);
+        }
+        .icon-btn-shield:hover { color: #00ff88 !important; }
+        .icon-btn-edit:hover { color: #00ff88 !important; }
+        .icon-btn-menu:hover { color: var(--cyan) !important; }
+
         .leaderboard-card .points-badge {
             margin-right: 10px;
             padding: 6px 14px;
             border-radius: 8px;
             background: var(--cyan-soft);
-            border: 1px solid rgba(0, 242, 254, 0.3);
+            border: 1px solid rgba(0,242,254,0.3);
             color: var(--cyan);
             font-weight: 900;
             font-size: 0.85rem;
@@ -552,19 +1099,15 @@
             min-width: 70px;
             justify-content: center;
         }
-
-        /* تنسيق الوقت في الرسائل - دقيقة:ثانية */
         .message-time {
             font-size: 0.65rem;
-            color: rgba(241, 245, 249, 0.5);
+            color: rgba(241,245,249,0.5);
             display: block;
             text-align: left;
             margin-top: 4px;
             font-weight: 400;
             letter-spacing: 0.5px;
         }
-
-        /* تحسين رأس الشات */
         .whatsapp-chat-header {
             display: flex;
             align-items: center;
@@ -597,90 +1140,75 @@
             display: block;
             margin-top: 2px;
         }
-
-        /* زر تعديل الاسم */
-        .icon-btn-edit {
-            background: transparent;
-            border: none;
-            color: var(--cyan);
-            font-size: 1.1rem;
-            cursor: pointer;
-            transition: var(--transition);
-        }
-        .icon-btn-edit:hover {
-            transform: scale(1.15);
-        }
-
-        /* زر القائمة (ثلاثة خطوط) */
-        .icon-btn-menu {
-            background: transparent;
-            border: none;
-            color: var(--text);
-            font-size: 1.5rem;
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            margin-left: 6px;
-        }
-        .icon-btn-menu:hover {
-            color: var(--cyan);
-            transform: scale(1.1);
-        }
-
-        /* تحسين مربع التعديل للشات */
+        
+        /* ✅ تحذير الشات - تم جعله أكثر بروزاً */
         #chat-edit-container {
-            padding: 12px;
-            background: rgba(255,77,77,0.15);
-            border-top: 1px solid #ff4d4d;
-            border-radius: 8px;
-            margin: 8px 0;
+            padding: 15px;
+            background: rgba(150, 0, 0, 0.9);
+            border: 2px solid #ff0000;
+            box-shadow: 0 0 20px rgba(255, 0, 0, 0.8);
+            border-radius: var(--radius-sm);
+            margin: 10px 0;
             animation: slideDown 0.3s ease;
-        }
-        @keyframes slideDown {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
+            backdrop-filter: blur(5px);
+            width: 100%;
         }
         #chat-edit-container .edit-warning-header {
             display: flex;
             align-items: center;
-            gap: 8px;
-            margin-bottom: 6px;
+            gap: 12px;
+            margin-bottom: 12px;
+            border-bottom: 1px solid rgba(255,0,0,0.5);
+            padding-bottom: 10px;
         }
         #chat-edit-container .warning-icon {
-            font-size: 1.2rem;
-            color: #ff4d4d;
+            font-size: 2rem;
+            color: #ffbb00;
+            text-shadow: 0 0 10px rgba(255,200,0,0.8);
         }
         #chat-edit-container .warning-text {
-            color: #ff4d4d;
-            font-size: 0.85rem;
+            color: #ffffff;
+            font-weight: 900;
+            font-size: 1.1rem;
+            text-shadow: 0 0 15px rgba(255,0,0,0.7);
         }
         #chat-edit-container input {
             width: 100%;
-            padding: 10px;
-            background: rgba(255,255,255,0.05);
-            border: 1px solid #ff4d4d;
+            padding: 12px;
+            background: rgba(0,0,0,0.7);
+            border: 1px solid #ff5555;
             border-radius: 6px;
             color: #fff;
-            margin-bottom: 8px;
+            margin-bottom: 10px;
+            font-weight: 600;
         }
         #chat-edit-container .edit-actions {
             display: flex;
-            gap: 8px;
+            gap: 10px;
         }
         #chat-edit-container .edit-actions button {
             flex: 1;
-            padding: 8px;
+            padding: 10px;
             border-radius: 6px;
+            font-weight: 900;
+            cursor: pointer;
+            border: none;
+        }
+        #chat-edit-container .edit-actions .btn-danger {
+            background: #fff;
+            color: #d30000;
+        }
+        #chat-edit-container .edit-actions .btn-secondary {
+            background: transparent;
+            border: 1px solid #fff;
+            color: #fff;
         }
 
-        /* تحسين بطاقات الأعضاء (إضافة القلوب) */
         .member-log-item .heart-count {
             font-size: 0.8rem;
             color: var(--red);
             margin-right: 6px;
         }
-
-        /* زر المكالمة الصوتية */
         .icon-btn-call {
             transition: var(--transition);
         }
@@ -688,8 +1216,960 @@
             transform: scale(1.1);
             color: var(--green-online) !important;
         }
+        #clip-admin-area {
+            border: 1px solid var(--gold-main);
+        }
+        #clip-admin-area input:focus {
+            outline: 2px solid var(--gold-main);
+        }
+        #delete-clip-btn {
+            transition: var(--transition);
+        }
+        #delete-clip-btn:hover {
+            background: #cc0000;
+        }
+        .hub-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 100000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .hub-container {
+            width: 90%;
+            max-width: 800px;
+            max-height: 90vh;
+            overflow-y: auto;
+            background: #0b1019;
+            border: 2px solid #00ff88;
+            border-radius: var(--radius-lg);
+            box-shadow: 0 0 40px rgba(0,255,136,0.2);
+            padding: 20px;
+            position: relative;
+        }
+        
+        /* ✅ ستايل الصفحة الكاملة (Fullscreen) */
+        .fullscreen-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 2147483647;
+            background: #0a0d14;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(2px);
+        }
+        .fullscreen-container {
+            width: 100%;
+            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
+            background: #0a0d14;
+            padding: 25px 20px;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+        .fullscreen-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            padding-bottom: 15px;
+        }
+        .fullscreen-header h2 {
+            color: var(--cyan);
+            font-size: 1.5rem;
+            margin: 0;
+            font-weight: 900;
+        }
+        .fullscreen-close-btn {
+            background: var(--cyan-soft);
+            border: 1px solid var(--cyan);
+            color: var(--cyan);
+            font-size: 0.9rem;
+            font-weight: 900;
+            cursor: pointer;
+            transition: var(--transition);
+            padding: 8px 15px;
+            border-radius: 8px;
+        }
+        .fullscreen-close-btn:hover {
+            color: #000;
+            background: var(--cyan);
+        }
+        
+        /* تعديل الـ bottom nav لإخفائها عند فتح الصفحة الكاملة (ديناميكياً بواسطة JS) */
+        .bottom-dock.hidden {
+            display: none !important;
+        }
+
+        .btn-primary, .btn-accent, .btn-warning, .btn-success, .btn-danger, .btn-send-chat {
+            min-height: 42px;
+            padding: 0 16px;
+            border-radius: 9px;
+            font-size: 0.83rem;
+            font-weight: 900;
+            cursor: pointer;
+            transition: var(--transition);
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            position: relative;
+            overflow: hidden;
+            animation: pulseBtn 2s ease-in-out infinite;
+        }
+        @keyframes pulseBtn {
+            0%,100% { transform: scale(1); }
+            50% { transform: scale(1.03); }
+        }
+        .btn-primary {
+            background: var(--cyan);
+            color: #000;
+            box-shadow: 0 0 14px rgba(0,242,254,0.2);
+        }
+        .btn-primary:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 30px rgba(0,242,254,0.4);
+        }
+        .btn-primary:active {
+            transform: translateY(0) scale(0.96);
+        }
+        .btn-accent {
+            color: var(--cyan);
+            background: var(--cyan-soft);
+            border: 1px solid var(--cyan);
+        }
+        .btn-warning {
+            color: var(--yellow);
+            background: rgba(250,204,21,0.1);
+            border: 1px solid rgba(250,204,21,0.5);
+        }
+        .btn-success {
+            color: var(--green);
+            background: rgba(34,197,94,0.1);
+            border: 1px solid rgba(34,197,94,0.5);
+        }
+        .btn-danger {
+            color: var(--red);
+            background: rgba(239,68,68,0.1);
+            border: 1px solid rgba(239,68,68,0.5);
+        }
+        .btn-accent:hover, .btn-warning:hover, .btn-success:hover, .btn-danger:hover {
+            transform: translateY(-2px);
+            filter: brightness(1.2);
+        }
+        .btn-accent:active, .btn-warning:active, .btn-success:active, .btn-danger:active {
+            transform: translateY(0) scale(0.96);
+        }
+
+        /* ✅ إعدادات لعبة PHANTOM MAZE (إصلاح الشاشة والتحكم) */
+        #pacman-canvas {
+            width: 100% !important;
+            max-width: 1000px !important;
+            height: auto !important;
+            aspect-ratio: 28 / 16; 
+            border-radius: 10px;
+            border: 2px solid #00ffff;
+            box-shadow: 0 0 20px rgba(0,255,255,0.5);
+            background: #000;
+            touch-action: none !important; 
+            display: block;
+            margin: 0 auto;
+        }
+        #pacman-game {
+            width: 100% !important;
+            height: 100% !important;
+            position: relative !important;
+        }
+        #pacman-game * {
+            box-sizing: border-box;
+        }
+
+        /* =========================================================
+           ✅ NEW: Shop & Inventory CSS
+           ========================================================= */
+        .shop-grid {
+            display: grid !important;
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 12px !important;
+            width: 100%;
+        }
+
+        .shop-item-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            padding: 15px 10px;
+            border-radius: var(--radius-sm);
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--border);
+            text-align: center;
+            transition: var(--transition);
+            min-height: 140px;
+        }
+        .shop-item-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(0, 242, 254, 0.3);
+            box-shadow: 0 8px 20px rgba(0, 242, 254, 0.1);
+        }
+        .shop-item-card .item-icon {
+            font-size: 2rem;
+        }
+        .shop-item-card .item-title {
+            color: var(--white);
+            font-size: 0.8rem;
+            font-weight: 900;
+            margin: 4px 0;
+        }
+        .shop-item-card .item-desc {
+            color: var(--muted);
+            font-size: 0.65rem;
+            margin-bottom: 8px;
+        }
+        .shop-item-card .item-price {
+            color: var(--gold);
+            font-size: 0.85rem;
+            font-weight: 900;
+        }
+        .shop-item-card .shop-btn {
+            width: 100%;
+            margin-top: 6px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            font-weight: 900;
+            cursor: pointer;
+            transition: var(--transition);
+            border: none;
+            background: var(--cyan);
+            color: #000;
+        }
+        .shop-item-card .shop-btn:hover {
+            transform: scale(1.05);
+        }
+        .shop-item-card .shop-btn.owned {
+            background: rgba(34, 197, 94, 0.2);
+            color: var(--green);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            cursor: default;
+            pointer-events: none;
+        }
+        .shop-item-card .shop-btn.equipped {
+            background: rgba(0, 242, 254, 0.2);
+            color: var(--cyan);
+            border: 1px solid rgba(0, 242, 254, 0.3);
+            cursor: default;
+            pointer-events: none;
+        }
+
+        @media (max-width: 600px) {
+            .shop-grid {
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 8px;
+            }
+        }
+
+        #profile-tab-info, #profile-tab-inventory {
+            flex: 1;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 900;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+        #profile-tab-inventory.active-tab {
+            background: var(--cyan-soft) !important;
+            border-color: var(--cyan) !important;
+            color: var(--cyan) !important;
+        }
+        #profile-tab-info.active-tab {
+            background: var(--cyan-soft) !important;
+            border-color: var(--cyan) !important;
+            color: var(--cyan) !important;
+        }
+        
+        .vault-percent-btn[data-percent="1"] {
+            background: var(--cyan);
+            color: #000;
+            border: 1px solid var(--cyan);
+            box-shadow: 0 0 15px var(--cyan-glow);
+            font-weight: 900;
+        }
+        .vault-percent-btn[data-percent="1"]:hover {
+            background: var(--cyan-soft);
+            color: var(--cyan);
+            border: 1px solid var(--cyan);
+            box-shadow: 0 0 25px var(--cyan-glow);
+        }
+
+        /* =========================================================
+           ✅ NEW: Admin Dashboard CSS
+           ========================================================= */
+        .admin-overlay { position: fixed; inset: 0; z-index: 999999; background: rgba(3,5,9,0.95); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: center; }
+        .admin-container { width: 90%; max-width: 600px; background: #0b1019; border: 2px solid var(--cyan); border-radius: 15px; padding: 20px; position: relative; }
+        .admin-close-btn { position: absolute; top: 10px; left: 10px; background: transparent; border: none; color: var(--muted); font-size: 1.5rem; cursor: pointer; }
+        .admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px; }
+        .admin-card { background: rgba(255,255,255,0.03); border: 2px solid; border-radius: 12px; padding: 20px; text-align: center; cursor: pointer; transition: 0.3s; }
+        .admin-card:hover { transform: translateY(-5px); }
+        .admin-card-icon { font-size: 2.5rem; margin-bottom: 10px; }
+        .admin-card-title { color: var(--white); font-weight: 900; font-size: 1rem; }
+        
+        .admin-full-page { position: fixed; inset: 0; z-index: 999999; background: #0a0d14; overflow-y: auto; padding: 20px; }
+        .admin-back-btn { background: var(--cyan-soft); border: 1px solid var(--cyan); color: var(--cyan); padding: 8px 15px; border-radius: 8px; font-weight: 900; cursor: pointer; margin-bottom: 15px; }
+        .admin-page-content { max-width: 600px; margin: 0 auto; }
+        .admin-section { background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 12px; padding: 15px; margin-bottom: 15px; }
+        .admin-section h3 { color: var(--white); margin-top: 0; margin-bottom: 10px; font-size: 1.1rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px; }
+        .admin-section input, .admin-section select { width: 100%; padding: 10px; background: rgba(0,0,0,0.5); border: 1px solid var(--border); border-radius: 8px; color: #fff; margin-bottom: 8px; box-sizing: border-box; }
+        
+        .admin-popup { position: fixed; inset: 0; z-index: 9999999; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; }
+        .admin-popup-box { background: #0b1019; border: 2px solid var(--cyan); border-radius: 15px; padding: 20px; width: 90%; max-width: 400px; }
+
+        /* إعدادات النافذة الجانبية الجديدة (admin-access-panel) */
+        #admin-access-panel {
+            position: fixed;
+            top: 0;
+            right: -320px;
+            width: 300px;
+            height: 100%;
+            background: #0b1019;
+            border-left: 2px solid var(--cyan);
+            box-shadow: -5px 0 20px rgba(0,0,0,0.5);
+            z-index: 1000000;
+            transition: right 0.3s ease;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+        #admin-access-panel.active {
+            right: 0;
+        }
+        #admin-access-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 999999;
+            display: none;
+        }
+        #admin-access-panel.active + #admin-access-overlay {
+            display: block;
+        }
+        #close-admin-access-btn {
+            background: transparent;
+            border: none;
+            color: var(--muted);
+            font-size: 1.8rem;
+            cursor: pointer;
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            transition: var(--transition);
+        }
+        #close-admin-access-btn:hover {
+            color: var(--red);
+            transform: scale(1.1);
+        }
+
+        /* ✅ توحيد شكل الأزرار الملونة (Shop, Inventory, Vault) */
+        .shop-filter-btn, .inv-filter-btn, .vault-percent-btn {
+            background: rgba(255,255,255,0.03) !important;
+            border: 1px solid var(--border) !important;
+            color: var(--muted) !important;
+            transition: var(--transition) !important;
+            font-weight: 800 !important;
+        }
+        .shop-filter-btn.active-filter, .inv-filter-btn.active-filter {
+            background: var(--cyan-soft) !important;
+            border-color: var(--cyan) !important;
+            color: var(--cyan) !important;
+            box-shadow: 0 0 10px rgba(0,242,254,0.3) !important;
+        }
+        .vault-percent-btn:hover, .shop-filter-btn:hover, .inv-filter-btn:hover {
+            background: rgba(255,255,255,0.06) !important;
+            border-color: rgba(0,242,254,0.5) !important;
+            color: var(--white) !important;
+            box-shadow: 0 0 8px rgba(0,242,254,0.3) !important;
+        }
+
+        /* ✅ حل مشكلة 29 + 33: رفع z-index للرسائل وجعلها تظهر فوق كل شيء وفي المنتصف */
+        .toast, .notification-toast, .popup-msg, .custom-toast, .alert-box, .message-popup {
+            z-index: 999999999 !important;
+            position: fixed !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
+        }
+        
+        /* ✅ حل مشكلة 30: الروبوت يظهر فوق كل الصفحات */
+        #phantom-mascot {
+            position: fixed !important;
+            bottom: 20px !important;
+            right: 20px !important;
+            z-index: 99999999 !important;
+            display: block !important;
+            animation: robot-color-shift 8s infinite alternate;
+        }
+        @keyframes robot-color-shift {
+            0% { filter: hue-rotate(0deg); }
+            50% { filter: hue-rotate(90deg); }
+            100% { filter: hue-rotate(0deg); }
+        }
     </style>
 
-</body>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // زر PHANTOM Hub
+            const hubTrigger = document.getElementById('hub-trigger');
+            const hubOverlay = document.getElementById('phantom-hub-overlay');
+            const hubClose = document.getElementById('hub-close-btn');
+            const bottomNav = document.querySelector('.bottom-dock');
 
-                            </html>
+            if (hubTrigger && hubOverlay) {
+                hubTrigger.addEventListener('click', function() {
+                    hubOverlay.style.display = 'flex';
+                    setTimeout(() => hubOverlay.classList.add('active'), 10);
+                });
+            }
+            if (hubClose && hubOverlay) {
+                hubClose.addEventListener('click', function() {
+                    hubOverlay.classList.remove('active');
+                    setTimeout(() => hubOverlay.style.display = 'none', 400);
+                });
+            }
+
+            // ✅ ربط أزرار الخدمات الست (تعليم إنها اتفتحت من الـ Hub)
+            function setupServiceButton(btnId, overlayId, onOpenCallback) {
+                const btn = document.getElementById(btnId);
+                const overlay = document.getElementById(overlayId);
+                if (btn && overlay) {
+                    btn.addEventListener('click', function() {
+                        overlay.setAttribute('data-from-hub', 'true');
+                        if (hubOverlay && hubOverlay.classList.contains('active')) {
+                            hubOverlay.classList.remove('active');
+                            setTimeout(() => hubOverlay.style.display = 'none', 400);
+                        }
+                        if (bottomNav) bottomNav.classList.add('hidden');
+                        overlay.style.display = 'flex';
+                        if (onOpenCallback) onOpenCallback(); 
+                    });
+                }
+            }
+
+            setupServiceButton('open-pacman-fullscreen-btn', 'pacman-overlay');
+            setupServiceButton('open-wheel-fullscreen-btn', 'wheel-overlay');
+            setupServiceButton('open-game-fullscreen-btn', 'game-overlay');
+            setupServiceButton('open-vault-fullscreen-btn', 'vault-overlay', loadVaultData);
+            setupServiceButton('open-store-fullscreen-btn', 'store-overlay', renderShop);
+            setupServiceButton('open-battle-fullscreen-btn', 'battle-overlay');
+
+            // ✅ حل مشكلة 31 + 41: الرجوع يرجع للهب لو اتفتحت منه، ويقفل لو لاء
+            function setupCloseButton(closeBtnId, overlayId, isHubPage = false) {
+                const closeBtn = document.getElementById(closeBtnId);
+                const overlay = document.getElementById(overlayId);
+                if (closeBtn && overlay) {
+                    closeBtn.addEventListener('click', function() {
+                        const fromHub = overlay.getAttribute('data-from-hub') === 'true';
+                        const fromGhost = overlay.getAttribute('data-from-ghost') === 'true';
+                        overlay.style.display = 'none';
+                        if (bottomNav) bottomNav.classList.remove('hidden');
+                        if (isHubPage && fromHub) {
+                            overlay.removeAttribute('data-from-hub');
+                            if (hubOverlay) {
+                                hubOverlay.style.display = 'flex';
+                                setTimeout(() => hubOverlay.classList.add('active'), 10);
+                            }
+                        } else if (fromGhost) {
+                            const ghostMenu = document.getElementById('phantom-ghost-menu');
+                            if (ghostMenu) ghostMenu.style.display = 'block';
+                            overlay.removeAttribute('data-from-ghost');
+                        }
+                    });
+                }
+            }
+
+            setupCloseButton('pacman-close-btn', 'pacman-overlay', true);
+            setupCloseButton('vault-close-btn', 'vault-overlay', true);
+            setupCloseButton('wheel-close-btn', 'wheel-overlay', true);
+            setupCloseButton('game-close-btn', 'game-overlay', true);
+            setupCloseButton('store-close-btn', 'store-overlay', true);
+            setupCloseButton('battle-close-btn', 'battle-overlay', true);
+            setupCloseButton('profile-close-btn', 'profile-overlay', false);
+            setupCloseButton('inventory-close-btn', 'inventory-overlay', false);
+        });
+    </script>
+        
+    </script>
+<!-- 🤖 PHANTOM MASCOT -->
+<div id="phantom-mascot" aria-hidden="true">
+    <div id="mascot-banner">『PH』 PHANTOM HQ</div>
+    <div id="mascot-honk-bubble">📯 بووووق!</div>
+    <div id="mascot-glow-wave"></div>
+
+    <div id="mascot-body">
+        <div id="mascot-antenna"><span id="mascot-antenna-tip"></span></div>
+
+        <div id="mascot-face">
+            <div id="mascot-brows">
+                <div class="mascot-brow" id="mascot-brow-left"></div>
+                <div class="mascot-brow" id="mascot-brow-right"></div>
+            </div>
+            <div class="mascot-eye" id="mascot-eye-left">
+                <div class="mascot-pupil"></div>
+            </div>
+            <div class="mascot-eye" id="mascot-eye-right">
+                <div class="mascot-pupil"></div>
+            </div>
+        </div>
+
+        <button id="mascot-horn" type="button" title="بوّق!" aria-label="بوق الروبوت">📯</button>
+    </div>
+</div>
+
+<!-- 📱 بوبرت شات (Bottom Sheet) - تصميم 4 -->
+<div id="phantom-chat-overlay" class="phantom-chat-overlay"></div>
+<div id="phantom-chat-sheet" class="phantom-chat-sheet">
+  <div class="phantom-chat-header">
+    <div class="bot-avatar">👻</div>
+    <div class="phantom-chat-title">
+      <strong>بوبرت</strong>
+      <small>PHANTOM NODE • متصل</small>
+    </div>
+    <button class="phantom-chat-close">『PH』</button>
+  </div>
+  <div id="phantom-chat-body" class="phantom-chat-body"></div>
+  <div class="phantom-chat-input-area">
+    <input type="text" id="phantom-chat-input" placeholder="اكتب رسالتك لبوبرت..." />
+    <button id="phantom-chat-send">➤</button>
+  </div>
+</div>
+
+<!-- 👻 قائمة الشبح الجديدة (تصميم 3 - دوائر نيون) -->
+<div id="phantom-ghost-menu" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:100000;">
+    <div class="ghost-menu-grid-container">
+        
+        <div class="ghost-menu-item color-gold" onclick="closeGhostMenu(); openAdminDashboard();">
+            <span class="ghost-menu-icon">🏆</span>
+            <span class="ghost-menu-label">صفحة القيادة</span>
+        </div>
+        
+        <div class="ghost-menu-item color-orange" onclick="closeGhostMenu(); openBroadcastDrawer();">
+            <span class="ghost-menu-icon">✉️</span>
+            <span class="ghost-menu-label">صفحة الرسائل</span>
+        </div>
+        
+        <div class="ghost-menu-item color-blue" onclick="closeGhostMenu(); showNameChangeForm();">
+            <span class="ghost-menu-icon">👤</span>
+            <span class="ghost-menu-label">صفحة الاسم</span>
+        </div>
+        
+        <div class="ghost-menu-item center" onclick="closeGhostMenu(); document.getElementById('phantom-hub-overlay').style.display='flex'; setTimeout(() => document.getElementById('phantom-hub-overlay').classList.add('active'), 10);">
+            <span class="ghost-menu-icon" style="font-weight:900; font-size:1.5rem;">PH</span>
+            <span class="ghost-menu-label">PHANTOM Hub</span>
+        </div>
+        
+        <div class="ghost-menu-item color-yellow" onclick="closeGhostMenu(); openInventory();">
+            <span class="ghost-menu-icon">📦</span>
+            <span class="ghost-menu-label">صفحة المخزون</span>
+        </div>
+        
+        <div class="ghost-menu-item color-green" onclick="closeGhostMenu(); showChangeIdForm();">
+            <span class="ghost-menu-icon">🆔</span>
+            <span class="ghost-menu-label">تغيير الـ ID</span>
+        </div>
+        
+        <div class="ghost-menu-item color-purple" onclick="closeGhostMenu(); openSuggestionModal();">
+            <span class="ghost-menu-icon">💡</span>
+            <span class="ghost-menu-label">الاقتراحات</span>
+        </div>
+
+    </div>
+</div>
+
+<script>
+    // دالة فتح وإغلاق القائمة (نسخة واحدة نظيفة)
+    function toggleGhostMenu() {
+        var menu = document.getElementById('phantom-ghost-menu');
+        if (menu) {
+            if (menu.style.display === 'block') {
+                menu.style.display = 'none';
+            } else {
+                menu.style.display = 'block';
+            }
+        }
+    }
+
+    function closeGhostMenu() {
+        var menu = document.getElementById('phantom-ghost-menu');
+        if (menu) menu.style.display = 'none';
+    }
+
+    document.getElementById('phantom-ghost-trigger').addEventListener('click', function(e) {
+        e.stopPropagation();
+        toggleGhostMenu();
+    });
+
+    document.addEventListener('click', function(e) {
+        var menu = document.getElementById('phantom-ghost-menu');
+        var ghost = document.getElementById('phantom-ghost-trigger');
+        if (menu && menu.style.display === 'block' && !menu.contains(e.target) && !ghost.contains(e.target)) {
+            menu.style.display = 'none';
+        }
+    });
+</script>
+<script>
+    window.openBroadcastDrawer = function() {
+        var ghostMenu = document.getElementById('phantom-ghost-menu');
+        if (ghostMenu) ghostMenu.style.display = 'none';
+        var drawer = document.getElementById('broadcast-drawer');
+        if (!drawer) {
+            drawer = document.createElement('div');
+            drawer.id = 'broadcast-drawer';
+            drawer.style.cssText = "display:block; position:fixed; top:0; right:0; width:320px; height:100%; background:#0b1019; border-left:2px solid #00f2fe; box-shadow:-5px 0 20px rgba(0,0,0,0.5); z-index:1000000; padding:20px;";
+            drawer.innerHTML = '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;"><h2 style="color:white;">📬 الرسائل الجماعية</h2><button id="close-broadcast-btn" style="background:none; border:none; color:gray; font-size:1.5rem; cursor:pointer;">『PH』</button></div><div id="broadcast-messages-list" style="color:gray; font-size:0.9rem;"></div>';
+            document.body.appendChild(drawer);
+            document.getElementById('close-broadcast-btn').onclick = function() {
+                drawer.style.display = 'none';
+            };
+        }
+        drawer.style.display = 'block';
+        if (typeof renderBroadcastMessages === 'function') renderBroadcastMessages();
+    };
+    document.addEventListener('DOMContentLoaded', function() {
+        var menuItem = document.getElementById('menu-2');
+        if (menuItem) {
+            menuItem.addEventListener('click', function() {
+                window.openBroadcastDrawer();
+            });
+        }
+    });
+</script>
+<!-- 💡 نافذة الاقتراحات -->
+<div id="suggestion-modal" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); z-index:9999999; background:rgba(16,23,34,0.98); padding:20px; border-radius:12px; border:2px solid var(--cyan); box-shadow:0 20px 60px rgba(0,0,0,0.8); width:90%; max-width:400px; text-align:center; direction:rtl;">
+    <h3 style="color:var(--cyan); margin-bottom:15px;">💡 اقتراح إضافة جديدة</h3>
+    <input id="suggestion-name" type="text" placeholder="اسم الاقتراح" style="width:100%; padding:10px; margin-bottom:10px; background:#0b1019; border:1px solid var(--border); border-radius:6px; color:#fff;">
+    <input id="suggestion-details" type="text" placeholder="تفاصيل الاقتراح" style="width:100%; padding:10px; margin-bottom:10px; background:#0b1019; border:1px solid var(--border); border-radius:6px; color:#fff;">
+    <textarea id="suggestion-reason" placeholder="ليه الإضافة دي؟" style="width:100%; padding:10px; height:70px; margin-bottom:15px; background:#0b1019; border:1px solid var(--border); border-radius:6px; color:#fff; resize:none;"></textarea>
+    <button onclick="submitSuggestion()" style="width:100%; padding:12px; background:var(--cyan); color:#000; border:none; border-radius:8px; font-weight:900; cursor:pointer;">إرسال الاقتراح</button>
+    <button onclick="closeSuggestionModal()" style="width:100%; padding:8px; margin-top:8px; background:transparent; border:1px solid #888; color:#888; border-radius:8px; cursor:pointer;">إلغاء</button>
+</div>
+<!-- ⚙️ نافذة الإعدادات -->
+<div id="settings-overlay" class="fullscreen-overlay" style="display:none;">
+    <div class="fullscreen-container">
+        <div class="fullscreen-header">
+            <h2>⚙️ إعدادات التطبيق</h2>
+            <button id="settings-close-btn" class="fullscreen-close-btn">『PH』</button>
+        </div>
+        <div class="settings-content" style="max-width:600px; width:100%; margin:0 auto;">
+            
+            <div class="settings-group">
+                <h3>🎨 ألوان التطبيق</h3>
+                <div class="settings-row">
+                    <button class="settings-btn" onclick="applyTheme('cyan')">سماوي</button>
+                    <button class="settings-btn" onclick="applyTheme('gold')">ذهبي</button>
+                    <button class="settings-btn" onclick="applyTheme('purple')">بنفسجي</button>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>📏 حجم الخط</h3>
+                <div class="settings-row">
+                    <button class="settings-btn" onclick="applyFontSize('small')">صغير</button>
+                    <button class="settings-btn" onclick="applyFontSize('medium')">متوسط</button>
+                    <button class="settings-btn" onclick="applyFontSize('large')">كبير</button>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>💬 حجم فقاعات الشات</h3>
+                <div class="settings-row">
+                    <button class="settings-btn" onclick="applyChatBubbleSize('small')">صغير</button>
+                    <button class="settings-btn" onclick="applyChatBubbleSize('medium')">متوسط</button>
+                    <button class="settings-btn" onclick="applyChatBubbleSize('large')">كبير</button>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>🎬 مؤثرات الحركة</h3>
+                <div class="settings-row">
+                    <button class="settings-btn" onclick="applyAnimations('on')">تشغيل</button>
+                    <button class="settings-btn" onclick="applyAnimations('off')">إيقاف</button>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>🔔 صوت المنشن (@)</h3>
+                <div class="settings-row">
+                    <button class="settings-btn" onclick="applyMentionSound('on')">تشغيل</button>
+                    <button class="settings-btn" onclick="applyMentionSound('off')">إيقاف</button>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>🤖 إظهار الروبوت (PHANTOM Mascot)</h3>
+                <div class="settings-row">
+                    <button class="settings-btn" onclick="applyMascot('on')">تشغيل</button>
+                    <button class="settings-btn" onclick="applyMascot('off')">إيقاف</button>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>🛡️ الحساب</h3>
+                <div class="settings-row">
+                    <button class="settings-btn danger" onclick="logoutUser()">🚪 تسجيل الخروج</button>
+                    
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+<script>
+(function() {
+    var ghostBtn = document.getElementById('phantom-ghost-trigger');
+    var ghostMenu = document.getElementById('phantom-ghost-menu');
+    if (!ghostBtn || !ghostMenu) {
+        console.warn('❌ زر الشبح أو القائمة غير موجودة في الصفحة');
+        return;
+    }
+
+    ghostBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        ghostMenu.style.display = (ghostMenu.style.display === 'block') ? 'none' : 'block';
+    });
+
+    // إغلاق القائمة عند الضغط خارجها
+    document.addEventListener('click', function(e) {
+        if (ghostMenu.style.display === 'block' && !ghostMenu.contains(e.target) && e.target !== ghostBtn) {
+            ghostMenu.style.display = 'none';
+        }
+    });
+})();
+</script>
+<!-- 🚪 شاشة تسجيل الخروج الدرامية (ظل الشبح + النيون السداسي + SVG) -->
+<div id="logout-overlay" class="fullscreen-overlay" style="display:none; background:#070a10 !important; z-index:2147483647;">
+    <div class="fullscreen-container" style="justify-content:center; align-items:center; text-align:center;">
+
+        <!-- المرحلة 1: رسالة من الظل (تحذير الشبح) -->
+        <div id="logout-step-1" class="logout-step ghost-shade">
+            
+            <!-- SVG شبح PHANTOM مخصص -->
+            <div class="ghost-svg-wrapper">
+                <svg viewBox="0 0 100 100" width="120" height="120" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M50 10 C30 10 20 25 20 45 V75 L30 65 L40 75 L50 65 L60 75 L70 65 L80 75 V45 C80 25 70 10 50 10 Z" stroke="#00f2fe" stroke-width="4" stroke-linejoin="round" fill="rgba(0,242,254,0.1)" />
+                    <circle cx="38" cy="42" r="6" fill="#00f2fe" />
+                    <circle cx="62" cy="42" r="6" fill="#00f2fe" />
+                    <path d="M45 55 Q50 60 55 55" stroke="#00f2fe" stroke-width="2" fill="none" stroke-linecap="round" />
+                </svg>
+            </div>
+
+            <h2 style="color:#00f2fe; font-size:1.9rem; margin-bottom:10px; text-shadow:0 0 20px rgba(0,242,254,0.9); font-weight:900;">رسالة من الظل...</h2>
+            <p style="color:#ffffff; font-size:1rem; margin-bottom:30px; opacity:0.8;">هل أنت متأكد من الخروج من الحساب؟</p>
+            
+            <button onclick="showLogoutStep2()" class="btn-danger ghost-btn-red" style="width:80%; margin-bottom:15px; font-size:1.1rem; padding:15px;">خروج نهائي</button>
+            <button onclick="cancelLogout()" class="btn-secondary ghost-btn-dark" style="width:80%; padding:10px;">رجوع</button>
+        </div>
+
+<!-- المرحلة 2: مراجعة الإنجازات (رسمة كلاود الرسمية مع شبح مصغر) -->
+<div id="logout-step-2" class="logout-step neon-hex" style="display:none;">
+    <h2 style="color:#fff; font-size:1.8rem; margin-bottom:25px;">👑 مراجعة إنجازاتك</h2>
+    
+    <div class="phantom-command-center">
+        <svg id="phantom-logout-hq" viewBox="0 0 320 480" width="320" height="480" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <radialGradient id="bgGlow" cx="50%" cy="42%" r="60%">
+              <stop offset="0%" stop-color="#0d2233" stop-opacity="1"/>
+              <stop offset="100%" stop-color="#05070c" stop-opacity="1"/>
+            </radialGradient>
+
+            <radialGradient id="ghostBody" cx="45%" cy="35%" r="65%">
+              <stop offset="0%" stop-color="#eafcff"/>
+              <stop offset="45%" stop-color="#7fe9ff"/>
+              <stop offset="100%" stop-color="#12b8d8"/>
+            </radialGradient>
+
+            <linearGradient id="btnGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#00f2fe"/>
+              <stop offset="100%" stop-color="#ff4d6d"/>
+            </linearGradient>
+
+            <filter id="softGlow" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="6" result="blur"/>
+              <feMerge>
+                <feMergeNode in="blur"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+
+            <filter id="ringGlowGold" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur stdDeviation="4"/>
+            </filter>
+
+            <style>
+              <![CDATA[
+                #phantom-logout-hq .bg-ring {
+                  animation: rotateSlow 40s linear infinite;
+                  transform-origin: 160px 210px;
+                }
+                #phantom-logout-hq .bg-ring-2 {
+                  animation: rotateSlowRev 55s linear infinite;
+                  transform-origin: 160px 210px;
+                }
+                #phantom-logout-hq .ghost-float {
+                  animation: floatGhost 4.5s ease-in-out infinite;
+                  transform-origin: 160px 210px;
+                }
+                #phantom-logout-hq .ghost-aura {
+                  animation: auraPulse 3.6s ease-in-out infinite;
+                }
+                #phantom-logout-hq .eye {
+                  animation: eyePulse 3s ease-in-out infinite;
+                }
+                #phantom-logout-hq .eye-right {
+                  animation-delay: 0.05s;
+                }
+                #phantom-logout-hq .stat-circle {
+                  transition: filter 0.3s ease;
+                }
+                #phantom-logout-hq .stat-gold { animation: haloGold 3.2s ease-in-out infinite; }
+                #phantom-logout-hq .stat-green { animation: haloGreen 3.2s ease-in-out infinite; animation-delay: 0.4s; }
+                #phantom-logout-hq .stat-pink { animation: haloPink 3.2s ease-in-out infinite; animation-delay: 0.8s; }
+
+                @keyframes rotateSlow {
+                  from { transform: rotate(0deg); }
+                  to { transform: rotate(360deg); }
+                }
+                @keyframes rotateSlowRev {
+                  from { transform: rotate(0deg); }
+                  to { transform: rotate(-360deg); }
+                }
+                @keyframes floatGhost {
+                  0%, 100% { transform: translateY(0px); }
+                  50% { transform: translateY(-8px); }
+                }
+                @keyframes auraPulse {
+                  0%, 100% { opacity: 0.55; }
+                  50% { opacity: 0.9; }
+                }
+                @keyframes eyePulse {
+                  0%, 15% { fill: #0a0e14; }
+                  20%, 30% { fill: #ff2e4d; }
+                  35%, 100% { fill: #0a0e14; }
+                }
+                @keyframes haloGold {
+                  0%, 100% { filter: drop-shadow(0 0 2px #ffd700); }
+                  50% { filter: drop-shadow(0 0 9px #ffd700); }
+                }
+                @keyframes haloGreen {
+                  0%, 100% { filter: drop-shadow(0 0 2px #00ff88); }
+                  50% { filter: drop-shadow(0 0 9px #00ff88); }
+                }
+                @keyframes haloPink {
+                  0%, 100% { filter: drop-shadow(0 0 2px #ff4d6d); }
+                  50% { filter: drop-shadow(0 0 9px #ff4d6d); }
+                }
+              ]]>
+            </style>
+          </defs>
+
+          <!-- Background -->
+          <rect x="0" y="0" width="320" height="480" rx="24" fill="url(#bgGlow)"/>
+
+          <!-- Title block -->
+          <text id="logout-name" x="160" y="46" text-anchor="middle"
+                font-family="Tajawal, Arial, sans-serif" font-size="24" font-weight="700"
+                fill="#eafcff" style="letter-spacing:1px;">PH 5oM•D8</text>
+
+          <text id="logout-title" x="160" y="72" text-anchor="middle"
+                font-family="Tajawal, Arial, sans-serif" font-size="14" font-weight="600"
+                fill="#d4af37">[ بدون لقب ]</text>
+
+          <!-- Decorative depth rings behind ghost -->
+          <g opacity="0.35">
+            <circle class="bg-ring" cx="160" cy="210" r="98" fill="none" stroke="#00f2fe"
+                    stroke-width="1.2" stroke-dasharray="6 8"/>
+            <circle class="bg-ring-2" cx="160" cy="210" r="118" fill="none" stroke="#d4af37"
+                    stroke-width="1" stroke-dasharray="3 10"/>
+          </g>
+
+          <!-- Ghost group (aura + body), floats  -->
+          <!-- ✅ التعديل هنا: أضفت transform لجعل الشبح أصغر (0.85) ومتمركز حول النقطة (160,210) -->
+          <g class="ghost-float" transform="translate(160, 210) scale(0.85) translate(-160, -210)">
+            <!-- Outer glowing ring -->
+            <circle class="ghost-aura" cx="160" cy="210" r="82" fill="none"
+                    stroke="#00f2fe" stroke-width="2.5" filter="url(#softGlow)" opacity="0.7"/>
+            <circle cx="160" cy="210" r="82" fill="none" stroke="#00f2fe" stroke-width="1" opacity="0.5"/>
+
+            <!-- small orbit dots on ring -->
+            <circle cx="160" cy="128" r="3" fill="#eafcff"/>
+            <circle cx="160" cy="292" r="3" fill="#eafcff" opacity="0.6"/>
+            <circle cx="78"  cy="210" r="2.5" fill="#eafcff" opacity="0.6"/>
+            <circle cx="242" cy="210" r="2.5" fill="#eafcff" opacity="0.6"/>
+
+            <!-- Ghost body -->
+            <g filter="url(#softGlow)">
+              <path d="M160 148
+                       c-30 0 -54 24 -54 56
+                       v46
+                       c0 4 3 7 6 5 l10 -8 l12 10 c2 2 5 2 7 0 l9 -8 l10 9
+                       c2 2 5 2 7 0 l9 -9 l12 10 c2 2 5 2 7 0 l10 -9 l6 5
+                       c3 2 6 -1 6 -5
+                       v-46
+                       c0 -32 -24 -56 -54 -56 z"
+                    fill="url(#ghostBody)" stroke="#0aa8c4" stroke-width="1.2"/>
+            </g>
+
+            <!-- Eyes (circles, pulse red) -->
+            <circle class="eye eye-left" cx="140" cy="198" r="8" fill="#0a0e14"/>
+            <circle class="eye eye-right" cx="181" cy="198" r="8" fill="#0a0e14"/>
+
+            <!-- Mouth: open oval, no smile, matches reference -->
+            <ellipse cx="160" cy="228" rx="9" ry="12" fill="#0a0e14"/>
+          </g>
+
+          <!-- Stat circles -->
+          <!-- Gold: Points (left in RTL layout) -->
+          <g class="stat-circle stat-gold" transform="translate(72,330)">
+            <circle r="38" fill="#101820" stroke="#ffd700" stroke-width="2.5"/>
+            <text id="logout-points" x="0" y="6" text-anchor="middle"
+                  font-family="Tajawal, Arial, sans-serif" font-size="26" font-weight="700"
+                  fill="#ffd700">0</text>
+            <text x="0" y="58" text-anchor="middle"
+                  font-family="Tajawal, Arial, sans-serif" font-size="13" fill="#ffd700">⭐ نقاط</text>
+          </g>
+
+          <!-- Green: Attendance (center, slightly lower for depth) -->
+          <g class="stat-circle stat-green" transform="translate(160,352)">
+            <circle r="38" fill="#101820" stroke="#00ff88" stroke-width="2.5"/>
+            <text id="logout-attendance" x="0" y="6" text-anchor="middle"
+                  font-family="Tajawal, Arial, sans-serif" font-size="26" font-weight="700"
+                  fill="#00ff88">0</text>
+            <text x="0" y="58" text-anchor="middle"
+                  font-family="Tajawal, Arial, sans-serif" font-size="13" fill="#00ff88">📅 حضور</text>
+          </g>
+
+          <!-- Pink: Hearts (right) -->
+          <g class="stat-circle stat-pink" transform="translate(248,330)">
+            <circle r="38" fill="#101820" stroke="#ff4d6d" stroke-width="2.5"/>
+            <text id="logout-hearts" x="0" y="6" text-anchor="middle"
+                  font-family="Tajawal, Arial, sans-serif" font-size="26" font-weight="700"
+                  fill="#ff4d6d">0</text>
+            <text x="0" y="58" text-anchor="middle"
+                  font-family="Tajawal, Arial, sans-serif" font-size="13" fill="#ff4d6d">❤️ قلوب</text>
+          </g>
+        </svg>
+    </div>
+
+    <button onclick="finalLogout()" class="btn-danger neon-next-btn" style="width:80%; margin-top:20px; margin-bottom:10px; font-size:1.2rem; padding:15px;">التالي (تسجيل خروج)</button>
+    <button onclick="cancelLogout()" class="btn-secondary neon-back-btn" style="width:80%; padding:10px;">رجوع</button>
+</div>
+</body>
+                                                                     </html>
