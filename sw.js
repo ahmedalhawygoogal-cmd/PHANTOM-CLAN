@@ -1,13 +1,14 @@
 /* ========================================================
    PHANTOM HQ - SERVICE WORKER
-   PWA • Offline • Cache • Auto Update • Push Notifications (v5)
+   PWA • Offline • Cache • Auto Update • Push Notifications (v6)
    ======================================================== */
 
 // --- استيراد مكتبات Firebase للإشعارات ---
 importScripts("https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js");
 importScripts("https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js");
 
-const CACHE_NAME = "phantom-hq-v5";
+// ✅ تم تحديث الإصدار إلى v6 لمسح الكاش القديم
+const CACHE_NAME = "phantom-hq-v6";
 
 /* ========================================================
    📦 CORE FILES
@@ -20,7 +21,8 @@ const CORE_ASSETS = [
     "./data.js",
     "./manifest.json",
     "./icon-192.png",
-    "./icon-512.png"
+    "./icon-512.png",
+    "./phantom-mascot.png" // ✅ إضافة صورة الروبوت الجديد
 ];
 
 /* ========================================================
@@ -76,7 +78,15 @@ self.addEventListener("fetch", (event) => {
         return;
     }
 
-    if (url.pathname.startsWith("/api/") || url.hostname.includes("supabase.co")) {
+    // ✅ تجاهل ملفات الخادم الحساسة و Supabase و Agora و Firebase
+    if (
+        url.pathname.startsWith("/api/") ||
+        url.pathname.includes("server.js") ||
+        url.pathname.includes(".env") ||
+        url.hostname.includes("supabase.co") ||
+        url.hostname.includes("agora.io") ||
+        url.hostname.includes("firebase")
+    ) {
         return;
     }
 
@@ -156,9 +166,8 @@ self.addEventListener("fetch", (event) => {
 });
 
 /* ========================================================
-   🔔 FIREBASE BACKGROUND MESSAGING (جديد - مهم جداً)
+   🔔 FIREBASE BACKGROUND MESSAGING
    ======================================================== */
-// تهيئة Firebase داخل الـ Service Worker
 firebase.initializeApp({
     apiKey: "AIzaSyB9BLwWu9Rwrxb8YTt2d9piYzpJSWUNJfs",
     authDomain: "phantom-eb05d.firebaseapp.com",
@@ -170,7 +179,6 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// استقبال الإشعارات عندما يكون التطبيق في الخلفية (مقفول)
 messaging.onBackgroundMessage((payload) => {
     console.log('📩 [SW] إشعار خلفية وصل:', payload);
     
@@ -189,7 +197,7 @@ messaging.onBackgroundMessage((payload) => {
 });
 
 /* ========================================================
-   👆 PUSH EVENT (للتأكد من عمل الإشعارات مع كودك القديم)
+   👆 PUSH EVENT
    ======================================================== */
 self.addEventListener("push", function(event) {
     let data = {};
