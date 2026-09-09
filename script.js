@@ -6898,14 +6898,13 @@ async function sendMessage() {
     addMessage(text, 'user');
     input.value = '';
 
-    // ✅ إظهار مؤشر الكتابة (الشبح اللي بيترسم)
     const body = document.getElementById('phantom-chat-body');
     const typing = showTyping();
     body.appendChild(typing);
     body.scrollTop = body.scrollHeight;
 
     try {
-        // ✅ الاتصال بالـ Edge Function بتاعتك
+        // ✅ الرابط الصحيح مع الـ Authorization
         const response = await fetch("https://dmbprvvjmgccgztrhkay.supabase.co/functions/v1/Bobert-ai-", {
             method: "POST",
             headers: { 
@@ -6916,17 +6915,13 @@ async function sendMessage() {
             body: JSON.stringify({ message: text })
         });
 
-        if (!response.ok) throw new Error("Edge Function Error");
+        if (!response.ok) throw new Error("Server Error: " + response.status);
         const data = await response.json();
         const aiResponse = data.response || "عذراً، لم أستطع الفهم.";
 
-        // ✅ حذف مؤشر الكتابة وإظهار الرد
         typing.remove();
         addMessage(aiResponse, 'bot');
-        
-        // ✅ نطق الرد (لو صوتك شغال)
         window.speakBobert(aiResponse);
-        
     } catch (error) {
         typing.remove();
         console.error("AI Error:", error);
@@ -6934,7 +6929,6 @@ async function sendMessage() {
         addMessage("عذراً، حدث خطأ في الاتصال.", 'bot');
     }
 }
-
 // ✅ دالة مؤشر الكتابة (فضلت زي ما هي بالظبط)
 function showTyping() {
     const div = document.createElement('div');
