@@ -841,6 +841,8 @@ function getCurrentUsername() {
 function getCurrentUserId() {
     const identity = getSavedIdentity();
     if (identity && identity.userId) return identity.userId;
+    const username = getCurrentUsername();
+    if (username) return "user_" + encodeURIComponent(username);
     return null;
 }
 
@@ -3492,6 +3494,7 @@ async function openProfile(memberName) {
     else if (frameEffect === "rainbow") frameColor = "linear-gradient(45deg, #ff4d4d, #ffd700, #00f2fe, #a855f7)";
     else if (frameEffect === "blue") frameColor = "#00f2fe";
     else if (frameEffect === "red") frameColor = "#ff4d4d";
+    else if (frameEffect === "red_gold") frameColor = "#ff4757";
     else if (frameEffect === "green") frameColor = "#22c55e";
     else if (frameEffect === "pink") frameColor = "#ff69b4";
     else if (frameEffect === "purple") frameColor = "#a855f7";
@@ -3507,10 +3510,12 @@ async function openProfile(memberName) {
         
         if (frameEffect === "rainbow") {
             ring.style.background = `conic-gradient(from 0deg, #ff4d4d, #ffd700, #00f2fe, #a855f7, #ff4d4d)`;
+        } else if (frameEffect === "red_gold") {
+            ring.style.background = `conic-gradient(from 0deg, #ff4757, #ffd700, #ff4757, #ffd700)`;
         } else {
             ring.style.background = `conic-gradient(${frameColor} ${percentage}%, #1a222a ${percentage}%)`;
         }
-        ring.style.border = `2px solid ${frameColor}`;
+        ring.style.border = `2px solid ${frameEffect === 'red_gold' ? '#ff4757' : frameColor}`;
     }
 
     let titleHtml = "";
@@ -3542,23 +3547,23 @@ async function openProfile(memberName) {
         usernameEl.style.textShadow = "";
     }
 
-    // ✅ الخلفيات الجديدة (إضافة الحالات الـ 6 الجديدة)
-    let bgCss = "";
-    if (bgEffect === "neon_black") bgCss = "background: radial-gradient(circle at 50% 0%, #0a0d14, #070a10);";
-    else if (bgEffect === "gold") bgCss = "background: linear-gradient(135deg, #2b2013, #0a0d14);";
-    else if (bgEffect === "rainbow") bgCss = "background: linear-gradient(135deg, #0a0d14, #1a0a2e, #001a1a);";
-    else if (bgEffect === "purple_galaxy") bgCss = "background: radial-gradient(circle at 50% 50%, #1a052a, #0a0d14);";
-    else if (bgEffect === "red_fire") bgCss = "background: radial-gradient(circle at 50% 50%, #2a0505, #0a0d14);";
-    else if (bgEffect === "green_forest") bgCss = "background: linear-gradient(135deg, #0a2e1a, #0a0d14);";
-    else if (bgEffect === "blue_ocean") bgCss = "background: linear-gradient(135deg, #0a1a2e, #0a0d14);";
-    else if (bgEffect === "pink") bgCss = "background: linear-gradient(135deg, #2e0a1a, #0a0d14);";
-    else if (bgEffect === "dark_grey") bgCss = "background: linear-gradient(135deg, #1a1a1a, #0a0d14);";
-    else if (bgEffect === "white_neon") bgCss = "background: radial-gradient(circle at 50% 50%, #2e2e2e, #0a0d14);";
-    else if (bgEffect === "silver") bgCss = "background: linear-gradient(135deg, #1a1a2e, #0a0d14);";
+    // ✅ الخلفيات الجديدة
+    let bgStyleVal = "";
+    if (bgEffect === "neon_black") bgStyleVal = "radial-gradient(circle at 50% 0%, #0a0d14, #070a10)";
+    else if (bgEffect === "gold") bgStyleVal = "linear-gradient(135deg, #2b2013, #0a0d14)";
+    else if (bgEffect === "rainbow") bgStyleVal = "linear-gradient(135deg, #0a0d14, #1a0a2e, #001a1a)";
+    else if (bgEffect === "purple_galaxy") bgStyleVal = "radial-gradient(circle at 50% 50%, #1a052a, #0a0d14)";
+    else if (bgEffect === "red_fire") bgStyleVal = "radial-gradient(circle at 50% 50%, #2a0505, #0a0d14)";
+    else if (bgEffect === "green_forest") bgStyleVal = "linear-gradient(135deg, #0a2e1a, #0a0d14)";
+    else if (bgEffect === "blue_ocean") bgStyleVal = "linear-gradient(135deg, #0a1a2e, #0a0d14)";
+    else if (bgEffect === "pink") bgStyleVal = "linear-gradient(135deg, #2e0a1a, #0a0d14)";
+    else if (bgEffect === "dark_grey") bgStyleVal = "linear-gradient(135deg, #1a1a1a, #0a0d14)";
+    else if (bgEffect === "white_neon") bgStyleVal = "radial-gradient(circle at 50% 50%, #2e2e2e, #0a0d14)";
+    else if (bgEffect === "silver") bgStyleVal = "linear-gradient(135deg, #1a1a2e, #0a0d14)";
     
-    if (bgCss) {
-        const hubContainer = document.querySelector('#profile-overlay .hub-container');
-        if (hubContainer) hubContainer.style.cssText += bgCss;
+    const hubContainer = document.querySelector('#profile-overlay .hub-container');
+    if (hubContainer) {
+        hubContainer.style.background = bgStyleVal || "";
     }
 
     let userIdDisplay = "غير متوفر";
@@ -4051,195 +4056,377 @@ function deleteClipVideo() {
 }
 
 /* ========================================================
-   29. نظام المكالمات الصوتية (Agora RTC)
+   29. نظام مكالمات الكلان (داخل التطبيق + Google Meet)
    ======================================================== */
 
-const AGORA_APP_ID = "129b4ba5126742d6973d17c9cbf2d5f3";
+// تخزين التوكن في الذاكرة المؤقتة فقط (In-memory per Security Policy)
+let cachedGoogleAccessToken = null;
+let currentGoogleMeetUri = null;
+let currentGoogleMeetCode = null;
 
-let agoraClient = null;
-let agoraLocalStream = null;
-let agoraRemoteStreams = {};
-let isVoiceRoomActive = false;
+// حالة المكالمة المباشرة داخل التطبيق
+let inAppLocalStream = null;
+let isInAppMicMuted = false;
+let isInAppCamOff = false;
+
+const GOOGLE_MEET_SCOPES = [
+    'https://www.googleapis.com/auth/meetings.space.created',
+    'https://www.googleapis.com/auth/meetings.space.readonly',
+    'https://www.googleapis.com/auth/meetings.space.settings'
+];
+
+function initGoogleMeetFirebase() {
+    if (typeof firebase === 'undefined') return;
+    try {
+        if (!firebase.apps.length) {
+            const cfg = {
+                projectId: "phantom-eb05d",
+                appId: "1:140970616071:web:5453277e2bb766a6a711a2",
+                apiKey: "AIzaSyB9BLwWu9Rwrxb8YTt2d9piYzpJSWUNJfs",
+                authDomain: "phantom-eb05d.firebaseapp.com",
+                storageBucket: "phantom-eb05d.firebasestorage.app",
+                messagingSenderId: "140970616071",
+                oAuthClientId: "140970616071-hnmrs3v4q6jgdace5si53sem6cg2hacf.apps.googleusercontent.com"
+            };
+            firebase.initializeApp(cfg);
+        }
+    } catch (e) {
+        console.warn("Firebase already initialized or error:", e);
+    }
+}
 
 function setupVoiceCalls() {
+    initGoogleMeetFirebase();
     const voiceCallBtn = document.getElementById("voice-call-btn");
     if (voiceCallBtn) {
         voiceCallBtn.addEventListener("click", toggleVoiceCall);
     }
-    if (supabaseClient) {
-        supabaseClient
-            .channel('voice-room-notifications')
-            .on('broadcast', { event: 'voice-room-active' }, (payload) => {
-                showVoiceJoinPopup(payload.payload);
-            })
-            .subscribe();
-    }
 }
 
 function toggleVoiceCall() {
-    const currentUser = getCurrentUsername();
-    if (!currentUser) { showToast("يجب تسجيل الدخول لإجراء المكالمات.", "error"); return; }
-    
-    if (isVoiceRoomActive) {
-        leaveVoiceRoom();
-        return;
-    }
-
-    showToast("📞 جارٍ إنشاء غرفة صوتية...", "info");
-    startVoiceRoom(currentUser);
+    showGoogleMeetModal();
 }
 
-async function startVoiceRoom(creator) {
-    if (!AgoraRTC) { showToast("⚠️ مكتبة Agora غير محملة. تأكد من تضمين SDK.", "error"); return; }
-    
-    const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
-    agoraClient = client;
-    
-    const localStream = AgoraRTC.createStream({ audio: true, video: false });
-    agoraLocalStream = localStream;
+function switchCallTab(tab) {
+    const inappSection = document.getElementById('inapp-call-section');
+    const meetSection = document.getElementById('meet-call-section');
+    const tabInappBtn = document.getElementById('call-tab-inapp');
+    const tabMeetBtn = document.getElementById('call-tab-meet');
 
-    const uid = Math.floor(Math.random() * 100000);
-    const token = await fetchToken("phantom_voice_room", uid);
-
-    if (!token) {
-        showToast("⚠️ تعذر الحصول على إذن الاتصال.", "error");
-        return;
-    }
-
-    localStream.init(() => {
-        const channelName = "phantom_voice_room";
-        client.join(AGORA_APP_ID, channelName, token, uid, (uid) => {
-            client.publish(localStream, (err) => {
-                console.error("خطأ في نشر البث:", err);
-            });
-            isVoiceRoomActive = true;
-            showToast("🎙️ تم بدء الغرفة الصوتية!", "success");
-            showVoiceRoomPanel();
-            
-            if (supabaseClient) {
-                supabaseClient.channel('voice-room-notifications')
-                    .send({
-                        type: 'broadcast',
-                        event: 'voice-room-active',
-                        payload: { creator: creator, active: true }
-                    });
-            }
-        }, (err) => { console.error("خطأ في الانضمام للقناة:", err); showToast("فشل الاتصال بالمكالمة.", "error"); });
-    }, (err) => { console.error("خطأ في تهيئة البث المحلي:", err); showToast("لا يمكن الوصول إلى الميكروفون.", "error"); });
-
-    client.on("stream-added", (evt) => {
-        const remoteStream = evt.stream;
-        client.subscribe(remoteStream, (err) => { console.error("خطأ في الاشتراك بالبث البعيد:", err); });
-    });
-
-    client.on("stream-subscribed", (evt) => {
-        const remoteStream = evt.stream;
-        const remoteContainer = document.createElement("div");
-        remoteContainer.id = `remote-stream-${remoteStream.getId()}`;
-        remoteContainer.style.cssText = "display:none;";
-        document.body.appendChild(remoteContainer);
-        remoteStream.play(remoteContainer.id);
-        updateVoiceMembersList(remoteStream.getId(), "متصل");
-    });
-
-    client.on("peer-leave", (evt) => {
-        const remoteId = evt.uid;
-        const container = document.getElementById(`remote-stream-${remoteId}`);
-        if (container) container.remove();
-        updateVoiceMembersList(remoteId, "غادر");
-    });
-}
-
-function showVoiceJoinPopup(payload) {
-    if (!payload || !payload.creator) return;
-    const popup = document.getElementById("voice-join-popup");
-    if (popup) {
-        popup.style.display = "block";
-        popup.querySelector("strong").textContent = `🎙️ غرفة صوتية نشطة - ${payload.creator}`;
+    if (tab === 'inapp') {
+        if (inappSection) inappSection.style.display = 'block';
+        if (meetSection) meetSection.style.display = 'none';
+        if (tabInappBtn) {
+            tabInappBtn.style.background = 'var(--cyan)';
+            tabInappBtn.style.color = '#000';
+        }
+        if (tabMeetBtn) {
+            tabMeetBtn.style.background = 'transparent';
+            tabMeetBtn.style.color = '#9ca3af';
+        }
+    } else {
+        if (inappSection) inappSection.style.display = 'none';
+        if (meetSection) meetSection.style.display = 'block';
+        if (tabInappBtn) {
+            tabInappBtn.style.background = 'transparent';
+            tabInappBtn.style.color = '#9ca3af';
+        }
+        if (tabMeetBtn) {
+            tabMeetBtn.style.background = 'var(--cyan)';
+            tabMeetBtn.style.color = '#000';
+        }
+        if (!cachedGoogleAccessToken) {
+            const authSection = document.getElementById("meet-auth-section");
+            const activeSection = document.getElementById("meet-active-section");
+            if (authSection) authSection.style.display = "block";
+            if (activeSection) activeSection.style.display = "none";
+        }
     }
 }
 
-function joinVoiceRoom() {
-    const currentUser = getCurrentUsername();
-    if (!currentUser) { showToast("يجب تسجيل الدخول.", "error"); return; }
-    if (isVoiceRoomActive) { showToast("أنت بالفعل في الغرفة.", "info"); return; }
-    
-    const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
-    agoraClient = client;
-    const localStream = AgoraRTC.createStream({ audio: true, video: false });
-    agoraLocalStream = localStream;
+function showGoogleMeetModal(forceAuth = false) {
+    const modal = document.getElementById("google-meet-modal");
+    if (!modal) return;
+    modal.style.display = "block";
 
-    const uid = Math.floor(Math.random() * 100000);
-    const token = fetchToken("phantom_voice_room", uid);
+    // البداية الافتراضية على مكالمة داخل التطبيق
+    switchCallTab('inapp');
 
-    if (!token) {
-        showToast("⚠️ تعذر الحصول على إذن الاتصال.", "error");
+    const authSection = document.getElementById("meet-auth-section");
+    const activeSection = document.getElementById("meet-active-section");
+
+    if (forceAuth || !cachedGoogleAccessToken) {
+        if (authSection) authSection.style.display = "block";
+        if (activeSection) activeSection.style.display = "none";
+    } else {
+        if (authSection) authSection.style.display = "none";
+        if (activeSection) activeSection.style.display = "block";
+        if (!currentGoogleMeetUri) {
+            handleCreateNewMeetCall();
+        }
+    }
+}
+
+function closeGoogleMeetModal() {
+    const modal = document.getElementById("google-meet-modal");
+    if (modal) modal.style.display = "none";
+    endInAppCall();
+}
+
+/* 📱 دوال المكالمة المباشرة داخل التطبيق (HTML5 WebRTC Media) */
+async function startInAppCall() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showToast("⚠️ متصفحك لا يدعم الوصول المباشر للكاميرا والمايك.", "error");
         return;
     }
 
-    localStream.init(() => {
-        const channelName = "phantom_voice_room";
-        client.join(AGORA_APP_ID, channelName, token, uid, (uid) => {
-            client.publish(localStream, (err) => { if (err) console.error("خطأ في النشر:", err); });
-            isVoiceRoomActive = true;
-            showToast("🟢 انضممت إلى الغرفة الصوتية!", "success");
-            showVoiceRoomPanel();
-            
-            if (supabaseClient) {
-                supabaseClient.channel('voice-room-notifications')
-                    .send({ type: 'broadcast', event: 'voice-room-joined', payload: { user: currentUser } });
-            }
-        }, (err) => { 
-            console.error("خطأ في الانضمام:", err); 
-            showToast("فشل الاتصال.", "error"); 
+    try {
+        showToast("📹 جاري تشغيل الكاميرا والميكروفون...", "info");
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+            audio: true
         });
-    }, (err) => { 
-        console.error("خطأ في تهيئة الميكروفون:", err); 
-    });
 
-    client.on("stream-added", (evt) => { client.subscribe(evt.stream); });
-    client.on("stream-subscribed", (evt) => {
-        const remoteStream = evt.stream;
-        const container = document.createElement("div");
-        container.id = `remote-stream-${remoteStream.getId()}`;
-        container.style.display = "none";
-        document.body.appendChild(container);
-        remoteStream.play(container.id);
-        updateVoiceMembersList(remoteStream.getId(), "متصل");
-    });
-    client.on("peer-leave", (evt) => {
-        const container = document.getElementById(`remote-stream-${evt.uid}`);
-        if (container) container.remove();
-        updateVoiceMembersList(evt.uid, "غادر");
-    });
+        inAppLocalStream = stream;
+        const videoEl = document.getElementById('inapp-clan-video');
+        const placeholder = document.getElementById('inapp-video-placeholder');
+        const liveBadge = document.getElementById('inapp-live-badge');
+        const controls = document.getElementById('inapp-controls-bar');
+        const startBtn = document.getElementById('inapp-start-btn');
+        const shareBtn = document.getElementById('inapp-share-chat-btn');
+        const endBtn = document.getElementById('inapp-end-btn');
 
-    const popup = document.getElementById("voice-join-popup");
-    if (popup) popup.style.display = "none";
-}
+        if (videoEl) {
+            videoEl.srcObject = stream;
+            videoEl.style.display = 'block';
+            videoEl.play().catch(e => console.warn("Video play error:", e));
+        }
 
-function leaveVoiceRoom() {
-    if (agoraClient) {
-        agoraClient.leave(() => { console.log("تم الخروج من الغرفة."); });
-        agoraClient = null;
+        if (placeholder) placeholder.style.display = 'none';
+        if (liveBadge) liveBadge.style.display = 'block';
+        if (controls) controls.style.display = 'flex';
+        if (startBtn) startBtn.style.display = 'none';
+        if (shareBtn) shareBtn.style.display = 'block';
+        if (endBtn) endBtn.style.display = 'block';
+
+        showToast("🟢 تم بدء المكالمة المباشرة داخل التطبيق بنجاح!", "success");
+    } catch (err) {
+        console.error("Camera/Mic error:", err);
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            showToast("⚠️ يرجى السماح بصلاحية الكاميرا والميكروفون للمتابعة.", "error");
+        } else {
+            showToast("⚠️ تعذر تشغيل الكاميرا أو المايك.", "error");
+        }
     }
-    if (agoraLocalStream) {
-        agoraLocalStream.close();
-        agoraLocalStream = null;
+}
+
+function toggleInAppMic() {
+    if (!inAppLocalStream) return;
+    const audioTracks = inAppLocalStream.getAudioTracks();
+    if (audioTracks.length === 0) return;
+    isInAppMicMuted = !isInAppMicMuted;
+    audioTracks.forEach(t => t.enabled = !isInAppMicMuted);
+    const micBtn = document.getElementById('inapp-mic-btn');
+    if (micBtn) {
+        micBtn.innerHTML = isInAppMicMuted ? '🔇 المايك: مكتوم' : '🎙️ المايك: شغال';
+        micBtn.style.borderColor = isInAppMicMuted ? '#ef4444' : 'rgba(255,255,255,0.2)';
+        micBtn.style.color = isInAppMicMuted ? '#ef4444' : '#fff';
     }
-    isVoiceRoomActive = false;
-    hideVoiceRoomPanel();
-    showToast("🚪 تم مغادرة الغرفة الصوتية.", "info");
+    showToast(isInAppMicMuted ? "🔇 تم كتم الميكروفون" : "🎙️ تم تشغيل الميكروفون", "info");
 }
 
-function showVoiceRoomPanel() {
-    const panel = document.getElementById("voice-room-panel");
-    if (panel) panel.style.display = "block";
-    updateVoiceMembersList(getCurrentUsername(), "أنت");
+function toggleInAppCam() {
+    if (!inAppLocalStream) return;
+    const videoTracks = inAppLocalStream.getVideoTracks();
+    if (videoTracks.length === 0) return;
+    isInAppCamOff = !isInAppCamOff;
+    videoTracks.forEach(t => t.enabled = !isInAppCamOff);
+    const camBtn = document.getElementById('inapp-cam-btn');
+    if (camBtn) {
+        camBtn.innerHTML = isInAppCamOff ? '🚫 الكاميرا: معطلة' : '📹 الكاميرا: شغال';
+        camBtn.style.borderColor = isInAppCamOff ? '#ef4444' : 'rgba(255,255,255,0.2)';
+        camBtn.style.color = isInAppCamOff ? '#ef4444' : '#fff';
+    }
+    showToast(isInAppCamOff ? "🚫 تم إيقاف الكاميرا" : "📹 تم تشغيل الكاميرا", "info");
 }
 
-function hideVoiceRoomPanel() {
-    const panel = document.getElementById("voice-room-panel");
-    if (panel) panel.style.display = "none";
+function shareInAppCallInClanChat() {
+    const user = getCurrentUsername() || 'عضو PHANTOM';
+    const msg = `📞 ${user} بدأ مكالمة فيديو وصوت مباشرة الآن داخل المقر! اضغط على زر الهاتف 📞 وانضم الآن.`;
+    
+    if (typeof handleSendMessage === 'function') {
+        const chatInput = document.getElementById('chat-message-input');
+        if (chatInput) {
+            chatInput.value = msg;
+            const form = document.getElementById('chat-input-form');
+            if (form) form.dispatchEvent(new Event('submit'));
+        }
+    } else if (typeof addChatMessageToDOM === 'function') {
+        addChatMessageToDOM({
+            id: 'inapp-call-' + Date.now(),
+            sender: user,
+            text: msg,
+            time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+            isSelf: true
+        });
+    }
+
+    showToast("✅ تم إرسال دعوة الكلان للمكالمة في الشات!", "success");
+}
+
+function endInAppCall() {
+    if (inAppLocalStream) {
+        inAppLocalStream.getTracks().forEach(track => {
+            try { track.stop(); } catch(e) {}
+        });
+        inAppLocalStream = null;
+    }
+
+    const videoEl = document.getElementById('inapp-clan-video');
+    const placeholder = document.getElementById('inapp-video-placeholder');
+    const liveBadge = document.getElementById('inapp-live-badge');
+    const controls = document.getElementById('inapp-controls-bar');
+    const startBtn = document.getElementById('inapp-start-btn');
+    const shareBtn = document.getElementById('inapp-share-chat-btn');
+    const endBtn = document.getElementById('inapp-end-btn');
+
+    if (videoEl) {
+        videoEl.srcObject = null;
+        videoEl.style.display = 'none';
+    }
+
+    if (placeholder) placeholder.style.display = 'flex';
+    if (liveBadge) liveBadge.style.display = 'none';
+    if (controls) controls.style.display = 'none';
+    if (startBtn) startBtn.style.display = 'block';
+    if (shareBtn) shareBtn.style.display = 'none';
+    if (endBtn) endBtn.style.display = 'none';
+
+    isInAppMicMuted = false;
+    isInAppCamOff = false;
+}
+
+/* 🌐 دوال Google Meet الرسمية */
+async function handleGoogleMeetSignIn() {
+    initGoogleMeetFirebase();
+    if (typeof firebase === 'undefined' || !firebase.auth) {
+        showToast("⚠️ مكتبة المصادقة قيد التحميل، حاول ثانية.", "error");
+        return;
+    }
+
+    showToast("🔐 جاري تسجيل الدخول بحساب Google...", "info");
+    const provider = new firebase.auth.GoogleAuthProvider();
+    GOOGLE_MEET_SCOPES.forEach(s => provider.addScope(s));
+
+    try {
+        const result = await firebase.auth().signInWithPopup(provider);
+        if (result && result.credential && result.credential.accessToken) {
+            cachedGoogleAccessToken = result.credential.accessToken;
+            showToast("✅ تم تسجيل الدخول بنجاح! جاري تجهيز المكالمة...", "success");
+            await handleCreateNewMeetCall();
+        } else {
+            throw new Error("لم يتم استلام رمز الوصول");
+        }
+    } catch (err) {
+        console.error("Google Sign-In Error:", err);
+        showToast("⚠️ تعذر تسجيل الدخول بحساب Google.", "error");
+    }
+}
+
+async function handleCreateNewMeetCall() {
+    if (!cachedGoogleAccessToken) {
+        showGoogleMeetModal(true);
+        switchCallTab('meet');
+        return;
+    }
+
+    showToast("📹 جاري إنشاء مكالمة Google Meet جديدة...", "info");
+    try {
+        const response = await fetch("https://meet.googleapis.com/v2/spaces", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${cachedGoogleAccessToken}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({})
+        });
+
+        if (!response.ok) {
+            if (response.status === 401) {
+                cachedGoogleAccessToken = null;
+                showGoogleMeetModal(true);
+                switchCallTab('meet');
+                return;
+            }
+            throw new Error("API status " + response.status);
+        }
+
+        const data = await response.json();
+        currentGoogleMeetUri = data.meetingUri;
+        currentGoogleMeetCode = data.meetingCode || data.name;
+
+        // تحديث الواجهة
+        const authSection = document.getElementById("meet-auth-section");
+        const activeSection = document.getElementById("meet-active-section");
+        const codeEl = document.getElementById("meet-room-code");
+        const joinBtn = document.getElementById("meet-join-link-btn");
+
+        if (authSection) authSection.style.display = "none";
+        if (activeSection) activeSection.style.display = "block";
+        if (codeEl) codeEl.textContent = `الكود: ${currentGoogleMeetCode} | ${currentGoogleMeetUri}`;
+        if (joinBtn) joinBtn.href = currentGoogleMeetUri;
+
+        showToast("🎉 تم إنشاء رابط مكالمة Google Meet بنجاح!", "success");
+    } catch (err) {
+        console.error("Error creating Google Meet space:", err);
+        showToast("⚠️ حدث خطأ أثناء إنشاء المكالمة.", "error");
+    }
+}
+
+function shareMeetLinkInClanChat() {
+    if (!currentGoogleMeetUri) {
+        showToast("⚠️ لا توجد مكالمة نشطة للمشاركة.", "info");
+        return;
+    }
+    const meetMsg = `📹 مكالمة صوت وفيديو بدأت الآن في Google Meet! انضمام مباشر: ${currentGoogleMeetUri}`;
+    
+    // إرسال في شات الكلان العام
+    if (typeof handleSendMessage === 'function') {
+        const chatInput = document.getElementById('chat-message-input');
+        if (chatInput) {
+            chatInput.value = meetMsg;
+            const form = document.getElementById('chat-input-form');
+            if (form) form.dispatchEvent(new Event('submit'));
+        }
+    } else if (typeof addChatMessageToDOM === 'function') {
+        addChatMessageToDOM({
+            id: 'meet-' + Date.now(),
+            sender: getCurrentUsername() || 'عضو PHANTOM',
+            text: meetMsg,
+            time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+            isSelf: true
+        });
+    }
+
+    showToast("✅ تمت مشاركة رابط المكالمة في شات الكلان!", "success");
+    closeGoogleMeetModal();
+    // الانتقال لصفحة الشات
+    if (typeof navigateToPage === 'function') {
+        navigateToPage('page-chat');
+    }
+}
+
+function copyMeetLinkToClipboard() {
+    if (!currentGoogleMeetUri) return;
+    if (navigator.clipboard) {
+        navigator.clipboard.writeText(currentGoogleMeetUri).then(() => {
+            showToast("📋 تم نسخ رابط Google Meet بنجاح!", "success");
+        }).catch(() => {
+            showToast("رابط المكالمة: " + currentGoogleMeetUri, "info");
+        });
+    } else {
+        showToast("رابط المكالمة: " + currentGoogleMeetUri, "info");
+    }
 }
 
 function updateVoiceMembersList(userId, status) {
@@ -4673,105 +4860,122 @@ function claimVault() {
 function initVault() { setupVaultInputs(); setupVaultConfirm(); loadVaultData(); }
 
 /* ========================================================
-   🛒 نظام المتجر والمخزون (النسخة النهائية الموحدة)
+   🛒 نظام المتجر والمخزون (النسخة المتكاملة والشاملة)
    ======================================================== */
 
-const PERMANENT_ITEM_IDS = [1, 2, 3, 4, 5]; 
+const DEFAULT_SHOP_ITEMS = [
+    // 🖼️ 1. الإطارات
+    { id: 1, name: 'إطار نيون فضي', price: 150, type: 'frame', effect: 'silver', description: 'إطار فضي لامع وأنيق للبروفايل', icon: '🖼️' },
+    { id: 2, name: 'إطار نيون ذهبي', price: 250, type: 'frame', effect: 'gold', description: 'إطار متوهج بالذهب الخالص', icon: '🖼️' },
+    { id: 3, name: 'إطار نيون متعدد الألوان', price: 750, type: 'frame', effect: 'rainbow', description: 'إطار طيف قوس قزح متوهج', icon: '🌈' },
+    { id: 4, name: 'إطار نيون البرق الأزرق', price: 250, type: 'frame', effect: 'blue', description: 'إطار صاعقة زرقاء كهربائية', icon: '⚡' },
+    { id: 5, name: 'إطار نيون الذهب الأحمر', price: 500, type: 'frame', effect: 'red_gold', description: 'إطار أحمر وذهبي ناري فاخر', icon: '🔥' },
+
+    // 🏷️ 2. الألقاب
+    { id: 6, name: 'لقب: عضو مميز', price: 150, type: 'title', effect: 'member', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🏷️' },
+    { id: 7, name: 'لقب: فارس PHANTOM', price: 300, type: 'title', effect: 'phantom_knight', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '⚔️' },
+    { id: 8, name: 'لقب: قائد محتك', price: 450, type: 'title', effect: 'veteran', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🎖️' },
+    { id: 9, name: 'لقب: سفاح الروابط', price: 600, type: 'title', effect: 'assassin', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🗡️' },
+    { id: 10, name: 'لقب: العرب', price: 800, type: 'title', effect: 'arab', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '👑' },
+    { id: 11, name: 'لقب: صياد النقاط', price: 200, type: 'title', effect: 'point_hunter', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🎯' },
+    { id: 12, name: 'لقب: حارس المقر', price: 300, type: 'title', effect: 'guard', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🛡️' },
+    { id: 13, name: 'لقب: النمر الأسود', price: 450, type: 'title', effect: 'black_panther', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🐆' },
+    { id: 14, name: 'لقب: مخترع الاستراتيجيات', price: 550, type: 'title', effect: 'strategist', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🧠' },
+
+    // 💳 3. الكروت والمزايا الفورية
+    { id: 15, name: 'كارت تضخيم النقاط', price: 200, type: 'card', effect: 'point_boost', description: 'مضاعفة النقاط المكتسبة لمدة 30 دقيقة', icon: '🔥' },
+    { id: 16, name: 'كارت دبل نقاط', price: 350, type: 'card', effect: 'double_points', description: 'دبل نقاط لجميع الأنشطة لمدة ساعة كاملة', icon: '✨' },
+    { id: 17, name: 'كارت نقاط سريعة (+200)', price: 150, type: 'card', effect: 'quick_points', description: 'الحصول فوراً على 200 نقطة إضافية لحسابك', icon: '⚡' },
+    { id: 18, name: 'صندوق المفاجآت', price: 100, type: 'card', effect: 'surprise_box', description: 'صندوق حظ يمنحك نقاطاً عشوائية بين 20 إلى 200 نقطة', icon: '🎁' },
+    { id: 19, name: 'كارت تسجيل حضور فوري', price: 250, type: 'card', effect: 'fast_attendance', description: 'تسجيل نقطة حضور فورية لسجلك', icon: '⏩' },
+    { id: 20, name: 'كارت 3 قلوب دعم', price: 180, type: 'card', effect: 'bonus_hearts', description: 'إضافة 3 قلوب دعم فورية لحسابك', icon: '💛' },
+    { id: 21, name: 'كارت عباءة التمويه', price: 300, type: 'card', effect: 'camouflage', description: 'تفعيل التمويه والخصوصية في المقر لمدة ساعتين', icon: '🕶️' },
+    { id: 22, name: 'كارت حماية من الإنذارات', price: 500, type: 'card', effect: 'warning_protect', description: 'إلغاء إنذار أو مخالفة مسجلة في ملفك', icon: '🛡️' },
+    { id: 44, name: 'كارت بونص الخزنة (+10%)', price: 400, type: 'card', effect: 're_freeze', description: 'إضافة 10% أرباح إضافية عند فك الخزنة', icon: '❄️' },
+    { id: 45, name: 'كارت تحويل النقاط', price: 100, type: 'card', effect: 'transfer', description: 'فتح نافذة تحويل النقاط لأي عضو في الكلان', icon: '💳' },
+
+    // 🎨 4. ألوان الأسماء
+    { id: 23, name: 'لون اسم ذهبي', price: 300, type: 'name_color', effect: 'gold', description: 'اسمك يظهر باللون الذهبي البراق في الشات والبروفايل', icon: '✨' },
+    { id: 24, name: 'لون اسم فضي', price: 250, type: 'name_color', effect: 'silver', description: 'اسمك يظهر بالفضي اللامع في الشات والبروفايل', icon: '🥈' },
+    { id: 25, name: 'لون اسم أزرق سيان', price: 200, type: 'name_color', effect: 'blue', description: 'اسمك يظهر بالأزرق النيون في الشات والبروفايل', icon: '💙' },
+    { id: 26, name: 'لون اسم أحمر ناري', price: 200, type: 'name_color', effect: 'red', description: 'اسمك يظهر بالأحمر الناري في الشات والبروفايل', icon: '❤️' },
+    { id: 27, name: 'لون اسم بنفسجي ملكي', price: 250, type: 'name_color', effect: 'purple', description: 'اسمك يظهر بالبنفسجي الملكي في الشات والبروفايل', icon: '💜' },
+
+    // 🌌 5. خلفيات البروفايل
+    { id: 28, name: 'خلفية نيون سوداء', price: 300, type: 'background', effect: 'neon_black', description: 'خلفية سوداء متوهجة للبروفايل', icon: '🌌' },
+    { id: 29, name: 'خلفية ذهبية ملكية', price: 400, type: 'background', effect: 'gold', description: 'خلفية ذهبية فاخرة للبروفايل', icon: '🌟' },
+    { id: 30, name: 'خلفية طيف نيون', price: 600, type: 'background', effect: 'rainbow', description: 'خلفية متدرجة بألوان الطيف المتوهجة', icon: '🌈' },
+    { id: 31, name: 'خلفية مجرة بنفسجية', price: 500, type: 'background', effect: 'purple_galaxy', description: 'خلفية فضاء بنفسجية عميقة للبروفايل', icon: '🔮' },
+    { id: 32, name: 'خلفية حمراء نارية', price: 450, type: 'background', effect: 'red_fire', description: 'خلفية لهب أحمر متوهج للبروفايل', icon: '🔥' },
+    { id: 33, name: 'خلفية غابة الزمرد', price: 400, type: 'background', effect: 'green_forest', description: 'خلفية خضراء زمردية للبروفايل', icon: '🌲' },
+    { id: 34, name: 'خلفية أعماق المحيط', price: 400, type: 'background', effect: 'blue_ocean', description: 'خلفية زرقاء بحرية عميقة للبروفايل', icon: '🌊' },
+    { id: 35, name: 'خلفية وردية ناعمة', price: 350, type: 'background', effect: 'pink', description: 'خلفية وردية جذابة للبروفايل', icon: '🌺' },
+    { id: 36, name: 'خلفية تيتانيوم داكنة', price: 300, type: 'background', effect: 'dark_grey', description: 'خلفية كربونية داكنة فخمة للبروفايل', icon: '🪨' },
+    { id: 37, name: 'خلفية أبيض نيون ساطع', price: 500, type: 'background', effect: 'white_neon', description: 'خلفية بيضاء ساطعة بنور النيون للبروفايل', icon: '⚪' },
+    { id: 38, name: 'خلفية فضية معدنية', price: 450, type: 'background', effect: 'silver', description: 'خلفية فضية معدنية أنيقة للبروفايل', icon: '🥈' },
+
+    // 💬 6. تأثيرات الرسائل
+    { id: 39, name: 'تأثير إطار ذهبي للرسائل', price: 350, type: 'chat_effect', effect: 'gold_border', description: 'فقاعات رسائلك بإطار ذهبي متوهج', icon: '💬' },
+    { id: 40, name: 'تأثير نيون متوهج للرسائل', price: 400, type: 'chat_effect', effect: 'neon_bubble', description: 'فقاعات رسائلك بوهج نيون أزرق جذاب', icon: '💠' },
+    { id: 41, name: 'تأثير ظل متوهج', price: 350, type: 'chat_effect', effect: 'glow_shadow', description: 'رسائلك بهالة ظل ضوئية مشعة', icon: '✨' },
+    { id: 42, name: 'تأثير نبض القلب', price: 400, type: 'chat_effect', effect: 'heart_beat', description: 'رسائلك بوهج وردي ناري دافئ', icon: '💓' },
+    { id: 43, name: 'تأثير رسائل بارزة وكبيرة', price: 500, type: 'chat_effect', effect: 'big_text', description: 'رسائلك بحجم أكبر وخط عريض ومميز', icon: '🔠' }
+];
 
 async function getShopItems() {
     const data = await supabaseGet('shop_items');
     if (data && data.length > 0) {
-        return data;
+        // دمج عناصر السيرفر مع القائمة الافتراضية للتأكد من عدم نقص أي فئة أو كارت
+        const map = new Map();
+        DEFAULT_SHOP_ITEMS.forEach(item => map.set(item.id, item));
+        data.forEach(item => map.set(item.id, { ...map.get(item.id), ...item }));
+        return Array.from(map.values());
     }
-    
-    // النسخة الاحتياطية الكاملة (لو السيرفر فاضي)
-    return [
-        { id: 1, name: 'إطار نيون فضي', price: 150, type: 'frame', effect: 'silver', description: 'إطار بسيط لامع', icon: '🖼️' },
-        { id: 2, name: 'إطار نيون ذهبي', price: 250, type: 'frame', effect: 'gold', description: 'إطار متوهج بالذهب', icon: '🖼️' },
-        { id: 3, name: 'إطار نيون متحرك متعدد الألوان', price: 750, type: 'frame', effect: 'rainbow', description: 'إطار قوس قزح متحرك', icon: '🖼️' },
-        { id: 4, name: 'إطار نيون البرق الأزرق', price: 250, type: 'frame', effect: 'blue', description: 'إطار أزرق', icon: '🖼️' },
-        { id: 5, name: 'إطار نيون الذهب الأحمر', price: 500, type: 'frame', effect: 'red_gold', description: 'إطار أحمر وذهبي', icon: '🖼️' },
-        { id: 6, name: 'لقب: عضو مميز', price: 150, type: 'title', effect: 'member', description: 'يظهر تحت اسمك', icon: '🏷️' },
-        { id: 7, name: 'لقب: فارس PHANTOM', price: 300, type: 'title', effect: 'phantom_knight', description: 'يظهر تحت اسمك', icon: '🏷️' },
-        { id: 8, name: 'لقب: قائد محتك', price: 450, type: 'title', effect: 'veteran', description: 'يظهر تحت اسمك', icon: '🏷️' },
-        { id: 9, name: 'لقب: سفاح الروابط', price: 600, type: 'title', effect: 'assassin', description: 'يظهر تحت اسمك', icon: '🏷️' },
-        { id: 10, name: 'لقب: العرب', price: 800, type: 'title', effect: 'arab', description: 'يظهر تحت اسمك', icon: '🏷️' },
-        { id: 11, name: 'لقب: صياد النقاط', price: 200, type: 'title', effect: 'point_hunter', description: 'يظهر تحت اسمك', icon: '🏷️' },
-        { id: 12, name: 'لقب: حارس المقر', price: 300, type: 'title', effect: 'guard', description: 'يظهر تحت اسمك', icon: '🏷️' },
-        { id: 13, name: 'لقب: النمر الأسود', price: 450, type: 'title', effect: 'black_panther', description: 'يظهر تحت اسمك', icon: '🏷️' },
-        { id: 14, name: 'لقب: مخترع الاستراتيجيات', price: 550, type: 'title', effect: 'strategist', description: 'يظهر تحت اسمك', icon: '🏷️' },
-        { id: 23, name: 'لون اسم ذهبي', price: 300, type: 'name_color', effect: 'gold', description: 'اسمك يظهر بالذهبي في الشات', icon: '✨' },
-        { id: 24, name: 'لون اسم فضي', price: 250, type: 'name_color', effect: 'silver', description: 'اسمك يظهر بالفضي في الشات', icon: '🥈' },
-        { id: 25, name: 'لون اسم أزرق', price: 200, type: 'name_color', effect: 'blue', description: 'اسمك يظهر بالأزرق في الشات', icon: '💙' },
-        { id: 26, name: 'لون اسم أحمر', price: 200, type: 'name_color', effect: 'red', description: 'اسمك يظهر بالأحمر في الشات', icon: '❤️' },
-        { id: 27, name: 'لون اسم بنفسجي', price: 250, type: 'name_color', effect: 'purple', description: 'اسمك يظهر بالبنفسجي في الشات', icon: '💜' },
-        { id: 28, name: 'خلفية نيون سوداء', price: 300, type: 'background', effect: 'neon_black', description: 'خلفية سوداء متوهجة للبروفايل', icon: '🌌' },
-        { id: 29, name: 'خلفية ذهبية', price: 400, type: 'background', effect: 'gold', description: 'خلفية ذهبية للبروفايل', icon: '🌟' },
-        { id: 30, name: 'خلفية قوس قزح', price: 600, type: 'background', effect: 'rainbow', description: 'خلفية متدرجة بألوان قوس قزح', icon: '🌈' },
-        { id: 31, name: 'خلفية بنفسجية', price: 500, type: 'background', effect: 'purple_galaxy', description: 'خلفية بنفسجية فضائية', icon: '🔮' },
-        { id: 32, name: 'خلفية حمراء نارية', price: 450, type: 'background', effect: 'red_fire', description: 'خلفية حمراء نارية', icon: '🔥' },
-        { id: 33, name: 'خلفية خضراء غابة', price: 400, type: 'background', effect: 'green_forest', description: 'خلفية خضراء غابة', icon: '🌲' },
-        { id: 34, name: 'خلفية زرقاء محيط', price: 400, type: 'background', effect: 'blue_ocean', description: 'خلفية زرقاء محيط', icon: '🌊' },
-        { id: 35, name: 'خلفية وردية', price: 350, type: 'background', effect: 'pink', description: 'خلفية وردية ناعمة', icon: '🌺' },
-        { id: 36, name: 'خلفية رمادية داكنة', price: 300, type: 'background', effect: 'dark_grey', description: 'خلفية رمادية داكنة', icon: '🪨' },
-        { id: 37, name: 'خلفية بيضاء نيون', price: 500, type: 'background', effect: 'white_neon', description: 'خلفية بيضاء متوهجة', icon: '⚪' },
-        { id: 38, name: 'خلفية فضية', price: 450, type: 'background', effect: 'silver', description: 'خلفية فضية لامعة', icon: '🥈' },
-        { id: 39, name: 'تأثير حدود ذهبية', price: 350, type: 'chat_effect', effect: 'gold_border', description: 'فقاعات رسائلك بحدود ذهبية', icon: '💬' },
-        { id: 40, name: 'تأثير فقاعة نيون', price: 400, type: 'chat_effect', effect: 'neon_bubble', description: 'فقاعات رسائلك متوهجة بالنيون', icon: '💠' },
-        { id: 41, name: 'تأثير ظل متوهج', price: 350, type: 'chat_effect', effect: 'glow_shadow', description: 'رسائلك بظل متوهج', icon: '✨' },
-        { id: 42, name: 'تأثير قلب نابض', price: 400, type: 'chat_effect', effect: 'heart_beat', description: 'رسائلك بنبض قلب', icon: '💓' },
-        { id: 43, name: 'تأثير رسائل كبيرة', price: 500, type: 'chat_effect', effect: 'big_text', description: 'رسائلك بخط كبير', icon: '🔠' }
-    ];
+    return DEFAULT_SHOP_ITEMS;
 }
 
 async function getUserInventory(userId) {
     if (!userId) return [];
-    const data = await supabaseGet('user_inventory');
+    const username = getCurrentUsername();
+    
     let serverItems = [];
-    if (data) serverItems = data.filter(item => item.user_id === userId);
+    const data = await supabaseGet('user_inventory');
+    if (data && Array.isArray(data)) {
+        serverItems = data.filter(item => item.user_id === userId || (username && item.username === username));
+    }
 
     const localInv = getStorage("phantom_user_inventory", []);
-    const localItems = localInv.filter(item => item.user_id === userId);
+    const localItems = localInv.filter(item => item.user_id === userId || item.userId === userId || (username && item.username === username));
 
     const combined = [...serverItems, ...localItems];
-    const seen = new Set();
-    return combined.filter(item => {
-        if (seen.has(item.item_id)) return false;
-        seen.add(item.item_id);
-        return true;
-    });
+    return combined;
 }
 
 function getDailyOfferItems(allItems) {
     const today = new Date().toISOString().split('T')[0];
     let seed = parseInt(today.replace(/-/g, ''));
     const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
-    const eligibleItems = allItems.filter(item => !item.is_permanent);
+    const eligibleItems = allItems.filter(item => item.type !== 'card');
     const shuffled = eligibleItems.sort(() => rand() - 0.5);
     return shuffled.slice(0, 4);
 }
 
-// ✅ استخدام item.type بدلاً من item.category
-function createShopItemCard(item, isOwned, isEquipped = false) {
-    let buttonHtml = '';
-    if (isOwned) {
-        if (item.type === 'frame' || item.type === 'title') {
-            buttonHtml = isEquipped ? `<button class="shop-btn equipped" data-action="equipped">✅ مجهز</button>` : `<button class="shop-btn" data-action="equip" data-item-id="${item.id}" data-category="${item.type}">تجهيز</button>`;
-        } else { buttonHtml = `<button class="shop-btn owned">✅ تمتلكه</button>`; }
-    } else { buttonHtml = `<button class="shop-btn" data-action="buy" data-item-id="${item.id}">🛒 شراء الآن</button>`; }
-    return `<div class="shop-item-card"><div class="item-icon">${item.icon || '📦'}</div><div class="item-title">${escapeHTML(item.name)}</div><div class="item-desc">${escapeHTML(item.description || '')}</div><div class="item-price">${item.price} نقطة</div>${buttonHtml}</div>`;
+// ✅ دالة مساعدة موحدة للتحقق من تجهيز أي عنصر
+function isItemEquipped(itemId, userId) {
+    if (!userId) return false;
+    const equipped = getStorage("phantom_user_equipped", {});
+    const userEquipped = equipped[userId] || {};
+    const id = Number(itemId);
+    return (
+        Number(userEquipped.title) === id ||
+        Number(userEquipped.frame) === id ||
+        Number(userEquipped.name_color) === id ||
+        Number(userEquipped.background) === id ||
+        Number(userEquipped.chat_effect) === id
+    );
 }
 
-function attachShopEvents() {
-    document.querySelectorAll('.shop-btn[data-action="buy"]').forEach(btn => {
-        btn.addEventListener('click', () => buyItem(parseInt(btn.dataset.itemId)));
-    });
-    document.querySelectorAll('.shop-btn[data-action="equip"]').forEach(btn => {
-        btn.addEventListener('click', () => useItem(parseInt(btn.dataset.itemId), btn.dataset.category, 'equip'));
-    });
-}
-
-// ✅ تعديل الفلاتر لاستخدام item.type
+// ✅ عرض وعمل المتجر الكامل
 async function renderShop(filter = "all") {
     const shopItems = await getShopItems();
     const userId = getCurrentUserId();
@@ -4788,37 +4992,73 @@ async function renderShop(filter = "all") {
     if (!shopGrid) return;
 
     if (filteredItems.length === 0) {
-        shopGrid.innerHTML = `<div class="empty-state">لا توجد منتجات في هذه الفئة.</div>`;
+        shopGrid.innerHTML = `<div class="empty-state" style="grid-column:span 2; padding:30px; text-align:center; color:var(--muted);">لا توجد منتجات في هذه الفئة.</div>`;
         return;
     }
 
     // إنشاء البطاقات
     shopGrid.innerHTML = filteredItems.map(item => {
-        const isOwned = inventory.some(inv => inv.item_id === item.id);
+        const isOwned = inventory.some(inv => Number(inv.item_id) === Number(item.id));
+        const isEquipped = isItemEquipped(item.id, userId);
+        
         let buttonHtml = '';
         if (isOwned) {
-            buttonHtml = `<button class="shop-btn owned">✅ تمتلكه</button>`;
+            if (item.type === 'card') {
+                buttonHtml = `<button class="shop-btn" data-action="use" data-item-id="${item.id}" data-category="card" style="width:100%; padding:8px 6px; background:linear-gradient(135deg, #f59e0b, #d97706); color:#fff; border:none; border-radius:8px; font-weight:800; font-size:0.8rem; cursor:pointer;">⚡ استخدام الآن</button>`;
+            } else if (isEquipped) {
+                buttonHtml = `<button class="shop-btn equipped" data-action="unequip" data-item-id="${item.id}" data-category="${item.type}" style="width:100%; padding:8px 6px; background:rgba(0, 242, 254, 0.15); color:var(--cyan); border:1px solid var(--cyan); border-radius:8px; font-weight:800; font-size:0.8rem; cursor:pointer;">✅ مجهز (اضغط للإلغاء)</button>`;
+            } else {
+                buttonHtml = `<button class="shop-btn" data-action="equip" data-item-id="${item.id}" data-category="${item.type}" style="width:100%; padding:8px 6px; background:var(--cyan); color:#000; border:none; border-radius:8px; font-weight:900; font-size:0.8rem; cursor:pointer;">✨ تجهيز</button>`;
+            }
         } else {
-            buttonHtml = `<button class="shop-btn" data-action="buy" data-item-id="${item.id}">🛒 شراء الآن</button>`;
+            buttonHtml = `<button class="shop-btn" data-action="buy" data-item-id="${item.id}" style="width:100%; padding:8px 6px; background:rgba(255,255,255,0.08); color:var(--white); border:1px solid rgba(255,255,255,0.2); border-radius:8px; font-weight:800; font-size:0.8rem; cursor:pointer; transition:0.2s;">🛒 شراء (${item.price} ن)</button>`;
         }
         
         return `
-            <div class="shop-item-card">
-                <div class="item-icon" style="font-size: 2rem; text-align: center;">${item.icon || '📦'}</div>
-                <div class="item-title" style="font-weight: 900; font-size: 0.95rem; margin-top: 8px; color: #fff; text-align: center;">${escapeHTML(item.name)}</div>
-                <div class="item-desc" style="font-size: 0.75rem; color: #888; text-align: center; margin: 5px 0;">${escapeHTML(item.description || '')}</div>
-                <div class="item-price" style="font-weight: 900; color: #ffd700; text-align: center; margin-bottom: 8px;">${item.price} نقطة</div>
-                ${buttonHtml}
+            <div class="shop-item-card" style="display:flex; flex-direction:column; justify-content:space-between; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:12px; text-align:center; min-height:175px;">
+                <div>
+                    <div class="item-icon" style="font-size: 2.2rem; margin-bottom:4px;">${item.icon || '📦'}</div>
+                    <div class="item-title" style="font-weight: 900; font-size: 0.9rem; color: #fff; margin-bottom:4px;">${escapeHTML(item.name)}</div>
+                    <div class="item-desc" style="font-size: 0.72rem; color: #9ca3af; margin: 4px 0 8px 0; line-height:1.4;">${escapeHTML(item.description || '')}</div>
+                </div>
+                <div>
+                    <div class="item-price" style="font-weight: 900; color: #ffd700; font-size:0.85rem; margin-bottom: 8px;">💰 ${item.price} نقطة</div>
+                    ${buttonHtml}
+                </div>
             </div>
         `;
     }).join('');
 
-    // ربط زر الشراء
-    document.querySelectorAll('.shop-btn[data-action="buy"]').forEach(btn => {
-        btn.addEventListener('click', () => buyItem(parseInt(btn.dataset.itemId)));
+    // ربط الأحداث لكل الأزرار في المتجر
+    shopGrid.querySelectorAll('.shop-btn[data-action="buy"]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            buyItem(parseInt(btn.dataset.itemId));
+        });
     });
 
-    // ✅ ربط زر الفلاتر الجديد
+    shopGrid.querySelectorAll('.shop-btn[data-action="equip"]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            useItem(parseInt(btn.dataset.itemId), btn.dataset.category, 'equip');
+        });
+    });
+
+    shopGrid.querySelectorAll('.shop-btn[data-action="unequip"]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            useItem(parseInt(btn.dataset.itemId), btn.dataset.category, 'unequip');
+        });
+    });
+
+    shopGrid.querySelectorAll('.shop-btn[data-action="use"]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            useItem(parseInt(btn.dataset.itemId), 'card', 'use');
+        });
+    });
+
+    // ربط زر الفلاتر
     const filterTrigger = document.getElementById('shop-filter-trigger');
     const filterMenu = document.getElementById('shop-filter-menu');
     
@@ -4848,172 +5088,263 @@ async function renderShop(filter = "all") {
 async function buyItem(itemId) {
     const username = getCurrentUsername();
     const userId = getCurrentUserId();
-    if (!userId) return showToast('يجب تسجيل الدخول أولاً.', 'error');
+    if (!username || !userId) return showToast('يجب تسجيل الدخول أولاً.', 'error');
 
     const shopItems = await getShopItems();
-    const item = shopItems.find(i => i.id === itemId);
+    const item = shopItems.find(i => Number(i.id) === Number(itemId));
     if (!item) return showToast('العنصر غير موجود.', 'error');
+
+    const inventory = await getUserInventory(userId);
+    const isOwned = inventory.some(inv => Number(inv.item_id) === Number(item.id));
+
+    // إذا كان عنصراً دائماً ويمتلكه بالفعل، نقوم بتجهيزه فوراً بدلاً من خصم النقاط مرة ثانية
+    if (isOwned && item.type !== 'card') {
+        showToast(`أنت تمتلك "${item.name}" بالفعل! جاري تجهيزه...`, "info");
+        await useItem(item.id, item.type, 'equip');
+        return;
+    }
 
     const points = getLocalPoints();
     const balance = points[username] || 0;
     if (balance < item.price) {
-        showToast(`⚠️ رصيدك غير كافٍ (تحتاج ${item.price} نقطة).`, 'error');
+        showToast(`⚠️ رصيدك غير كافٍ (تحتاج ${item.price} نقطة، رصيدك ${balance}).`, 'error');
         return;
     }
 
     points[username] = balance - item.price;
     setLocalPoints(points);
 
-    let inventory = getStorage("phantom_user_inventory", []);
-    inventory.push({ user_id: userId, item_id: itemId, purchased_at: Date.now() });
-    setStorage("phantom_user_inventory", inventory);
+    let localInv = getStorage("phantom_user_inventory", []);
+    localInv.push({ user_id: userId, item_id: item.id, username: username, purchased_at: Date.now() });
+    setStorage("phantom_user_inventory", localInv);
 
     if (supabaseClient) {
         supabaseClient.from('members').update({ coins: points[username] }).eq('name', username).catch(err => console.warn(err));
-        supabaseClient.from('user_inventory').insert([{ user_id: userId, item_id: itemId, purchased_at: new Date().toISOString() }]).catch(err => console.warn(err));
+        supabaseClient.from('user_inventory').insert([{ user_id: userId, item_id: item.id, purchased_at: new Date().toISOString() }]).catch(err => console.warn(err));
     }
 
     showToast(`✅ تم شراء "${item.name}" بنجاح!`, "success");
+
+    // تجهيز تلقائي للمقتنيات الجديدة
+    if (item.type !== 'card') {
+        await useItem(item.id, item.type, 'equip');
+    }
+
     renderShop();
     renderInventory();
     updateVaultBalanceUI();
 }
 
-async function useItem(itemId, category, action) {
+async function useItem(itemId, category, action = 'equip') {
     const username = getCurrentUsername();
     const userId = getCurrentUserId();
     if (!userId) return showToast('يجب تسجيل الدخول.', 'error');
 
     const shopItems = await getShopItems();
-    const item = shopItems.find(i => i.id === itemId);
+    const item = shopItems.find(i => Number(i.id) === Number(itemId));
     if (!item) return showToast('العنصر غير موجود.', 'error');
     
     const type = item.type || category || 'other'; 
     const inventory = await getUserInventory(userId);
-    const invItem = inventory.find(i => i.item_id === itemId);
+    const invItem = inventory.find(i => Number(i.item_id) === Number(itemId));
     if (!invItem) return showToast('⚠️ هذا العنصر غير موجود في مخزونك.', 'error');
 
-    // ✅ تجهيز الألقاب
+    const equipped = getStorage("phantom_user_equipped", {});
+    if (!equipped[userId]) equipped[userId] = {};
+
+    // 🏷️ 1. تجهيز / إلغاء الألقاب
     if (type === 'title') {
-        const equipped = getStorage("phantom_user_equipped", {});
-        if (!equipped[userId]) equipped[userId] = {};
-        delete equipped[userId].titles;
-        equipped[userId].title = itemId;
-        setStorage("phantom_user_equipped", equipped);
+        if (action === 'unequip' || Number(equipped[userId].title) === Number(itemId)) {
+            delete equipped[userId].title;
+            setStorage("phantom_user_equipped", equipped);
+            showToast(`تم إلغاء تجهيز ${item.name}`, 'info');
+        } else {
+            equipped[userId].title = Number(itemId);
+            setStorage("phantom_user_equipped", equipped);
+            showToast(`✅ تم تجهيز ${item.name}!`, 'success');
+        }
 
         let serverMembers = getStorage("phantom_server_members", []);
-        serverMembers = serverMembers.map(m => { if (m && m.name === username) m.equipped_title = itemId; return m; });
+        serverMembers = serverMembers.map(m => { if (m && m.name === username) m.equipped_title = equipped[userId].title || null; return m; });
         setStorage("phantom_server_members", serverMembers);
 
-        let customRoster = getStorage("phantom_custom_roster", []);
-        customRoster = customRoster.map(m => { if (m && m.name === username) m.equipped_title = itemId; return m; });
-        setStorage("phantom_custom_roster", customRoster);
-
-        if (supabaseClient) await supabaseClient.from('members').update({ equipped_title: itemId }).eq('name', username);
+        if (supabaseClient) await supabaseClient.from('members').update({ equipped_title: equipped[userId].title || null }).eq('name', username).catch(e => console.warn(e));
 
         renderShop();
         renderInventory();
         renderChat();
         renderAll();
-        showToast(`✅ تم تجهيز ${item.name}!`, 'success');
         return;
     }
 
-    // ✅ تجهيز الإطارات
+    // 🖼️ 2. تجهيز / إلغاء الإطارات
     if (type === 'frame') {
-        const equipped = getStorage("phantom_user_equipped", {});
-        if (!equipped[userId]) equipped[userId] = {};
-        equipped[userId].frame = itemId;
-        setStorage("phantom_user_equipped", equipped);
+        if (action === 'unequip' || Number(equipped[userId].frame) === Number(itemId)) {
+            delete equipped[userId].frame;
+            setStorage("phantom_user_equipped", equipped);
+            showToast(`تم إلغاء تجهيز ${item.name}`, 'info');
+        } else {
+            equipped[userId].frame = Number(itemId);
+            setStorage("phantom_user_equipped", equipped);
+            showToast(`✅ تم تجهيز ${item.name}!`, 'success');
+        }
 
-        if (supabaseClient) await supabaseClient.from('members').update({ equipped_frame: itemId }).eq('name', username);
+        if (supabaseClient) await supabaseClient.from('members').update({ equipped_frame: equipped[userId].frame || null }).eq('name', username).catch(e => console.warn(e));
 
         renderShop();
         renderInventory();
         renderAll();
-        showToast(`✅ تم تجهيز ${item.name}!`, 'success');
         return;
     }
 
-    // ✅ تجهيز ألوان الأسماء
+    // 🎨 3. تجهيز / إلغاء ألوان الأسماء
     if (type === 'name_color') {
-        const equipped = getStorage("phantom_user_equipped", {});
-        if (!equipped[userId]) equipped[userId] = {};
-        equipped[userId].name_color = itemId;
-        setStorage("phantom_user_equipped", equipped);
+        if (action === 'unequip' || Number(equipped[userId].name_color) === Number(itemId)) {
+            delete equipped[userId].name_color;
+            setStorage("phantom_user_equipped", equipped);
+            showToast(`تم إلغاء تجهيز ${item.name}`, 'info');
+        } else {
+            equipped[userId].name_color = Number(itemId);
+            setStorage("phantom_user_equipped", equipped);
+            showToast(`✅ تم تجهيز ${item.name}!`, 'success');
+        }
 
-        if (supabaseClient) await supabaseClient.from('members').update({ equipped_name_color: itemId }).eq('name', username);
+        if (supabaseClient) await supabaseClient.from('members').update({ equipped_name_color: equipped[userId].name_color || null }).eq('name', username).catch(e => console.warn(e));
 
         renderShop();
         renderInventory();
         renderChat();
         renderAll();
-        showToast(`✅ تم تجهيز ${item.name}!`, 'success');
         return;
     }
 
-    // ✅ تجهيز الخلفيات
+    // 🌌 4. تجهيز / إلغاء الخلفيات
     if (type === 'background') {
-        const equipped = getStorage("phantom_user_equipped", {});
-        if (!equipped[userId]) equipped[userId] = {};
-        equipped[userId].background = itemId;
-        setStorage("phantom_user_equipped", equipped);
+        if (action === 'unequip' || Number(equipped[userId].background) === Number(itemId)) {
+            delete equipped[userId].background;
+            setStorage("phantom_user_equipped", equipped);
+            showToast(`تم إلغاء تجهيز ${item.name}`, 'info');
+        } else {
+            equipped[userId].background = Number(itemId);
+            setStorage("phantom_user_equipped", equipped);
+            showToast(`✅ تم تجهيز ${item.name}!`, 'success');
+        }
 
-        if (supabaseClient) await supabaseClient.from('members').update({ equipped_background: itemId }).eq('name', username);
+        if (supabaseClient) await supabaseClient.from('members').update({ equipped_background: equipped[userId].background || null }).eq('name', username).catch(e => console.warn(e));
 
         renderShop();
         renderInventory();
-        openProfile(getCurrentUsername());
-        showToast(`✅ تم تجهيز ${item.name}!`, 'success');
         return;
     }
 
-    // ✅ تجهيز تأثيرات الرسائل
+    // 💬 5. تجهيز / إلغاء تأثيرات الرسائل
     if (type === 'chat_effect') {
-        const equipped = getStorage("phantom_user_equipped", {});
-        if (!equipped[userId]) equipped[userId] = {};
-        equipped[userId].chat_effect = itemId;
-        setStorage("phantom_user_equipped", equipped);
+        if (action === 'unequip' || Number(equipped[userId].chat_effect) === Number(itemId)) {
+            delete equipped[userId].chat_effect;
+            setStorage("phantom_user_equipped", equipped);
+            showToast(`تم إلغاء تجهيز ${item.name}`, 'info');
+        } else {
+            equipped[userId].chat_effect = Number(itemId);
+            setStorage("phantom_user_equipped", equipped);
+            showToast(`✅ تم تجهيز ${item.name}!`, 'success');
+        }
 
-        if (supabaseClient) await supabaseClient.from('members').update({ equipped_chat_effect: itemId }).eq('name', username);
+        if (supabaseClient) await supabaseClient.from('members').update({ equipped_chat_effect: equipped[userId].chat_effect || null }).eq('name', username).catch(e => console.warn(e));
 
         renderShop();
         renderInventory();
         renderChat();
         renderAll();
-        showToast(`✅ تم تجهيز ${item.name}!`, 'success');
         return;
     }
 
-    // ✅ الكروت (كل التأثيرات)
+    // 💳 6. استخدام الكروت الفورية
     if (type === 'card') {
         const effect = item.effect || '';
         let message = '';
 
-        if (effect === 'point_boost') { setStorage("phantom_point_boost", { active: true, expiresAt: Date.now() + 1800000 }); message = '🔥 تم تفعيل تضخيم النقاط!'; }
-        else if (effect === 'double_points') { setStorage("phantom_double_points", { active: true, expiresAt: Date.now() + 3600000 }); message = '✨ تم تفعيل دبل نقاط!'; }
-        else if (effect === 'quick_points') { const pts = getLocalPoints(); pts[username] = (pts[username] || 0) + 200; setLocalPoints(pts); message = '⚡ حصلت على 200 نقطة!'; }
-        else if (effect === 'power_points') { const pts = getLocalPoints(); pts[username] = (pts[username] || 0) + 150; setLocalPoints(pts); message = '⚡ حصلت على 150 نقطة!'; }
-        else if (effect === 'surprise_box') { const r = Math.floor(Math.random() * (200 - 20 + 1)) + 20; const pts = getLocalPoints(); pts[username] = (pts[username] || 0) + r; setLocalPoints(pts); message = `🎁 حصلت على ${r} نقطة!`; }
-        else if (effect === 'fast_attendance') { let att = getStorage(PHANTOM_MEMORY.attendanceRecordsKey, {}); att[username] = (att[username] || 0) + 1; setStorage(PHANTOM_MEMORY.attendanceRecordsKey, att); message = '⏩ تم تسجيل حضور!'; }
-        else if (effect === 'bonus_hearts') { let hearts = getStorage(PHANTOM_MEMORY.heartsKey, {}); hearts[username] = (hearts[username] || 0) + 3; setStorage(PHANTOM_MEMORY.heartsKey, hearts); message = '💛 حصلت على 3 قلوب!'; }
-        else if (effect === 'camouflage') { setStorage("phantom_camouflage_until", Date.now() + 7200000); message = '🕶️ تم تفعيل التمويه!'; }
-        else if (effect === 'invisibility') { setStorage("phantom_invisibility_until", Date.now() + 7200000); message = '🕶️ تم تفعيل عباءة الخفاء!'; }
-        else if (effect === 'see_points') { setStorage("phantom_see_points", { active: true, expiresAt: Date.now() + 3600000 }); message = '👁️ يمكنك رؤية النقاط!'; }
-        else if (effect === 'glow') { setStorage("phantom_glow_mode", { active: true, expiresAt: Date.now() + 1800000 }); message = '💡 تم تفعيل الإعلان المضيء!'; }
-        else if (effect === 're_freeze') { setStorage("phantom_vault_bonus", true); message = '❄️ تم تفعيل إعادة التجميد!'; }
-        else if (effect === 'transfer') { showTransferPointsModal(); message = '💳 تم فتح نافذة نقل النقاط!'; }
-        else if (effect === 'warning_protect') { let w = getStorage("phantom_warnings", []); if (w.length > 0) { w.pop(); setStorage("phantom_warnings", w); message = '🛡️ تم إلغاء إنذار!'; } else { message = 'لا يوجد إنذارات.'; } }
-        else { message = '✅ تم استخدام الكارت!'; }
+        if (effect === 'point_boost') {
+            setStorage("phantom_point_boost", { active: true, expiresAt: Date.now() + 1800000 });
+            message = '🔥 تم تفعيل تضخيم النقاط بنجاح (لمدة 30 دقيقة)!';
+        } else if (effect === 'double_points') {
+            setStorage("phantom_double_points", { active: true, expiresAt: Date.now() + 3600000 });
+            message = '✨ تم تفعيل دبل نقاط (لمدة 60 دقيقة)!';
+        } else if (effect === 'quick_points') {
+            const pts = getLocalPoints();
+            pts[username] = (pts[username] || 0) + 200;
+            setLocalPoints(pts);
+            message = '⚡ حصلت فوراً على +200 نقطة إضافية!';
+            if (typeof triggerConfetti === 'function') triggerConfetti();
+        } else if (effect === 'power_points') {
+            const pts = getLocalPoints();
+            pts[username] = (pts[username] || 0) + 150;
+            setLocalPoints(pts);
+            message = '⚡ حصلت فوراً على +150 نقطة!';
+            if (typeof triggerConfetti === 'function') triggerConfetti();
+        } else if (effect === 'surprise_box') {
+            const r = Math.floor(Math.random() * (200 - 20 + 1)) + 20;
+            const pts = getLocalPoints();
+            pts[username] = (pts[username] || 0) + r;
+            setLocalPoints(pts);
+            message = `🎁 مبروك! فتحت صندوق المفاجآت وحصلت على ${r} نقطة!`;
+            if (typeof triggerConfetti === 'function') triggerConfetti();
+        } else if (effect === 'fast_attendance') {
+            let att = getStorage(PHANTOM_MEMORY.attendanceRecordsKey, {});
+            att[username] = (att[username] || 0) + 1;
+            setStorage(PHANTOM_MEMORY.attendanceRecordsKey, att);
+            message = '⏩ تم تسجيل نقطة حضور إضافية بنجاح!';
+        } else if (effect === 'bonus_hearts') {
+            let hearts = getStorage(PHANTOM_MEMORY.heartsKey, {});
+            hearts[username] = (hearts[username] || 0) + 3;
+            setStorage(PHANTOM_MEMORY.heartsKey, hearts);
+            message = '💛 حصلت على 3 قلوب دعم إضافية!';
+        } else if (effect === 'camouflage') {
+            setStorage("phantom_camouflage_until", Date.now() + 7200000);
+            message = '🕶️ تم تفعيل عباءة التمويه والخصوصية لمدة ساعتين!';
+        } else if (effect === 'invisibility') {
+            setStorage("phantom_invisibility_until", Date.now() + 7200000);
+            message = '🕶️ تم تفعيل عباءة الخفاء بنجاح!';
+        } else if (effect === 'see_points') {
+            setStorage("phantom_see_points", { active: true, expiresAt: Date.now() + 3600000 });
+            message = '👁️ تم تفعيل رؤية نقاط الأعضاء لمدة ساعة!';
+        } else if (effect === 'glow') {
+            setStorage("phantom_glow_mode", { active: true, expiresAt: Date.now() + 1800000 });
+            message = '💡 تم تفعيل الإعلان المضيء بنجاح!';
+        } else if (effect === 're_freeze') {
+            setStorage("phantom_vault_bonus", true);
+            message = '❄️ تم تفعيل بونص الخزنة (+10% أرباح عند الفك)!';
+        } else if (effect === 'transfer') {
+            if (typeof showTransferPointsModal === 'function') showTransferPointsModal();
+            message = '💳 تم فتح نافذة تحويل النقاط!';
+        } else if (effect === 'warning_protect') {
+            let w = getStorage("phantom_warnings", []);
+            if (w.length > 0) {
+                w.pop();
+                setStorage("phantom_warnings", w);
+                message = '🛡️ تم إلغاء إنذار مسجل بنجاح!';
+            } else {
+                message = '🛡️ لا توجد إنذارات مسجلة عليك حالياً.';
+            }
+        } else {
+            message = '✅ تم استخدام الكارت بنجاح!';
+        }
 
-        if (supabaseClient) await supabaseClient.from('user_inventory').delete().eq('user_id', userId).eq('item_id', itemId);
+        // استهلاك كارت واحد فقط من المخزون
         let localInv = getStorage("phantom_user_inventory", []);
-        localInv = localInv.filter(i => !(i.user_id === userId && i.item_id === itemId));
-        setStorage("phantom_user_inventory", localInv);
+        const idx = localInv.findIndex(i => (i.user_id === userId || i.userId === userId || i.username === username) && Number(i.item_id) === Number(itemId));
+        if (idx !== -1) {
+            localInv.splice(idx, 1);
+            setStorage("phantom_user_inventory", localInv);
+        }
+
+        if (supabaseClient) {
+            supabaseClient.from('user_inventory').delete().eq('user_id', userId).eq('item_id', itemId).catch(e => console.warn(e));
+        }
 
         showToast(message, 'success');
         renderShop();
         renderInventory();
+        updateVaultBalanceUI();
         return;
     }
 }
@@ -5103,7 +5434,7 @@ async function renderInventory(filter = "all") {
     const shopItems = await getShopItems();
     
     const inventoryWithDetails = inventory.map(inv => {
-        const item = shopItems.find(i => i.id === inv.item_id);
+        const item = shopItems.find(i => Number(i.id) === Number(inv.item_id));
         if (!item) return null;
         return { ...inv, ...item };
     }).filter(Boolean);
@@ -5114,157 +5445,66 @@ async function renderInventory(filter = "all") {
     }
 
     if (filtered.length === 0) {
-        grid.innerHTML = `<div class="empty-state">لا توجد عناصر في هذه الفئة.</div>`;
+        grid.innerHTML = `<div class="empty-state" style="grid-column:span 2; padding:30px; text-align:center; color:var(--muted);">لا توجد عناصر في هذه الفئة.</div>`;
         return;
     }
 
-    // ✅ عرض البطاقات بشكل جديد
+    // عرض عناصر المخزون
     grid.innerHTML = filtered.map(item => {
         const isEquipped = isItemEquipped(item.id, userId);
         const equippedClass = isEquipped ? ' equipped' : '';
+        
+        let actionBtnHtml = '';
+        if (item.type === 'card') {
+            actionBtnHtml = `<button class="inv-use-btn" data-item-id="${item.id}" data-category="card" data-action="use" style="width:100%; padding:8px 6px; background:linear-gradient(135deg, #f59e0b, #d97706); color:#fff; border:none; border-radius:8px; font-weight:800; font-size:0.8rem; cursor:pointer;">⚡ استخدام</button>`;
+        } else if (isEquipped) {
+            actionBtnHtml = `<button class="inv-use-btn equipped" data-item-id="${item.id}" data-category="${item.type}" data-action="unequip" style="width:100%; padding:8px 6px; background:rgba(0, 242, 254, 0.15); color:var(--cyan); border:1px solid var(--cyan); border-radius:8px; font-weight:800; font-size:0.8rem; cursor:pointer;">✅ مجهز (اضغط للإلغاء)</button>`;
+        } else {
+            actionBtnHtml = `<button class="inv-use-btn" data-item-id="${item.id}" data-category="${item.type}" data-action="equip" style="width:100%; padding:8px 6px; background:var(--cyan); color:#000; border:none; border-radius:8px; font-weight:900; font-size:0.8rem; cursor:pointer;">✨ تجهيز</button>`;
+        }
+
         return `
-            <div class="inv-item-card${equippedClass}" data-item-id="${item.id}">
-                <div style="font-size:2rem;">${item.icon || '📦'}</div>
-                <div style="color:var(--white); font-size:0.9rem; font-weight:bold; margin:5px 0;">${escapeHTML(item.name)}</div>
-                <div style="color:var(--muted); font-size:0.7rem; margin-bottom:5px;">${escapeHTML(item.description || '')}</div>
-                <button class="inv-use-btn${isEquipped ? ' equipped' : ''}" data-item-id="${item.id}">${isEquipped ? '✅ مجهز' : 'تجهيز'}</button>
+            <div class="inv-item-card${equippedClass}" data-item-id="${item.id}" style="display:flex; flex-direction:column; justify-content:space-between; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:12px; text-align:center; min-height:165px;">
+                <div>
+                    <div style="font-size:2.2rem; margin-bottom:4px;">${item.icon || '📦'}</div>
+                    <div style="color:var(--white); font-size:0.9rem; font-weight:bold; margin:4px 0;">${escapeHTML(item.name)}</div>
+                    <div style="color:var(--muted); font-size:0.72rem; margin-bottom:8px; line-height:1.4;">${escapeHTML(item.description || '')}</div>
+                </div>
+                <div>
+                    ${actionBtnHtml}
+                </div>
             </div>
         `;
     }).join("");
 
-    // ✅ ربط أزرار التجهيز
-    document.querySelectorAll(".inv-use-btn:not(.equipped)").forEach(btn => {
-        btn.addEventListener("click", async function() {
+    // ربط أزرار المخزون
+    grid.querySelectorAll(".inv-use-btn").forEach(btn => {
+        btn.addEventListener("click", async function(e) {
+            e.stopPropagation();
             const itemId = parseInt(this.dataset.itemId);
-            selectedInventoryItem = itemId;
-            await useSelectedInventoryItem();
+            const category = this.dataset.category || 'other';
+            const action = this.dataset.action || 'equip';
+            await useItem(itemId, category, action);
             renderInventory(filter);
         });
     });
 }
 
-// ✅ دالة مساعدة للتحقق مما إذا كان العنصر مجهزاً
-function isItemEquipped(itemId, userId) {
-    const equipped = getStorage("phantom_user_equipped", {});
-    const userEquipped = equipped[userId] || {};
-    return (userEquipped.title === itemId || userEquipped.frame === itemId || userEquipped.name_color === itemId || userEquipped.background === itemId || userEquipped.chat_effect === itemId);
-}
-
 async function useSelectedInventoryItem() {
     if (!selectedInventoryItem) return showToast("اختر عنصراً أولاً.", "error");
-
     const itemId = parseInt(selectedInventoryItem);
-    const userId = getCurrentUserId();
-    if (!userId) return showToast("يجب تسجيل الدخول.", "error");
-
     const shopItems = await getShopItems();
-    const item = shopItems.find(i => i.id === itemId);
+    const item = shopItems.find(i => Number(i.id) === Number(itemId));
     if (!item) return showToast("العنصر غير موجود.", "error");
 
-    const username = getCurrentUsername();
-    const equipped = getStorage("phantom_user_equipped", {});
-    if (!equipped[userId]) equipped[userId] = {};
+    const userId = getCurrentUserId();
+    const isEquipped = isItemEquipped(itemId, userId);
+    const action = isEquipped ? 'unequip' : (item.type === 'card' ? 'use' : 'equip');
 
-    // ✅ تجهيز اللقب
-    if (item.type === 'title') {
-        delete equipped[userId].titles;
-        equipped[userId].title = itemId;
-        setStorage("phantom_user_equipped", equipped);
-        renderShop();
-        renderInventory();
-        renderChat();
-        renderAll();
-        showToast(`✅ تم تجهيز ${item.name}!`, "success");
-        selectedInventoryItem = null;
-        document.getElementById("use-inventory-item-btn").style.display = "none";
-        return;
-    }
-    
-    // ✅ تجهيز الإطار
-    else if (item.type === 'frame') {
-        equipped[userId].frame = itemId;
-        setStorage("phantom_user_equipped", equipped);
-        renderShop();
-        renderInventory();
-        renderAll();
-        showToast(`✅ تم تجهيز ${item.name}!`, "success");
-        selectedInventoryItem = null;
-        document.getElementById("use-inventory-item-btn").style.display = "none";
-        return;
-    }
-
-    // ✅ تجهيز لون الاسم
-    else if (item.type === 'name_color') {
-        equipped[userId].name_color = itemId;
-        setStorage("phantom_user_equipped", equipped);
-        renderShop();
-        renderInventory();
-        renderChat();
-        showToast(`✅ تم تجهيز ${item.name}!`, "success");
-        selectedInventoryItem = null;
-        document.getElementById("use-inventory-item-btn").style.display = "none";
-        return;
-    }
-
-    // ✅ تجهيز الخلفية
-    else if (item.type === 'background') {
-        equipped[userId].background = itemId;
-        setStorage("phantom_user_equipped", equipped);
-        renderShop();
-        renderInventory();
-        openProfile(username);
-        showToast(`✅ تم تجهيز ${item.name}!`, "success");
-        selectedInventoryItem = null;
-        document.getElementById("use-inventory-item-btn").style.display = "none";
-        return;
-    }
-
-    // ✅ تجهيز تأثير الرسائل
-    else if (item.type === 'chat_effect') {
-        equipped[userId].chat_effect = itemId;
-        setStorage("phantom_user_equipped", equipped);
-        renderShop();
-        renderInventory();
-        renderChat();
-        showToast(`✅ تم تجهيز ${item.name}!`, "success");
-        selectedInventoryItem = null;
-        document.getElementById("use-inventory-item-btn").style.display = "none";
-        return;
-    }
-    
-    // ✅ استخدام الكروت
-    else if (item.type === 'card') {
-        if (supabaseClient) await supabaseClient.from('user_inventory').delete().eq('user_id', userId).eq('item_id', itemId);
-        let localInv = getStorage("phantom_user_inventory", []);
-        localInv = localInv.filter(i => !(i.user_id === userId && i.item_id === itemId));
-        setStorage("phantom_user_inventory", localInv);
-        
-        const effect = item.effect || '';
-        let message = '';
-
-        if (effect === 'point_boost') { setStorage("phantom_point_boost", { active: true, expiresAt: Date.now() + 1800000 }); message = '🔥 تم تفعيل تضخيم النقاط!'; }
-        else if (effect === 'double_points') { setStorage("phantom_double_points", { active: true, expiresAt: Date.now() + 3600000 }); message = '✨ تم تفعيل دبل نقاط!'; }
-        else if (effect === 'quick_points') { const pts = getLocalPoints(); pts[username] = (pts[username] || 0) + 200; setLocalPoints(pts); message = '⚡ حصلت على 200 نقطة!'; }
-        else if (effect === 'power_points') { const pts = getLocalPoints(); pts[username] = (pts[username] || 0) + 150; setLocalPoints(pts); message = '⚡ حصلت على 150 نقطة!'; }
-        else if (effect === 'surprise_box') { const r = Math.floor(Math.random() * (200 - 20 + 1)) + 20; const pts = getLocalPoints(); pts[username] = (pts[username] || 0) + r; setLocalPoints(pts); message = `🎁 حصلت على ${r} نقطة!`; }
-        else if (effect === 'fast_attendance') { let att = getStorage(PHANTOM_MEMORY.attendanceRecordsKey, {}); att[username] = (att[username] || 0) + 1; setStorage(PHANTOM_MEMORY.attendanceRecordsKey, att); message = '⏩ تم تسجيل حضور!'; }
-        else if (effect === 'bonus_hearts') { let hearts = getStorage(PHANTOM_MEMORY.heartsKey, {}); hearts[username] = (hearts[username] || 0) + 3; setStorage(PHANTOM_MEMORY.heartsKey, hearts); message = '💛 حصلت على 3 قلوب!'; }
-        else if (effect === 'camouflage') { setStorage("phantom_camouflage_until", Date.now() + 7200000); message = '🕶️ تم تفعيل التمويه!'; }
-        else if (effect === 'invisibility') { setStorage("phantom_invisibility_until", Date.now() + 7200000); message = '🕶️ تم تفعيل عباءة الخفاء!'; }
-        else if (effect === 'see_points') { setStorage("phantom_see_points", { active: true, expiresAt: Date.now() + 3600000 }); message = '👁️ يمكنك رؤية النقاط!'; }
-        else if (effect === 'glow') { setStorage("phantom_glow_mode", { active: true, expiresAt: Date.now() + 1800000 }); message = '💡 تم تفعيل الإعلان المضيء!'; }
-        else if (effect === 're_freeze') { setStorage("phantom_vault_bonus", true); message = '❄️ تم تفعيل إعادة التجميد!'; }
-        else if (effect === 'transfer') { showTransferPointsModal(); message = '💳 تم فتح نافذة نقل النقاط!'; }
-        else if (effect === 'warning_protect') { let w = getStorage("phantom_warnings", []); if (w.length > 0) { w.pop(); setStorage("phantom_warnings", w); message = '🛡️ تم إلغاء إنذار!'; } else { message = 'لا يوجد إنذارات.'; } }
-        else { message = '✅ تم استخدام الكارت!'; }
-
-        showToast(message, 'success');
-        renderShop();
-        renderInventory();
-        selectedInventoryItem = null;
-        document.getElementById("use-inventory-item-btn").style.display = "none";
-        return;
-    }
+    await useItem(itemId, item.type, action);
+    selectedInventoryItem = null;
+    const btn = document.getElementById("use-inventory-item-btn");
+    if (btn) btn.style.display = "none";
 }
 /* ========================================================
    🎡 نظام عجلة الحظ (الحظ ضعيف)
@@ -6487,6 +6727,9 @@ if (localStorage.getItem('phantom_mascot') === 'off') {
                 mascotPlayGreeting();
             } else {
                 mascotRegisterClick();
+                if (typeof window.onMascotTap === 'function') {
+                    window.onMascotTap();
+                }
             }
         }
 
@@ -6663,11 +6906,110 @@ window.addEventListener('phantom-mascot-settings-changed', () => {
    🤖 بوبرت الذكي - تفاعل صوتي (مع مؤقت للكتابة)
    ======================================================== */
 
-const PHANTOM_AI_KEY = "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"; 
+let bobertChatHistory = []; 
 
 if ('speechSynthesis' in window) {
     window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = () => {
+        window.speechSynthesis.getVoices();
+    };
 }
+
+// إظهار فقاعة كلام للروبوت
+window.mascotSay = function(text, duration = 4000) {
+    const bubble = document.getElementById('mascot-honk-bubble');
+    if (!bubble) return;
+    bubble.textContent = text.length > 40 ? text.substring(0, 38) + '...' : text;
+    bubble.classList.add('mascot-honk-show');
+    clearTimeout(window._mascotSayTimer);
+    window._mascotSayTimer = setTimeout(() => {
+        bubble.classList.remove('mascot-honk-show');
+        bubble.textContent = '📯 بووووق!';
+    }, duration);
+};
+
+// نطق صوت بوبرت
+window.speakBobert = function(text) {
+    if (!('speechSynthesis' in window)) return;
+    try {
+        window.speechSynthesis.cancel();
+        const cleanText = text.replace(/[*#_`~]/g, '');
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.lang = 'ar-SA'; 
+        utterance.rate = 1.05; 
+        utterance.pitch = 1.05;
+        
+        const voices = window.speechSynthesis.getVoices();
+        const arabicVoice = voices.find(v => v.lang && v.lang.toLowerCase().startsWith('ar'));
+        if (arabicVoice) utterance.voice = arabicVoice;
+        
+        utterance.onstart = () => {
+            const mascot = document.getElementById('phantom-mascot');
+            if (mascot) mascot.classList.add('mascot-greet');
+            window.mascotSay(cleanText, 4500);
+        };
+        utterance.onend = () => {
+            const mascot = document.getElementById('phantom-mascot');
+            if (mascot) mascot.classList.remove('mascot-greet');
+        };
+        utterance.onerror = () => {
+            const mascot = document.getElementById('phantom-mascot');
+            if (mascot) mascot.classList.remove('mascot-greet');
+        };
+
+        window.speechSynthesis.speak(utterance);
+    } catch (e) {
+        console.warn("Speech synthesis error:", e);
+    }
+};
+
+// تفاعل الروبوت الصوتي عند الضغط عليه في الواجهة
+window.onMascotTap = function() {
+    const mascot = document.getElementById('phantom-mascot');
+    if (!mascot) return;
+
+    if (typeof mascotPlayGreeting === 'function') {
+        mascotPlayGreeting();
+    }
+
+    const greeting = "أنا سامعك يا بطل! اتفضل اتكلم...";
+    window.mascotSay("🎙️ أنا سامعك... اتفضل اتكلم!", 4000);
+
+    // نطق رسالة الاستماع أولاً، ثم بدء الاستماع بعد انتهاء النطق لمنع تشويش الميكروفون
+    if ('speechSynthesis' in window) {
+        try {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(greeting);
+            utterance.lang = 'ar-SA';
+            utterance.rate = 1.05;
+            utterance.pitch = 1.1;
+
+            const voices = window.speechSynthesis.getVoices();
+            const arabicVoice = voices.find(v => v.lang && v.lang.toLowerCase().startsWith('ar'));
+            if (arabicVoice) utterance.voice = arabicVoice;
+
+            utterance.onend = () => {
+                if (typeof window.startVoiceInteraction === 'function') {
+                    window.startVoiceInteraction();
+                }
+            };
+            utterance.onerror = () => {
+                if (typeof window.startVoiceInteraction === 'function') {
+                    window.startVoiceInteraction();
+                }
+            };
+
+            window.speechSynthesis.speak(utterance);
+            return;
+        } catch (e) {
+            console.warn("Speech synthesis error on tap:", e);
+        }
+    }
+
+    if (typeof window.startVoiceInteraction === 'function') {
+        window.startVoiceInteraction();
+    }
+};
 
 function setupAIChat() {
     const mascot = document.getElementById('phantom-mascot');
@@ -6678,119 +7020,122 @@ function setupAIChat() {
 
     mascot.style.cursor = 'pointer';
 
-    // النطق
-    window.speakBobert = function(text) {
-        if (!('speechSynthesis' in window)) return;
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = 'ar-SA'; 
-        utterance.rate = 1; 
-        utterance.pitch = 1;
-        const voices = window.speechSynthesis.getVoices();
-        const arabicVoice = voices.find(v => v.lang.startsWith('ar'));
-        if (arabicVoice) utterance.voice = arabicVoice;
-        window.speechSynthesis.speak(utterance);
-    };
-
-    // نافذة الكتابة الاحتياطية
-   window.promptTextInput = function() {
-    // لا تفعل شيئاً (منع التهنيج وفتح الشات تلقائياً)
-    console.log("بوبرت لم يسمعك، الرجاء استخدام زر الشات يدوياً.");
-};
-
-
     // الاستماع مع مؤقت
     window.startVoiceInteraction = function() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-            showToast("⚠️ التعرف الصوتي غير مدعوم. اكتب رسالتك.", "error");
-            promptTextInput();
+            showToast("⚠️ التعرف الصوتي غير مدعوم في متصفحك. تفضل بفتح شات بوبرت.", "info");
+            window.mascotSay("⚠️ الميكروفون غير متاح، اكتب في الشات!", 3000);
             return;
         }
         
-        showToast("🔴 جاري الاستماع... تكلم الآن", "info");
+        window.mascotSay("🔴 جاري الاستماع... تكلم الآن!", 6000);
+        showToast("🎙️ جاري الاستماع... تكلم الآن يا بطل", "info");
+
         const recognition = new SpeechRecognition();
         recognition.lang = 'ar-SA';
         recognition.continuous = false;
         recognition.interimResults = false;
         
-        // 👇 مؤقت: إذا لم يسمع شيئاً خلال 6 ثواني، افتح الكتابة
         const timeoutId = setTimeout(() => {
-            recognition.stop();
-            showToast("⏰ لم أسمعك. اكتب رسالتك.", "info");
-            promptTextInput();
-        }, 6000);
+            try { recognition.stop(); } catch(e) {}
+            window.mascotSay("⏰ لم أسمعك! اضغط للتحدث مجدداً.", 3500);
+        }, 7000);
         
         recognition.onresult = async (event) => {
             clearTimeout(timeoutId);
             const userText = event.results[0][0].transcript;
+            window.mascotSay(`🎤 سمعتك: ${userText}`, 3000);
             showToast(`🎤 سمعتك: ${userText}`, "success");
             await sendVoiceToAI(userText);
         };
         
         recognition.onerror = (event) => {
             clearTimeout(timeoutId);
-            showToast("⚠️ لم أستطع سماعك. حاول بالكتابة.", "error");
-            promptTextInput();
+            console.warn("Speech recognition error:", event.error);
+            if (event.error === 'not-allowed') {
+                showToast("⚠️ يرجى السماح بصلاحية الميكروفون للتحدث مع الروبوت.", "error");
+                window.mascotSay("⚠️ يرجى السماح بصلاحية الميكروفون!", 4000);
+            } else if (event.error !== 'no-speech') {
+                window.mascotSay("لم أسمعك بوضوح، حاول مجدداً!", 3500);
+            }
         };
         
-        recognition.start();
+        try {
+            recognition.start();
+        } catch (e) {
+            console.warn("Recognition already started or error:", e);
+        }
     };
 
-  window.sendVoiceToAI = async function(userText) {
-    try {
-        const body = document.getElementById('phantom-chat-body');
-        const typing = showTyping();
-        body.appendChild(typing);
+    window.sendVoiceToAI = async function(userText) {
+        try {
+            window.mascotSay("💭 جاري التفكير...", 5000);
+            
+            // إضافة رسالة المستخدم الصوتية لسجل الشات والمحفوظات
+            addMessage(userText, 'user', true);
 
-        const response = await fetch("https://dmbprvvjmgccgztrhkay.supabase.co/functions/v1/Bobert-ai-", {
-            method: "POST",
-            headers: { 
-                "Content-Type": "application/json",
-                "apikey": "sb_publishable_R9U_-JY91tV87uLBaZjCWQ_wRhVshA5",
-                "Authorization": "Bearer sb_publishable_R9U_-JY91tV87uLBaZjCWQ_wRhVshA5"
-            },
-            body: JSON.stringify({ message: userText })
-        });
+            const body = document.getElementById('phantom-chat-body');
+            const typing = showTyping();
+            if (body) {
+                body.appendChild(typing);
+                body.scrollTop = body.scrollHeight;
+            }
 
-        if (!response.ok) throw new Error("Edge Function Error");
-        const data = await response.json();
-        const aiResponse = data.response || data.reply || "عذراً، لم أستطع الفهم.";
+            const response = await fetch("/api/chat", {
+                method: "POST",
+                headers: { 
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ 
+                    message: userText,
+                    history: bobertChatHistory
+                })
+            });
 
-        typing.remove();
-        
-        // ✅ نطق الرد (تأكد أنك سمحت للميكروفون!)
-        window.speakBobert(aiResponse);
-        addMessage(aiResponse, 'bot');
+            if (!response.ok) throw new Error("Server Error: " + response.status);
+            const data = await response.json();
+            const aiResponse = data.response || data.reply || "أهلاً بك يا بطل PHANTOM!";
 
-        if (userText.includes("العب معي") || userText.includes("العاب")) {
-            setTimeout(() => {
-                if (typeof openGamesPage === 'function') openGamesPage();
-                else showToast("⚠️ صفحة الألعاب لم تُنشأ بعد.", "info");
-            }, 1000);
+            typing.remove();
+            
+            bobertChatHistory.push({ role: 'user', text: userText });
+            bobertChatHistory.push({ role: 'model', text: aiResponse });
+            if (bobertChatHistory.length > 10) bobertChatHistory = bobertChatHistory.slice(-10);
+            try {
+                localStorage.setItem(BOBERT_HISTORY_KEY, JSON.stringify(bobertChatHistory));
+            } catch (e) {}
+
+            // ✅ تفاعل الروبوت بالصوت والفقاعة وحفظ الرد في الشات
+            window.speakBobert(aiResponse);
+            window.mascotSay(aiResponse, 6000);
+            addMessage(aiResponse, 'bot', true);
+
+            if (userText.includes("العب معي") || userText.includes("العاب")) {
+                setTimeout(() => {
+                    if (typeof openGamesPage === 'function') openGamesPage();
+                    else showToast("⚠️ صفحة الألعاب لم تُنشأ بعد.", "info");
+                }, 1000);
+            }
+        } catch (error) {
+            console.error("AI Error:", error);
+            typing.remove();
+            window.mascotSay("⚠️ حدث خطأ في الاتصال، حاول ثانية.", 4000);
+            showToast("⚠️ تعذر الاتصال بالذكاء الاصطناعي.", "error");
+            addMessage("عذراً، حدث خطأ في الاتصال.", 'bot', true);
         }
-    } catch (error) {
-        console.error("AI Error:", error);
-        typing.remove();
-        showToast("⚠️ تعذر الاتصال بالذكاء الاصطناعي.", "error");
-        addMessage("عذراً، حدث خطأ في الاتصال.", 'bot');
-    }
-};
+    };
 
-    // ضغطة واحدة: استماع، ضغطتين: كتابة
-    let clickCount = 0;
-    mascot.addEventListener('click', () => {
-        clickCount++;
-        if (clickCount === 1) {
-            setTimeout(() => {
-                if (clickCount === 1) startVoiceInteraction();
-                clickCount = 0;
-            }, 400);
-        } else if (clickCount === 2) {
-            clickCount = 0;
-            promptTextInput();
-        }
+    // الضغط المباشر كاحتياط إضافي
+    mascot.addEventListener('click', (e) => {
+        if (e.target && e.target.id === 'mascot-horn') return;
+        window.onMascotTap();
     });
+
+    // تحميل رسائل وسجل المحادثة السابقة من LocalStorage
+    if (typeof loadBobertChatMessages === 'function') {
+        loadBobertChatMessages();
+    }
 }
 
 document.addEventListener('DOMContentLoaded', setupAIChat);
@@ -6838,10 +7183,106 @@ function renderBadge(level) {
 }
 
 
-/* 💬 بوبرت شات - Bottom Sheet (تصميم 4) */
+/* 💬 بوبرت شات - Bottom Sheet (تصميم 4 مع حفظ المحادثة في LocalStorage) */
+
+const BOBERT_MSGS_KEY = 'phantom_bobert_chat_messages';
+const BOBERT_HISTORY_KEY = 'phantom_bobert_chat_history';
 
 let chatSheet = null;
 let chatOverlay = null;
+
+// تهيئة سجل المحادثة للذكاء الاصطناعي من التخزين المحلي
+(function initBobertChatStorage() {
+    try {
+        const savedHistory = localStorage.getItem(BOBERT_HISTORY_KEY);
+        if (savedHistory) {
+            const parsed = JSON.parse(savedHistory);
+            if (Array.isArray(parsed)) bobertChatHistory = parsed;
+        }
+    } catch (e) {
+        console.warn("Failed to load bobert chat history:", e);
+    }
+})();
+
+function renderBobertMessageDOM(text, sender, time) {
+    const body = document.getElementById('phantom-chat-body');
+    if (!body) return;
+    
+    const div = document.createElement('div');
+    div.className = `msg ${sender}`;
+    const displayTime = time || new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    div.innerHTML = `<b>${sender === 'user' ? 'أنت' : 'بوبرت'}</b><br>${text}<span class="time">${displayTime}</span>`;
+    
+    body.appendChild(div);
+}
+
+function loadBobertChatMessages() {
+    const body = document.getElementById('phantom-chat-body');
+    if (!body) return;
+
+    body.innerHTML = '';
+    let savedList = [];
+    try {
+        const raw = localStorage.getItem(BOBERT_MSGS_KEY);
+        if (raw) savedList = JSON.parse(raw);
+    } catch (e) {
+        savedList = [];
+    }
+
+    if (!Array.isArray(savedList) || savedList.length === 0) {
+        addMessage('أهلاً يا شبح. أنا بوبرت 👻 تميمة ومساعد كلان PHANTOM. وش تبي نبدأ؟', 'bot', true);
+        return;
+    }
+
+    savedList.forEach(m => {
+        renderBobertMessageDOM(m.text, m.sender, m.time);
+    });
+
+    body.scrollTop = body.scrollHeight;
+}
+
+function addMessage(text, sender, saveToStorage = true) {
+    const time = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    renderBobertMessageDOM(text, sender, time);
+
+    const body = document.getElementById('phantom-chat-body');
+    if (body) body.scrollTop = body.scrollHeight;
+
+    if (saveToStorage) {
+        try {
+            let list = [];
+            const raw = localStorage.getItem(BOBERT_MSGS_KEY);
+            if (raw) list = JSON.parse(raw);
+            if (!Array.isArray(list)) list = [];
+
+            list.push({
+                id: Date.now() + Math.random(),
+                sender: sender,
+                text: text,
+                time: time
+            });
+
+            if (list.length > 60) list = list.slice(-60);
+            localStorage.setItem(BOBERT_MSGS_KEY, JSON.stringify(list));
+        } catch (e) {
+            console.warn("Could not save Bobert message to localStorage:", e);
+        }
+    }
+}
+
+function clearBobertChat() {
+    try {
+        localStorage.removeItem(BOBERT_MSGS_KEY);
+        localStorage.removeItem(BOBERT_HISTORY_KEY);
+        bobertChatHistory = [];
+        const body = document.getElementById('phantom-chat-body');
+        if (body) body.innerHTML = '';
+        addMessage('تم مسح سجل المحادثة بنجاح 🧹. أهلاً بك من جديد يا بطل PHANTOM! كيف أساعدك اليوم؟', 'bot', true);
+        showToast("🧹 تم مسح سجل محادثة بوبرت", "info");
+    } catch (e) {
+        console.error("Error clearing bobert chat:", e);
+    }
+}
 
 function openBobertChat() {
     chatSheet = document.getElementById('phantom-chat-sheet');
@@ -6851,10 +7292,12 @@ function openBobertChat() {
     chatSheet.classList.add('open');
     chatOverlay.classList.add('open');
     
-    // رسالة ترحيب تلقائية
+    // تحميل الرسائل السابقة المحفوظة في LocalStorage
     const body = document.getElementById('phantom-chat-body');
     if (body && body.children.length === 0) {
-        addMessage('أهلاً يا شبح. أنا بوبرت. وش تبي نبدأ؟', 'bot');
+        loadBobertChatMessages();
+    } else if (body) {
+        body.scrollTop = body.scrollHeight;
     }
     
     // ربط الأحداث
@@ -6866,9 +7309,12 @@ function openBobertChat() {
     if (chatOverlay) chatOverlay.onclick = closeBobertChat;
     
     if (sendBtn) sendBtn.onclick = sendMessage;
-    if (input) input.onkeypress = (e) => {
-        if (e.key === 'Enter') sendMessage();
-    };
+    if (input) {
+        input.onkeypress = (e) => {
+            if (e.key === 'Enter') sendMessage();
+        };
+        setTimeout(() => input.focus(), 300);
+    }
 }
 
 function closeBobertChat() {
@@ -6876,26 +7322,12 @@ function closeBobertChat() {
     if (chatOverlay) chatOverlay.classList.remove('open');
 }
 
-function addMessage(text, sender) {
-    const body = document.getElementById('phantom-chat-body');
-    if (!body) return;
-    
-    const div = document.createElement('div');
-    div.className = `msg ${sender}`;
-    
-    const time = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
-    div.innerHTML = `<b>${sender === 'user' ? 'أنت' : 'بوبرت'}</b><br>${text}<span class="time">${time}</span>`;
-    
-    body.appendChild(div);
-    body.scrollTop = body.scrollHeight;
-}
-
 async function sendMessage() {
     const input = document.getElementById('phantom-chat-input');
     const text = input.value.trim();
     if (!text) return;
 
-    addMessage(text, 'user');
+    addMessage(text, 'user', true);
     input.value = '';
 
     const body = document.getElementById('phantom-chat-body');
@@ -6904,29 +7336,42 @@ async function sendMessage() {
     body.scrollTop = body.scrollHeight;
 
     try {
-        // ✅ الرابط الصحيح مع الـ Authorization
-        const response = await fetch("https://dmbprvvjmgccgztrhkay.supabase.co/functions/v1/Bobert-ai-", {
+        const response = await fetch("/api/chat", {
             method: "POST",
             headers: { 
-                "Content-Type": "application/json",
-                "apikey": "sb_publishable_R9U_-JY91tV87uLBaZjCWQ_wRhVshA5",
-                "Authorization": "Bearer sb_publishable_R9U_-JY91tV87uLBaZjCWQ_wRhVshA5"
+                "Content-Type": "application/json"
             },
-            body: JSON.stringify({ message: text })
+            body: JSON.stringify({ 
+                message: text,
+                history: bobertChatHistory
+            })
         });
 
         if (!response.ok) throw new Error("Server Error: " + response.status);
         const data = await response.json();
-        const aiResponse = data.response || "عذراً، لم أستطع الفهم.";
+        const aiResponse = data.response || data.reply || "أهلاً بك يا بطل PHANTOM!";
 
         typing.remove();
-        addMessage(aiResponse, 'bot');
-        window.speakBobert(aiResponse);
+
+        bobertChatHistory.push({ role: 'user', text: text });
+        bobertChatHistory.push({ role: 'model', text: aiResponse });
+        if (bobertChatHistory.length > 10) bobertChatHistory = bobertChatHistory.slice(-10);
+        try {
+            localStorage.setItem(BOBERT_HISTORY_KEY, JSON.stringify(bobertChatHistory));
+        } catch (e) {}
+
+        addMessage(aiResponse, 'bot', true);
+
+        if (text.includes("العب معي") || text.includes("العاب")) {
+            setTimeout(() => {
+                if (typeof openGamesPage === 'function') openGamesPage();
+            }, 1000);
+        }
     } catch (error) {
         typing.remove();
         console.error("AI Error:", error);
         showToast("⚠️ تعذر الاتصال بالذكاء الاصطناعي.", "error");
-        addMessage("عذراً، حدث خطأ في الاتصال.", 'bot');
+        addMessage("عذراً، حدث خطأ في الاتصال.", 'bot', true);
     }
 }
 // ✅ دالة مؤشر الكتابة (فضلت زي ما هي بالظبط)

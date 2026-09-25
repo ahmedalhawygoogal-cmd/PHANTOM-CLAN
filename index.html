@@ -5,8 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="theme-color" content="#0a0d14">
-    <meta name="description" content="PHANTOM HQ - المقر الإلكتروني الرسمي لكلان PHANTOM">
-    <title>PHANTOM HQ | 『PH』</title>
+    <meta name="description" content="المقر الإلكتروني الرسمي لكلان PHANTOM - منصة القيادة والإدارة التكتيكية">
+    <meta property="og:title" content="PHANTOM HQ">
+    <meta property="og:description" content="المقر الإلكتروني الرسمي لكلان PHANTOM - منصة القيادة والإدارة التكتيكية">
+    <title>PHANTOM HQ</title>
     <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="./icons/icon-192.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -463,11 +465,6 @@
         </div>
 
         <!-- شبكة المتجر -->
-        <div id="shop-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 0 10px 20px 10px;"></div>
-    </div>
-</div>
-
-        <!-- شبكة المتجر الأنيقة -->
         <div id="shop-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 0 10px 20px 10px;"></div>
     </div>
 </div>
@@ -886,6 +883,7 @@
     =================================================== -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
     
     <script>
@@ -1743,6 +1741,9 @@
       <strong>بوبرت</strong>
       <small>PHANTOM NODE • متصل</small>
     </div>
+    <button id="phantom-chat-clear" class="phantom-chat-clear-btn" onclick="clearBobertChat()" title="مسح المحادثة" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:6px; color:#9ca3af; font-size:0.85rem; cursor:pointer; padding:4px 8px; margin-left:auto; margin-right:8px; display:inline-flex; align-items:center; gap:4px;">
+      <span>🧹</span> مسح
+    </button>
     <button class="phantom-chat-close">『PH』</button>
   </div>
   <div id="phantom-chat-body" class="phantom-chat-body"></div>
@@ -1860,6 +1861,120 @@
     <textarea id="suggestion-reason" placeholder="ليه الإضافة دي؟" style="width:100%; padding:10px; height:70px; margin-bottom:15px; background:#0b1019; border:1px solid var(--border); border-radius:6px; color:#fff; resize:none;"></textarea>
     <button onclick="submitSuggestion()" style="width:100%; padding:12px; background:var(--cyan); color:#000; border:none; border-radius:8px; font-weight:900; cursor:pointer;">إرسال الاقتراح</button>
     <button onclick="closeSuggestionModal()" style="width:100%; padding:8px; margin-top:8px; background:transparent; border:1px solid #888; color:#888; border-radius:8px; cursor:pointer;">إلغاء</button>
+</div>
+<!-- 📹 نافذة مكالمات الكلان (صوت وصورة داخل المقر + Google Meet) -->
+<div id="google-meet-modal" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); z-index:9999999; background:rgba(11,16,25,0.98); border:2px solid var(--cyan); border-radius:16px; box-shadow:0 25px 70px rgba(0,0,0,0.85); width:94%; max-width:440px; padding:18px; text-align:center; direction:rtl; backdrop-filter:blur(12px);">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid rgba(0,242,254,0.2); padding-bottom:10px;">
+        <h3 style="color:var(--cyan); margin:0; font-size:1.15rem; display:flex; align-items:center; gap:8px;">
+            <span>📹</span> مكالمات كلان PHANTOM
+        </h3>
+        <button onclick="closeGoogleMeetModal()" style="background:transparent; border:none; color:var(--muted); font-size:1.3rem; cursor:pointer; padding:4px;">✕</button>
+    </div>
+
+    <!-- أزرار التبديل بين المكالمة داخل التطبيق ومكالمة Google Meet -->
+    <div style="display:flex; gap:8px; margin-bottom:14px; background:rgba(255,255,255,0.05); padding:4px; border-radius:10px;">
+        <button id="call-tab-inapp" onclick="switchCallTab('inapp')" style="flex:1; padding:8px; border:none; border-radius:8px; background:var(--cyan); color:#000; font-weight:800; font-size:0.85rem; cursor:pointer; transition:0.2s;">
+            📱 داخل التطبيق
+        </button>
+        <button id="call-tab-meet" onclick="switchCallTab('meet')" style="flex:1; padding:8px; border:none; border-radius:8px; background:transparent; color:#9ca3af; font-weight:700; font-size:0.85rem; cursor:pointer; transition:0.2s;">
+            🌐 Google Meet
+        </button>
+    </div>
+
+    <!-- 1️⃣ قسم المكالمة المباشرة داخل التطبيق 100% -->
+    <div id="inapp-call-section" style="display:block;">
+        <div style="position:relative; width:100%; height:200px; background:#05080f; border-radius:12px; overflow:hidden; border:1px solid rgba(0,242,254,0.3); margin-bottom:12px; display:flex; align-items:center; justify-content:center;">
+            <video id="inapp-clan-video" autoplay playsinline muted style="width:100%; height:100%; object-fit:cover; display:none;"></video>
+            
+            <div id="inapp-video-placeholder" style="display:flex; flex-direction:column; align-items:center; justify-content:center; color:#9ca3af; gap:8px; padding:12px;">
+                <span style="font-size:2.4rem;">🎙️📹</span>
+                <span id="inapp-status-text" style="font-size:0.9rem; color:#e2e8f0; font-weight:700;">المكالمة جاهزة للبدء داخل المقر</span>
+                <small style="color:#64748b; font-size:0.75rem;">تواصل بصوت وصورة مباشرة مع السكواد دون الخروج من التطبيق</small>
+            </div>
+
+            <!-- شارة الحالة الحية -->
+            <div id="inapp-live-badge" style="display:none; position:absolute; top:8px; right:8px; background:rgba(0,255,136,0.2); border:1px solid #00ff88; color:#00ff88; padding:3px 8px; border-radius:12px; font-size:0.75rem; font-weight:800;">
+                🟢 مباشر الآن
+            </div>
+        </div>
+
+        <!-- أزرار التحكم بالمكالمة داخل التطبيق -->
+        <div id="inapp-controls-bar" style="display:none; gap:8px; justify-content:center; margin-bottom:12px;">
+            <button id="inapp-mic-btn" onclick="toggleInAppMic()" title="كتم/تشغيل المايك" style="flex:1; padding:10px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:#fff; border-radius:8px; font-weight:700; font-size:0.85rem; cursor:pointer;">
+                🎙️ المايك: شغال
+            </button>
+            <button id="inapp-cam-btn" onclick="toggleInAppCam()" title="تشغيل/إيقاف الكاميرا" style="flex:1; padding:10px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:#fff; border-radius:8px; font-weight:700; font-size:0.85rem; cursor:pointer;">
+                📹 الكاميرا: شغال
+            </button>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:8px;">
+            <button id="inapp-start-btn" onclick="startInAppCall()" style="width:100%; padding:12px; background:var(--cyan); color:#000; border:none; border-radius:8px; font-weight:900; font-size:0.95rem; cursor:pointer; box-shadow:0 0 15px rgba(0,242,254,0.4);">
+                🚀 بدء المكالمة المباشرة (فيديو وصوت)
+            </button>
+
+            <button id="inapp-share-chat-btn" onclick="shareInAppCallInClanChat()" style="display:none; width:100%; padding:10px; background:rgba(0,242,254,0.15); color:var(--cyan); border:1px solid var(--cyan); border-radius:8px; font-weight:800; cursor:pointer;">
+                💬 دعوة الكلان للمكالمة في الشات
+            </button>
+
+            <button id="inapp-end-btn" onclick="endInAppCall()" style="display:none; width:100%; padding:9px; background:rgba(239,68,68,0.2); color:#ef4444; border:1px solid #ef4444; border-radius:8px; font-weight:800; cursor:pointer;">
+                🔴 إنهاء المكالمة
+            </button>
+        </div>
+    </div>
+
+    <!-- 2️⃣ قسم مكالمة Google Meet الرسمية -->
+    <div id="meet-call-section" style="display:none;">
+        <div style="background:rgba(0,242,254,0.05); border:1px dashed rgba(0,242,254,0.3); border-radius:10px; padding:10px; margin-bottom:12px; font-size:0.8rem; color:#94a3b8; line-height:1.5;">
+            💡 <strong>ملاحظة أمان Google:</strong> تمنع Google تضمين Meet داخل التطبيقات لحماية الخصوصية، لذا تفتح المكالمة في نافذة Google Meet الرسمية بنقرة واحدة.
+        </div>
+
+        <!-- قسم تسجيل الدخول إذا لم يكن مسجلاً -->
+        <div id="meet-auth-section" style="display:none;">
+            <p style="color:#d1d5db; font-size:0.85rem; line-height:1.6; margin-bottom:16px;">
+                قم بتسجيل الدخول بحساب Google لإنشاء غرفة Google Meet رسمية لأعضاء الكلان:
+            </p>
+            <button id="google-meet-signin-btn" class="gsi-material-button" onclick="handleGoogleMeetSignIn()" style="margin:0 auto 12px auto;">
+                <div class="gsi-material-button-state"></div>
+                <div class="gsi-material-button-content-wrapper">
+                    <div class="gsi-material-button-icon">
+                        <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style="display: block;">
+                            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                            <path fill="none" d="M0 0h48v48H0z"></path>
+                        </svg>
+                    </div>
+                    <span class="gsi-material-button-contents">Sign in with Google</span>
+                </div>
+            </button>
+        </div>
+
+        <!-- قسم المكالمة النشطة -->
+        <div id="meet-active-section" style="display:none;">
+            <div style="background:rgba(0,255,136,0.1); border:1px solid #00ff88; border-radius:10px; padding:10px; margin-bottom:12px;">
+                <div style="color:#00ff88; font-weight:900; font-size:0.9rem; margin-bottom:4px;">🟢 مكالمة Google Meet جاهزة</div>
+                <div id="meet-room-code" style="color:#e2e8f0; font-size:0.8rem; direction:ltr; font-family:monospace; margin-top:2px;"></div>
+            </div>
+
+            <a id="meet-join-link-btn" href="#" target="_blank" rel="noopener noreferrer" style="display:block; width:100%; padding:12px; background:var(--cyan); color:#000; text-decoration:none; border-radius:8px; font-weight:900; font-size:0.95rem; margin-bottom:8px; transition:var(--transition); box-shadow:0 0 15px rgba(0,242,254,0.4);">
+                🚀 انضمام عبر Google Meet
+            </a>
+
+            <button onclick="shareMeetLinkInClanChat()" style="width:100%; padding:9px; background:rgba(0,242,254,0.15); color:var(--cyan); border:1px solid var(--cyan); border-radius:8px; font-weight:800; cursor:pointer; margin-bottom:8px; font-size:0.85rem;">
+                💬 مشاركة الرابط في شات الكلان
+            </button>
+
+            <button onclick="copyMeetLinkToClipboard()" style="width:100%; padding:9px; background:transparent; color:#d1d5db; border:1px solid rgba(255,255,255,0.2); border-radius:8px; font-weight:700; cursor:pointer; margin-bottom:6px; font-size:0.85rem;">
+                📋 نسخ الرابط
+            </button>
+
+            <button onclick="handleCreateNewMeetCall()" style="width:100%; padding:6px; background:transparent; color:var(--silver-muted); border:none; font-size:0.8rem; cursor:pointer; text-decoration:underline;">
+                ➕ إنشاء رابط مكالمة جديدة
+            </button>
+        </div>
+    </div>
 </div>
 <!-- ⚙️ نافذة الإعدادات -->
 <div id="settings-overlay" class="fullscreen-overlay" style="display:none;">
