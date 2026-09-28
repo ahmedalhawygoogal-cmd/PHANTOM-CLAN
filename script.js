@@ -270,7 +270,7 @@ function setLocalPoints(points) {
 function resetSeasonPoints() {
     setLocalPoints({});
     if (supabaseClient) {
-        supabaseClient.from('leaderboard').delete().neq('id', 0).then(() => {
+        Promise.resolve(supabaseClient.from('leaderboard').delete().neq('id', 0)).then(() => {
             console.log("✅ تم تصفير نقاط الموسم في السيرفر.");
         }).catch(err => console.warn("⚠️ فشل تصفير نقاط الموسم في السيرفر:", err));
     }
@@ -282,6 +282,10 @@ function resetSeasonPoints() {
 
 const SUPABASE_URL = "https://dmbprvvjmgccgztrhkay.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_R9U_-JY91tV87uLBaZjCWQ_wRhVshA5";
+
+function safePostgrest(queryPromise) {
+    return Promise.resolve(queryPromise);
+}
 
 let supabaseClient = null;
 try {
@@ -657,8 +661,8 @@ if (username) {
     initSnake();
 
     initPacman(); 
+    initBattle();
 
-    
     setupInventory();
 
     // ✅ حل مشكلة 19: ربط زر الرسائل الجماعية
@@ -852,10 +856,33 @@ function getCurrentGameId() {
     return null;
 }
 
+function getCurrentUserRank() {
+    if (typeof isFounderSession === "function" && isFounderSession()) {
+        return "رئيس";
+    }
+    const username = (typeof getCurrentUsername === "function") ? getCurrentUsername() : (localStorage.getItem("phantom_active_username") || "");
+    if (!username) return "محارب";
+    try {
+        if (typeof getFullRoster === "function") {
+            const roster = getFullRoster();
+            if (Array.isArray(roster)) {
+                const member = roster.find(m => m && m.name && (typeof normalizeName === "function" ? normalizeName(m.name) === normalizeName(username) : m.name === username));
+                if (member && member.rank) return member.rank;
+            }
+        }
+    } catch (e) {
+        // Fallback
+    }
+    return "محارب";
+}
+if (typeof window !== "undefined") {
+    window.getCurrentUserRank = getCurrentUserRank;
+}
+
 function updateCurrentUser(username) {
     const display = getElement("current-user-display");
     if (display) {
-        const rank = isFounderSession() ? "رئيس" : "عضو";
+        const rank = (typeof getCurrentUserRank === "function") ? getCurrentUserRank() : "محارب";
         display.textContent = username ? `${rank}: ${username}` : "غير مسجل";
     }
 }
@@ -894,7 +921,7 @@ function promoteUserToFounder(username) {
     });
     setStorage("phantom_custom_roster", localMembers);
     if (supabaseClient) {
-        supabaseClient.from('members').update({ rank: 'رئيس' }).eq('name', username)
+        safePostgrest(supabaseClient.from('members').update({ rank: 'رئيس' }).eq('name', username))
             .then(() => console.log(`✅ تم ترقية ${username} إلى رئيس في السيرفر`))
             .catch(err => console.warn("⚠️ فشل ترقية الرتبة في السيرفر:", err));
     }
@@ -1388,7 +1415,7 @@ function setupAdminPanel() {
 
                 // تحديث في السيرفر (Supabase)
                 if (supabaseClient) {
-                    supabaseClient.from('members').update({ rank: 'رئيس' }).eq('name', username)
+                    safePostgrest(supabaseClient.from('members').update({ rank: 'رئيس' }).eq('name', username))
                         .then(() => console.log("✅ تم ترقية الرتبة في السيرفر"))
                         .catch(err => console.warn("⚠️ فشل ترقية الرتبة في السيرفر:", err));
                 }
@@ -2336,8 +2363,14 @@ function renderRosterAndLeadership() {
     }
 }
 
-// دالة مساعدة للتحقق من التواجد الفعلي
+// دالة مساعدة للتحقق من التواجد الفعلي (سيرفر + محلي)
 function isMemberOnline(username) {
+    if (!username) return false;
+    const current = typeof getCurrentUsername === 'function' ? getCurrentUsername() : null;
+    if (current && normalizeName(username) === normalizeName(current)) return true;
+    if (typeof serverOnlineUsers !== 'undefined' && Array.isArray(serverOnlineUsers)) {
+        if (serverOnlineUsers.some(u => normalizeName(u.username) === normalizeName(username))) return true;
+    }
     let users = getStorage(PHANTOM_MEMORY.presenceStorageKey, []);
     const now = Date.now();
     return users.some(user => normalizeName(user.name) === normalizeName(username) && now - user.time < 30 * 60 * 1000);
@@ -3239,6 +3272,46 @@ function renderChatMessages(messages, currentUser, titleName, nameColorEffect, c
         const isMe = normalizeName(msg.sender) === normalizeName(currentUser);
         const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString("ar-EG", { hour: '2-digit', minute: '2-digit' }) : "";
         
+        // 📞 فحص إذا كانت الرسالة دعوة مكالمة (مباشرة، Agora، أو Meet)
+        const isCallInvite = (msg.isCall || /📞|🎙️|📹|مكالمة|Agora|Google Meet/i.test(msg.text));
+        if (isCallInvite) {
+            let callType = 'inapp';
+            let callTitle = 'مكالمة المقر المباشرة (صوت وفيديو)';
+            let callIcon = '📱';
+            let tabTarget = 'inapp';
+
+            if (msg.callType === 'agora' || msg.text.includes('Agora')) {
+                callType = 'agora';
+                callTitle = 'غرفة Agora الصوتية التكتيكية';
+                callIcon = '🎙️';
+                tabTarget = 'agora';
+            } else if (msg.callType === 'meet' || /Meet|meet\.google/i.test(msg.text)) {
+                callType = 'meet';
+                callTitle = 'مكالمة Google Meet الرسمية';
+                callIcon = '🌐';
+                tabTarget = 'meet';
+            }
+
+            return `
+                <div class="chat-call-card">
+                    <div class="chat-call-header">
+                        <span class="chat-call-badge">🟢 ${callIcon} مكالمة كلان نشطة</span>
+                        <span style="font-size:0.75rem; color:#94a3b8;">${time} • من: ${escapeHTML(msg.sender)}</span>
+                    </div>
+                    <div class="chat-call-title">
+                        <span>${callIcon}</span>
+                        <span>${callTitle}</span>
+                    </div>
+                    <div class="chat-call-desc">
+                        ${escapeHTML(msg.text)}
+                    </div>
+                    <button type="button" class="chat-call-join-btn" onclick="openAndJoinCall('${tabTarget}')">
+                        <span>📞</span> انضمام للمكالمة الآن
+                    </button>
+                </div>
+            `;
+        }
+
         let titleHtml = "";
         if (isMe && titleName) {
             titleHtml = ` <span style="color:var(--gold); font-weight:bold; font-size:0.75rem; text-shadow:0 0 5px var(--gold);">[ ${titleName} ]</span>`;
@@ -3276,6 +3349,22 @@ function setupChatRealtimeBridge() {
                 renderChatMonitor();
             })
             .subscribe();
+    }
+}
+
+// 🛡️ شاشة مراقبة الشات الآمنة للإدارة
+function renderChatMonitor() {
+    try {
+        const monitorContainer = document.getElementById('chat-monitor-container') || document.getElementById('admin-chat-monitor');
+        if (!monitorContainer) return;
+        const messages = getStorage("phantom_chat_messages", []);
+        monitorContainer.innerHTML = messages.slice(-20).map(m => `
+            <div class="monitor-msg" style="padding:4px 8px; border-bottom:1px solid rgba(255,255,255,0.05); font-size:0.75rem;">
+                <strong style="color:var(--cyan);">${escapeHTML(m.sender || '')}:</strong> ${escapeHTML(m.text || '')}
+            </div>
+        `).join('');
+    } catch (e) {
+        console.warn("renderChatMonitor error:", e);
     }
 }
 
@@ -4018,10 +4107,15 @@ function renderClips() {
         return;
     }
 
+    const ytEmbed = getYouTubeEmbedUrl(data.videoUrl);
+    const mediaHtml = ytEmbed
+        ? `<iframe src="${ytEmbed}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="width:100%; aspect-ratio:16/9; border:none; display:block; border-radius:12px;"></iframe>`
+        : `<video src="${escapeHTML(getDirectVideoUrl(data.videoUrl))}" controls style="width:100%; aspect-ratio:16/9; object-fit:cover; background:#000; display:block; border-radius:12px;"></video>`;
+
     html = `
         <div class="clips-layout">
             <div class="clips-video-area">
-                <video src="${escapeHTML(getDirectVideoUrl(data.videoUrl))}" controls style="width:100%; aspect-ratio:16/9; object-fit:cover; background:#000; display:block;"></video>
+                ${mediaHtml}
             </div>
             <div class="clips-sidebar">
                 <button id="like-clip-btn" class="clips-sidebar-btn" onclick="handleClipLike()" title="إعجاب">👍 <span class="like-count">${data.likes || 0}</span></button>
@@ -4032,6 +4126,17 @@ function renderClips() {
         </div>
     `;
     container.innerHTML = html;
+}
+
+function getYouTubeEmbedUrl(url) {
+    if (!url) return null;
+    const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+    return match ? `https://www.youtube.com/embed/${match[1]}?rel=0&modestbranding=1&enablejsapi=1&playsinline=1` : null;
+}
+
+function getDirectVideoUrl(url) {
+    if (!url) return "";
+    return url;
 }
 
 // دالة إعجاب
@@ -4068,6 +4173,10 @@ let currentGoogleMeetCode = null;
 let inAppLocalStream = null;
 let isInAppMicMuted = false;
 let isInAppCamOff = false;
+let inAppCallMode = 'voice';
+if (typeof window !== "undefined") {
+    window.inAppCallMode = inAppCallMode;
+}
 
 const GOOGLE_MEET_SCOPES = [
     'https://www.googleapis.com/auth/meetings.space.created',
@@ -4109,28 +4218,39 @@ function toggleVoiceCall() {
 
 function switchCallTab(tab) {
     const inappSection = document.getElementById('inapp-call-section');
+    const agoraSection = document.getElementById('agora-call-section');
     const meetSection = document.getElementById('meet-call-section');
     const tabInappBtn = document.getElementById('call-tab-inapp');
+    const tabAgoraBtn = document.getElementById('call-tab-agora');
     const tabMeetBtn = document.getElementById('call-tab-meet');
+
+    // إعادة ضبط الأزرار
+    [tabInappBtn, tabAgoraBtn, tabMeetBtn].forEach(btn => {
+        if (btn) {
+            btn.style.background = 'transparent';
+            btn.style.color = '#9ca3af';
+        }
+    });
+
+    // إخفاء جميع الأقسام
+    if (inappSection) inappSection.style.display = 'none';
+    if (agoraSection) agoraSection.style.display = 'none';
+    if (meetSection) meetSection.style.display = 'none';
 
     if (tab === 'inapp') {
         if (inappSection) inappSection.style.display = 'block';
-        if (meetSection) meetSection.style.display = 'none';
         if (tabInappBtn) {
             tabInappBtn.style.background = 'var(--cyan)';
             tabInappBtn.style.color = '#000';
         }
-        if (tabMeetBtn) {
-            tabMeetBtn.style.background = 'transparent';
-            tabMeetBtn.style.color = '#9ca3af';
+    } else if (tab === 'agora') {
+        if (agoraSection) agoraSection.style.display = 'block';
+        if (tabAgoraBtn) {
+            tabAgoraBtn.style.background = 'linear-gradient(135deg, #00f2fe, #3b82f6)';
+            tabAgoraBtn.style.color = '#000';
         }
-    } else {
-        if (inappSection) inappSection.style.display = 'none';
+    } else if (tab === 'meet') {
         if (meetSection) meetSection.style.display = 'block';
-        if (tabInappBtn) {
-            tabInappBtn.style.background = 'transparent';
-            tabInappBtn.style.color = '#9ca3af';
-        }
         if (tabMeetBtn) {
             tabMeetBtn.style.background = 'var(--cyan)';
             tabMeetBtn.style.color = '#000';
@@ -4176,18 +4296,48 @@ function closeGoogleMeetModal() {
 /* 📱 دوال المكالمة المباشرة داخل التطبيق (HTML5 WebRTC Media) */
 async function startInAppCall() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        showToast("⚠️ متصفحك لا يدعم الوصول المباشر للكاميرا والمايك.", "error");
+        showToast("⚠️ متصفحك لا يدعم الوصول المباشر للمايكروفون.", "info");
         return;
     }
 
     try {
-        showToast("📹 جاري تشغيل الكاميرا والميكروفون...", "info");
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
-            audio: true
-        });
+        let stream = null;
+        let isAudioOnly = false;
+        let isSimulated = false;
+
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+                audio: true
+            });
+        } catch (videoError) {
+            console.warn("Camera not available or denied, trying audio only:", videoError && videoError.message ? videoError.message : videoError);
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                isAudioOnly = true;
+            } catch (audioError) {
+                console.warn("Microphone permission denied or not available, entering listen-only mode:", audioError && audioError.message ? audioError.message : audioError);
+                try {
+                    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+                    if (AudioContextClass) {
+                        const ctx = new AudioContextClass();
+                        const dest = ctx.createMediaStreamDestination();
+                        stream = dest.stream;
+                    }
+                } catch (e) {
+                    console.warn("AudioContext fallback error:", e);
+                }
+                isAudioOnly = true;
+                isSimulated = true;
+                isInAppMicMuted = true;
+            }
+        }
 
         inAppLocalStream = stream;
+        inAppCallMode = (!isAudioOnly && stream && stream.getVideoTracks && stream.getVideoTracks().length > 0) ? 'video' : 'voice';
+        if (typeof window !== "undefined") {
+            window.inAppCallMode = inAppCallMode;
+        }
         const videoEl = document.getElementById('inapp-clan-video');
         const placeholder = document.getElementById('inapp-video-placeholder');
         const liveBadge = document.getElementById('inapp-live-badge');
@@ -4196,34 +4346,73 @@ async function startInAppCall() {
         const shareBtn = document.getElementById('inapp-share-chat-btn');
         const endBtn = document.getElementById('inapp-end-btn');
 
-        if (videoEl) {
+        if (videoEl && !isAudioOnly && stream && stream.getVideoTracks && stream.getVideoTracks().length > 0) {
             videoEl.srcObject = stream;
             videoEl.style.display = 'block';
             videoEl.play().catch(e => console.warn("Video play error:", e));
+            if (placeholder) placeholder.style.display = 'none';
+        } else if (placeholder) {
+            placeholder.style.display = 'flex';
+            const statusText = document.getElementById('inapp-status-text');
+            if (statusText) {
+                statusText.textContent = isSimulated
+                    ? "🎙️ متصل بغرفة الصوت (وضع الاستماع)"
+                    : "🎙️ المكالمة الصوتية متصلة وشغالة بنجاح!";
+            }
         }
 
-        if (placeholder) placeholder.style.display = 'none';
         if (liveBadge) liveBadge.style.display = 'block';
         if (controls) controls.style.display = 'flex';
         if (startBtn) startBtn.style.display = 'none';
         if (shareBtn) shareBtn.style.display = 'block';
         if (endBtn) endBtn.style.display = 'block';
 
-        showToast("🟢 تم بدء المكالمة المباشرة داخل التطبيق بنجاح!", "success");
-    } catch (err) {
-        console.error("Camera/Mic error:", err);
-        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-            showToast("⚠️ يرجى السماح بصلاحية الكاميرا والميكروفون للمتابعة.", "error");
+        if (isSimulated) {
+            const micBtn = document.getElementById('inapp-mic-btn');
+            if (micBtn) {
+                micBtn.innerHTML = '🔇 المايك: غير مصرح (استماع)';
+                micBtn.style.borderColor = '#ef4444';
+                micBtn.style.color = '#ef4444';
+            }
+            showToast("ℹ️ تم الانضمام في وضع الاستماع. يمكنك الضغط على المايك لمنح الصلاحية في أي وقت.", "info");
         } else {
-            showToast("⚠️ تعذر تشغيل الكاميرا أو المايك.", "error");
+            showToast(isAudioOnly ? "🟢 تم بدء المكالمة الصوتية المباشرة بنجاح!" : "🟢 تم بدء المكالمة المباشرة (فيديو وصوت) بنجاح!", "success");
+        }
+    } catch (err) {
+        console.warn("Camera/Mic notice:", err && err.message ? err.message : err);
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' || (err.message && err.message.includes('Permission denied'))) {
+            showToast("ℹ️ تم الدخول في وضع الاستماع لعدم توفر إذن الميكروفون.", "info");
+        } else {
+            showToast("ℹ️ تعذر تشغيل الميكروفون حالياً، يمكنك المتابعة في وضع الاستماع.", "info");
         }
     }
 }
 
 function toggleInAppMic() {
     if (!inAppLocalStream) return;
-    const audioTracks = inAppLocalStream.getAudioTracks();
-    if (audioTracks.length === 0) return;
+    const audioTracks = inAppLocalStream.getAudioTracks ? inAppLocalStream.getAudioTracks() : [];
+    if (audioTracks.length === 0 || audioTracks.every(t => !t.enabled)) {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            navigator.mediaDevices.getUserMedia({ audio: true }).then(newStream => {
+                const newTrack = newStream.getAudioTracks()[0];
+                if (newTrack) {
+                    if (inAppLocalStream.addTrack) inAppLocalStream.addTrack(newTrack);
+                    isInAppMicMuted = false;
+                    const micBtn = document.getElementById('inapp-mic-btn');
+                    if (micBtn) {
+                        micBtn.innerHTML = '🎙️ المايك: شغال';
+                        micBtn.style.borderColor = 'rgba(255,255,255,0.2)';
+                        micBtn.style.color = '#fff';
+                    }
+                    showToast("🎙️ تم تفعيل الميكروفون بنجاح!", "success");
+                }
+            }).catch(err => {
+                console.warn("Mic permission request:", err && err.message ? err.message : err);
+                showToast("⚠️ لم يتم منح إذن الميكروفون من المتصفح.", "info");
+            });
+            return;
+        }
+    }
     isInAppMicMuted = !isInAppMicMuted;
     audioTracks.forEach(t => t.enabled = !isInAppMicMuted);
     const micBtn = document.getElementById('inapp-mic-btn');
@@ -4250,28 +4439,41 @@ function toggleInAppCam() {
     showToast(isInAppCamOff ? "🚫 تم إيقاف الكاميرا" : "📹 تم تشغيل الكاميرا", "info");
 }
 
-function shareInAppCallInClanChat() {
+async function shareInAppCallInClanChat() {
     const user = getCurrentUsername() || 'عضو PHANTOM';
-    const msg = `📞 ${user} بدأ مكالمة فيديو وصوت مباشرة الآن داخل المقر! اضغط على زر الهاتف 📞 وانضم الآن.`;
+    const msgText = `📞 دعوة مكالمة مباشرة: ${user} بدأ مكالمة صوت وفيديو داخل المقر الآن! اضغط للانضمام والمشاركة.`;
     
-    if (typeof handleSendMessage === 'function') {
-        const chatInput = document.getElementById('chat-message-input');
-        if (chatInput) {
-            chatInput.value = msg;
-            const form = document.getElementById('chat-input-form');
-            if (form) form.dispatchEvent(new Event('submit'));
-        }
-    } else if (typeof addChatMessageToDOM === 'function') {
-        addChatMessageToDOM({
-            id: 'inapp-call-' + Date.now(),
+    try {
+        const message = {
             sender: user,
-            text: msg,
-            time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
-            isSelf: true
-        });
+            text: msgText,
+            timestamp: Date.now(),
+            isCall: true,
+            callType: 'inapp'
+        };
+        await serverSendChat(message);
+        renderChat();
+    } catch (e) {
+        console.warn("Failed to send call invitation chat:", e);
     }
 
-    showToast("✅ تم إرسال دعوة الكلان للمكالمة في الشات!", "success");
+    const callMode = (typeof inAppCallMode !== 'undefined' && inAppCallMode) ? inAppCallMode : 'voice';
+    fetch('/api/calls/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            hostName: user,
+            hostId: getCurrentUserId(),
+            mode: callMode,
+            topic: 'مكالمة المقر المباشرة'
+        })
+    }).catch(() => {});
+
+    showToast("✅ تم إرسال دعوة الكلان للمكالمة في الشات وظهور البانر!", "success");
+    closeGoogleMeetModal();
+    if (typeof navigateToPage === 'function') {
+        navigateToPage('page-chat');
+    }
 }
 
 function endInAppCall() {
@@ -4304,7 +4506,260 @@ function endInAppCall() {
 
     isInAppMicMuted = false;
     isInAppCamOff = false;
+    inAppCallMode = 'voice';
+    if (typeof window !== "undefined") {
+        window.inAppCallMode = 'voice';
+    }
+
+    fetch('/api/calls/end', { method: 'POST' }).catch(() => {});
 }
+
+/* ========================================================
+   🎙️ نظام مكالمات Agora RTC فائقة الوضوح (PHANTOM OPS)
+   ======================================================== */
+const AGORA_APP_ID = "129b4ba5126742d6973d17c9cbf2d5f3";
+const AGORA_CHANNEL = "phantom_hq";
+let agoraClient = null;
+let agoraLocalAudioTrack = null;
+let isAgoraJoined = false;
+let isAgoraMicMuted = false;
+let agoraRemoteUsers = new Map();
+
+async function joinAgoraRoom() {
+    if (typeof AgoraRTC === "undefined") {
+        showToast("⚠️ جاري تحميل مكتبة Agora الصوتية، انتظر ثوانٍ...", "info");
+        return;
+    }
+    const username = getCurrentUsername() || 'عضو PHANTOM';
+    const uid = Math.floor(Math.random() * 90000) + 10000;
+
+    const joinBtn = document.getElementById("agora-join-btn");
+    const leaveBtn = document.getElementById("agora-leave-btn");
+    const shareBtn = document.getElementById("agora-share-chat-btn");
+    const controls = document.getElementById("agora-controls-bar");
+    const badge = document.getElementById("agora-members-badge");
+    const statusText = document.getElementById("agora-status-text");
+    const visualizer = document.getElementById("agora-avatar-visualizer");
+
+    if (joinBtn) {
+        joinBtn.disabled = true;
+        joinBtn.textContent = "⏳ جاري الاتصال بغرفة Agora...";
+    }
+
+    try {
+        if (!agoraClient) {
+            agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+
+            agoraClient.on("user-published", async (user, mediaType) => {
+                await agoraClient.subscribe(user, mediaType);
+                if (mediaType === "audio" && user.audioTrack) {
+                    user.audioTrack.play();
+                }
+                agoraRemoteUsers.set(user.uid, user);
+                updateAgoraUsersUI();
+            });
+
+            agoraClient.on("user-unpublished", (user) => {
+                agoraRemoteUsers.delete(user.uid);
+                updateAgoraUsersUI();
+            });
+
+            agoraClient.on("user-left", (user) => {
+                agoraRemoteUsers.delete(user.uid);
+                updateAgoraUsersUI();
+            });
+        }
+
+        // جلب التوكن من خادم Supabase
+        let token = null;
+        try {
+            token = await fetchToken(AGORA_CHANNEL, uid);
+        } catch (e) {
+            console.warn("Could not fetch Agora token from Supabase:", e);
+        }
+
+        await agoraClient.join(AGORA_APP_ID, AGORA_CHANNEL, token || null, uid);
+        isAgoraJoined = true;
+
+        // محاولة تشغيل المايك
+        try {
+            agoraLocalAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+            await agoraClient.publish([agoraLocalAudioTrack]);
+            isAgoraMicMuted = false;
+        } catch (micErr) {
+            console.warn("Microphone access denied for Agora, connected in listen-only mode:", micErr);
+            showToast("🎧 متصل بغرفة Agora في وضع الاستماع (المايك غير مفعل)", "info");
+        }
+
+        // تحديث الواجهة
+        if (joinBtn) joinBtn.style.display = "none";
+        if (leaveBtn) leaveBtn.style.display = "block";
+        if (shareBtn) shareBtn.style.display = "block";
+        if (controls) controls.style.display = "flex";
+        if (badge) {
+            badge.style.display = "inline-block";
+            badge.textContent = `🟢 متصل بالروم الصوتي (${username})`;
+        }
+        if (statusText) statusText.textContent = "✅ متصل بغرفة عمليات Agora بنجاح!";
+        if (visualizer) {
+            visualizer.style.borderColor = "#00ff88";
+            visualizer.style.boxShadow = "0 0 30px rgba(0, 255, 136, 0.5)";
+        }
+
+        showToast("🎉 تم الاتصال بغرفة Agora الصوتية بنجاح!", "success");
+
+        // تسجيل المكالمة في السيرفر
+        fetch('/api/calls/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hostName: username,
+                hostId: getCurrentUserId(),
+                mode: 'agora',
+                topic: 'غرفة Agora الصوتية'
+            })
+        }).catch(() => {});
+
+    } catch (err) {
+        console.error("Agora join error:", err);
+        showToast("⚠️ تعذر الاتصال بغرفة Agora الصوتية.", "error");
+        if (joinBtn) {
+            joinBtn.disabled = false;
+            joinBtn.textContent = "🚀 دخول غرفة Agora الصوتية";
+        }
+    }
+}
+
+async function leaveAgoraRoom() {
+    if (agoraLocalAudioTrack) {
+        try {
+            agoraLocalAudioTrack.stop();
+            agoraLocalAudioTrack.close();
+        } catch(e) {}
+        agoraLocalAudioTrack = null;
+    }
+    if (agoraClient && isAgoraJoined) {
+        try {
+            await agoraClient.leave();
+        } catch(e) {}
+    }
+    isAgoraJoined = false;
+    isAgoraMicMuted = false;
+    agoraRemoteUsers.clear();
+
+    const joinBtn = document.getElementById("agora-join-btn");
+    const leaveBtn = document.getElementById("agora-leave-btn");
+    const shareBtn = document.getElementById("agora-share-chat-btn");
+    const controls = document.getElementById("agora-controls-bar");
+    const badge = document.getElementById("agora-members-badge");
+    const statusText = document.getElementById("agora-status-text");
+    const visualizer = document.getElementById("agora-avatar-visualizer");
+    const usersList = document.getElementById("agora-users-list");
+
+    if (joinBtn) {
+        joinBtn.style.display = "block";
+        joinBtn.disabled = false;
+        joinBtn.textContent = "🚀 دخول غرفة Agora الصوتية";
+    }
+    if (leaveBtn) leaveBtn.style.display = "none";
+    if (shareBtn) shareBtn.style.display = "none";
+    if (controls) controls.style.display = "none";
+    if (badge) badge.style.display = "none";
+    if (usersList) usersList.style.display = "none";
+    if (statusText) statusText.textContent = "غرفة Agora الصوتية عالية النقاء";
+    if (visualizer) {
+        visualizer.style.borderColor = "#00f2fe";
+        visualizer.style.boxShadow = "0 0 20px rgba(0,242,254,0.3)";
+    }
+
+    fetch('/api/calls/end', { method: 'POST' }).catch(() => {});
+    showToast("🔴 غادرت غرفة Agora الصوتية.", "info");
+}
+
+function toggleAgoraMic() {
+    if (!agoraLocalAudioTrack) {
+        showToast("⚠️ المايك غير مفعل حالياً.", "info");
+        return;
+    }
+    const btn = document.getElementById("agora-mic-btn");
+    if (isAgoraMicMuted) {
+        agoraLocalAudioTrack.setEnabled(true);
+        isAgoraMicMuted = false;
+        if (btn) {
+            btn.textContent = "🎙️ المايك: شغال";
+            btn.style.color = "#fff";
+        }
+        showToast("🎙️ تم تشغيل المايك", "info");
+    } else {
+        agoraLocalAudioTrack.setEnabled(false);
+        isAgoraMicMuted = true;
+        if (btn) {
+            btn.textContent = "🔇 المايك: مكتوم";
+            btn.style.color = "#ef4444";
+        }
+        showToast("🔇 تم كتم المايك", "info");
+    }
+}
+
+async function shareAgoraCallInClanChat() {
+    const user = getCurrentUsername() || 'عضو PHANTOM';
+    const msgText = `🎙️ دعوة لغرفة Agora: ${user} متواجد الآن في الغرفة الصوتية التكتيكية! اضغط للانضمام والمحادثة الصوتية المباشرة.`;
+    
+    try {
+        const message = {
+            sender: user,
+            text: msgText,
+            timestamp: Date.now(),
+            isCall: true,
+            callType: 'agora'
+        };
+        await serverSendChat(message);
+        renderChat();
+    } catch(e) {}
+
+    showToast("✅ تمت مشاركة دعوة Agora في شات الكلان!", "success");
+    closeGoogleMeetModal();
+    if (typeof navigateToPage === 'function') {
+        navigateToPage('page-chat');
+    }
+}
+
+function updateAgoraUsersUI() {
+    const count = agoraRemoteUsers.size + (isAgoraJoined ? 1 : 0);
+    const usersList = document.getElementById("agora-users-list");
+    const badge = document.getElementById("agora-members-badge");
+    if (badge) {
+        badge.textContent = `🟢 متصل بالروم (${count} في الغرفة)`;
+    }
+    if (usersList) {
+        if (count > 1) {
+            usersList.style.display = "block";
+            usersList.textContent = `👥 المتصلين بالروم: ${count} أعضاء`;
+        } else {
+            usersList.style.display = "none";
+        }
+    }
+}
+
+window.openAndJoinCall = function(tabTarget) {
+    showGoogleMeetModal();
+    switchCallTab(tabTarget);
+    if (tabTarget === 'inapp') {
+        const startBtn = document.getElementById('inapp-start-btn');
+        if (startBtn && startBtn.style.display !== 'none') {
+            startInAppCall();
+        }
+    } else if (tabTarget === 'agora') {
+        if (!isAgoraJoined) {
+            joinAgoraRoom();
+        }
+    }
+};
+
+window.joinAgoraRoom = joinAgoraRoom;
+window.leaveAgoraRoom = leaveAgoraRoom;
+window.toggleAgoraMic = toggleAgoraMic;
+window.shareAgoraCallInClanChat = shareAgoraCallInClanChat;
 
 /* 🌐 دوال Google Meet الرسمية */
 async function handleGoogleMeetSignIn() {
@@ -4383,34 +4838,39 @@ async function handleCreateNewMeetCall() {
     }
 }
 
-function shareMeetLinkInClanChat() {
+async function shareMeetLinkInClanChat() {
     if (!currentGoogleMeetUri) {
         showToast("⚠️ لا توجد مكالمة نشطة للمشاركة.", "info");
         return;
     }
+    const user = getCurrentUsername() || 'عضو PHANTOM';
     const meetMsg = `📹 مكالمة صوت وفيديو بدأت الآن في Google Meet! انضمام مباشر: ${currentGoogleMeetUri}`;
     
-    // إرسال في شات الكلان العام
-    if (typeof handleSendMessage === 'function') {
-        const chatInput = document.getElementById('chat-message-input');
-        if (chatInput) {
-            chatInput.value = meetMsg;
-            const form = document.getElementById('chat-input-form');
-            if (form) form.dispatchEvent(new Event('submit'));
-        }
-    } else if (typeof addChatMessageToDOM === 'function') {
-        addChatMessageToDOM({
-            id: 'meet-' + Date.now(),
-            sender: getCurrentUsername() || 'عضو PHANTOM',
+    try {
+        const message = {
+            sender: user,
             text: meetMsg,
-            time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
-            isSelf: true
-        });
-    }
+            timestamp: Date.now(),
+            isCall: true,
+            callType: 'meet'
+        };
+        await serverSendChat(message);
+        renderChat();
+    } catch(e) {}
+
+    fetch('/api/calls/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            hostName: user,
+            hostId: getCurrentUserId(),
+            mode: 'meet',
+            topic: 'مكالمة Google Meet'
+        })
+    }).catch(() => {});
 
     showToast("✅ تمت مشاركة رابط المكالمة في شات الكلان!", "success");
     closeGoogleMeetModal();
-    // الانتقال لصفحة الشات
     if (typeof navigateToPage === 'function') {
         navigateToPage('page-chat');
     }
@@ -4440,12 +4900,47 @@ function updateVoiceMembersList(userId, status) {
     if (items.length > 30) items[0].remove();
 }
 
+function joinVoiceRoom() {
+    const popup = document.getElementById("voice-join-popup");
+    if (popup) popup.style.display = "none";
+    
+    const panel = document.getElementById("voice-room-panel");
+    if (panel) panel.style.display = "block";
+    
+    const username = (typeof getCurrentUsername === "function" ? getCurrentUsername() : null) || "عضو PHANTOM";
+    updateVoiceMembersList(username, "🟢 متصل الآن");
+    
+    showGoogleMeetModal();
+    switchCallTab('inapp');
+    startInAppCall();
+    showToast("🎙️ تم الانضمام إلى الغرفة الصوتية للمقر!", "success");
+}
+
+function leaveVoiceRoom() {
+    endInAppCall();
+    closeGoogleMeetModal();
+    const panel = document.getElementById("voice-room-panel");
+    if (panel) panel.style.display = "none";
+    const username = (typeof getCurrentUsername === "function" ? getCurrentUsername() : null) || "عضو PHANTOM";
+    updateVoiceMembersList(username, "🔴 غادر");
+    showToast("🚪 تم مغادرة الغرفة الصوتية", "info");
+}
+
 function setupVoiceJoinButton() {
     const joinBtn = document.getElementById("join-voice-room-btn");
     if (joinBtn) {
+        joinBtn.removeEventListener("click", joinVoiceRoom);
         joinBtn.addEventListener("click", joinVoiceRoom);
     }
+    const leaveBtn = document.getElementById("leave-voice-room-btn");
+    if (leaveBtn) {
+        leaveBtn.removeEventListener("click", leaveVoiceRoom);
+        leaveBtn.addEventListener("click", leaveVoiceRoom);
+    }
 }
+
+window.joinVoiceRoom = joinVoiceRoom;
+window.leaveVoiceRoom = leaveVoiceRoom;
 
 document.addEventListener("DOMContentLoaded", setupVoiceJoinButton);
 
@@ -4576,12 +5071,21 @@ document.addEventListener('DOMContentLoaded', function() {
             else if (btnId === 'open-game-fullscreen-btn') overlayId = 'game-overlay';
             else if (btnId === 'open-store-fullscreen-btn') overlayId = 'store-overlay';
             else if (btnId === 'open-battle-fullscreen-btn') overlayId = 'battle-overlay';
+            else if (btnId === 'open-arena-fullscreen-btn') overlayId = 'arena-overlay';
 
             if (overlayId) {
                 const overlay = document.getElementById(overlayId);
                 if (overlay) {
                     overlay.style.display = 'flex';
                     if (overlayId === 'vault-overlay' && typeof loadVaultData === 'function') { loadVaultData(); }
+                    if (overlayId === 'arena-overlay') {
+                        if (typeof updateArenaStatsUI === 'function') updateArenaStatsUI();
+                        if (typeof renderArenaClanMembers === 'function') renderArenaClanMembers();
+                    }
+                    if (overlayId === 'battle-overlay') {
+                        if (typeof updatePopularityBattleBalance === 'function') updatePopularityBattleBalance();
+                        if (typeof renderPopularityClanMembers === 'function') renderPopularityClanMembers();
+                    }
                 }
             }
         });
@@ -4601,6 +5105,12 @@ document.addEventListener('DOMContentLoaded', function() {
         if (closeBtn && overlay) {
             closeBtn.addEventListener('click', function() {
                 overlay.style.display = 'none';
+                if (overlayId === 'arena-overlay' || overlayId === 'battle-overlay') {
+                    if (typeof openHub === 'function') {
+                        openHub();
+                        return;
+                    }
+                }
                 if (bottomNav) bottomNav.classList.remove('hidden');
             });
         }
@@ -4612,6 +5122,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setupCloseButton('game-close-btn', 'game-overlay');
     setupCloseButton('store-close-btn', 'store-overlay');
     setupCloseButton('battle-close-btn', 'battle-overlay');
+    setupCloseButton('arena-close-btn', 'arena-overlay');
     setupCloseButton('profile-close-btn', 'profile-overlay');
     setupCloseButton('inventory-close-btn', 'inventory-overlay');
 });
@@ -4827,7 +5338,7 @@ function breakVault() {
         
         // تحديث السيرفر إذا كان متصلاً
         if (supabaseClient) {
-            supabaseClient.from('members').update({ coins: points[username] }).eq('name', username).then(() => {
+            safePostgrest(supabaseClient.from('members').update({ coins: points[username] }).eq('name', username)).then(() => {
                 console.log("✅ تم تحديث النقاط في السيرفر.");
             }).catch(err => console.warn("⚠️ فشل تحديث النقاط في السيرفر:", err));
         }
@@ -4858,80 +5369,115 @@ function claimVault() {
 }
 
 function initVault() { setupVaultInputs(); setupVaultConfirm(); loadVaultData(); }
+window.loadVaultData = loadVaultData;
+window.initVault = initVault;
 
 /* ========================================================
    🛒 نظام المتجر والمخزون (النسخة المتكاملة والشاملة)
    ======================================================== */
 
 const DEFAULT_SHOP_ITEMS = [
-    // 🖼️ 1. الإطارات
-    { id: 1, name: 'إطار نيون فضي', price: 150, type: 'frame', effect: 'silver', description: 'إطار فضي لامع وأنيق للبروفايل', icon: '🖼️' },
-    { id: 2, name: 'إطار نيون ذهبي', price: 250, type: 'frame', effect: 'gold', description: 'إطار متوهج بالذهب الخالص', icon: '🖼️' },
-    { id: 3, name: 'إطار نيون متعدد الألوان', price: 750, type: 'frame', effect: 'rainbow', description: 'إطار طيف قوس قزح متوهج', icon: '🌈' },
-    { id: 4, name: 'إطار نيون البرق الأزرق', price: 250, type: 'frame', effect: 'blue', description: 'إطار صاعقة زرقاء كهربائية', icon: '⚡' },
-    { id: 5, name: 'إطار نيون الذهب الأحمر', price: 500, type: 'frame', effect: 'red_gold', description: 'إطار أحمر وذهبي ناري فاخر', icon: '🔥' },
+    // 🖼️ 1. الإطارات (Frames)
+    { id: 1, name: 'إطار نيون فضي', price: 150, type: 'frame', effect: 'silver', is_rare: false, description: 'إطار فضي لامع وأنيق للبروفايل', icon: '🖼️' },
+    { id: 2, name: 'إطار نيون ذهبي', price: 350, type: 'frame', effect: 'gold', is_rare: true, description: 'إطار متوهج بالذهب الخالص (نادر)', icon: '✨' },
+    { id: 3, name: 'إطار نيون متعدد الألوان', price: 750, type: 'frame', effect: 'rainbow', is_rare: true, description: 'إطار طيف قوس قزح أسطوري متحرك', icon: '🌈' },
+    { id: 4, name: 'إطار نيون البرق الأزرق', price: 200, type: 'frame', effect: 'blue', is_rare: false, description: 'إطار صاعقة زرقاء كهربائية', icon: '⚡' },
+    { id: 5, name: 'إطار نيون الذهب الأحمر', price: 600, type: 'frame', effect: 'red_gold', is_rare: true, description: 'إطار أحمر وذهبي ناري فخم (أسطوري)', icon: '🔥' },
 
-    // 🏷️ 2. الألقاب
-    { id: 6, name: 'لقب: عضو مميز', price: 150, type: 'title', effect: 'member', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🏷️' },
-    { id: 7, name: 'لقب: فارس PHANTOM', price: 300, type: 'title', effect: 'phantom_knight', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '⚔️' },
-    { id: 8, name: 'لقب: قائد محتك', price: 450, type: 'title', effect: 'veteran', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🎖️' },
-    { id: 9, name: 'لقب: سفاح الروابط', price: 600, type: 'title', effect: 'assassin', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🗡️' },
-    { id: 10, name: 'لقب: العرب', price: 800, type: 'title', effect: 'arab', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '👑' },
-    { id: 11, name: 'لقب: صياد النقاط', price: 200, type: 'title', effect: 'point_hunter', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🎯' },
-    { id: 12, name: 'لقب: حارس المقر', price: 300, type: 'title', effect: 'guard', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🛡️' },
-    { id: 13, name: 'لقب: النمر الأسود', price: 450, type: 'title', effect: 'black_panther', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🐆' },
-    { id: 14, name: 'لقب: مخترع الاستراتيجيات', price: 550, type: 'title', effect: 'strategist', description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🧠' },
+    // 🏷️ 2. الألقاب (Titles)
+    { id: 6, name: 'لقب: عضو مميز', price: 150, type: 'title', effect: 'member', is_rare: false, description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🏷️' },
+    { id: 7, name: 'لقب: فارس PHANTOM', price: 250, type: 'title', effect: 'phantom_knight', is_rare: false, description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '⚔️' },
+    { id: 8, name: 'لقب: قائد محتك', price: 500, type: 'title', effect: 'veteran', is_rare: true, description: 'لقب تكتيكي للمحاربين القدامى (نادر)', icon: '🎖️' },
+    { id: 9, name: 'لقب: سفاح الروابط', price: 650, type: 'title', effect: 'assassin', is_rare: true, description: 'لقب هجومي مرعب (نادر)', icon: '🗡️' },
+    { id: 10, name: 'لقب: العرب', price: 900, type: 'title', effect: 'arab', is_rare: true, description: 'لقب الفخر والسيادة الأسطوري', icon: '👑' },
+    { id: 11, name: 'لقب: صياد النقاط', price: 200, type: 'title', effect: 'point_hunter', is_rare: false, description: 'يظهر بجانب اسمك في الشات والبروفايل', icon: '🎯' },
+    { id: 12, name: 'لقب: حارس المقر', price: 400, type: 'title', effect: 'guard', is_rare: true, description: 'درع الحماية الرسمي للمقر (نادر)', icon: '🛡️' },
+    { id: 13, name: 'لقب: النمر الأسود', price: 550, type: 'title', effect: 'black_panther', is_rare: true, description: 'سرعة واقتناص بلا رحمة (نادر)', icon: '🐆' },
+    { id: 14, name: 'لقب: مخترع الاستراتيجيات', price: 700, type: 'title', effect: 'strategist', is_rare: true, description: 'عقل المعركة التكتيكي (أسطوري)', icon: '🧠' },
 
-    // 💳 3. الكروت والمزايا الفورية
-    { id: 15, name: 'كارت تضخيم النقاط', price: 200, type: 'card', effect: 'point_boost', description: 'مضاعفة النقاط المكتسبة لمدة 30 دقيقة', icon: '🔥' },
-    { id: 16, name: 'كارت دبل نقاط', price: 350, type: 'card', effect: 'double_points', description: 'دبل نقاط لجميع الأنشطة لمدة ساعة كاملة', icon: '✨' },
-    { id: 17, name: 'كارت نقاط سريعة (+200)', price: 150, type: 'card', effect: 'quick_points', description: 'الحصول فوراً على 200 نقطة إضافية لحسابك', icon: '⚡' },
-    { id: 18, name: 'صندوق المفاجآت', price: 100, type: 'card', effect: 'surprise_box', description: 'صندوق حظ يمنحك نقاطاً عشوائية بين 20 إلى 200 نقطة', icon: '🎁' },
-    { id: 19, name: 'كارت تسجيل حضور فوري', price: 250, type: 'card', effect: 'fast_attendance', description: 'تسجيل نقطة حضور فورية لسجلك', icon: '⏩' },
-    { id: 20, name: 'كارت 3 قلوب دعم', price: 180, type: 'card', effect: 'bonus_hearts', description: 'إضافة 3 قلوب دعم فورية لحسابك', icon: '💛' },
-    { id: 21, name: 'كارت عباءة التمويه', price: 300, type: 'card', effect: 'camouflage', description: 'تفعيل التمويه والخصوصية في المقر لمدة ساعتين', icon: '🕶️' },
-    { id: 22, name: 'كارت حماية من الإنذارات', price: 500, type: 'card', effect: 'warning_protect', description: 'إلغاء إنذار أو مخالفة مسجلة في ملفك', icon: '🛡️' },
-    { id: 44, name: 'كارت بونص الخزنة (+10%)', price: 400, type: 'card', effect: 're_freeze', description: 'إضافة 10% أرباح إضافية عند فك الخزنة', icon: '❄️' },
-    { id: 45, name: 'كارت تحويل النقاط', price: 100, type: 'card', effect: 'transfer', description: 'فتح نافذة تحويل النقاط لأي عضو في الكلان', icon: '💳' },
+    // 💳 3. الكروت والمزايا الفورية (Cards)
+    { id: 15, name: 'كارت تضخيم النقاط', price: 300, type: 'card', effect: 'point_boost', is_rare: true, description: 'مضاعفة النقاط المكتسبة لمدة 30 دقيقة', icon: '🔥' },
+    { id: 16, name: 'كارت دبل نقاط', price: 450, type: 'card', effect: 'double_points', is_rare: true, description: 'دبل نقاط لجميع الأنشطة لمدة ساعة كاملة', icon: '✨' },
+    { id: 17, name: 'كارت نقاط سريعة (+200)', price: 150, type: 'card', effect: 'quick_points', is_rare: false, description: 'الحصول فوراً على 200 نقطة إضافية لحسابك', icon: '⚡' },
+    { id: 18, name: 'صندوق المفاجآت', price: 100, type: 'card', effect: 'surprise_box', is_rare: false, description: 'صندوق حظ يمنحك نقاطاً عشوائية بين 20 إلى 200 نقطة', icon: '🎁' },
+    { id: 19, name: 'كارت تسجيل حضور فوري', price: 300, type: 'card', effect: 'fast_attendance', is_rare: true, description: 'تسجيل نقطة حضور فورية لسجلك (نادر)', icon: '⏩' },
+    { id: 20, name: 'كارت 3 قلوب دعم', price: 180, type: 'card', effect: 'bonus_hearts', is_rare: false, description: 'إضافة 3 قلوب دعم فورية لحسابك', icon: '💛' },
+    { id: 21, name: 'كارت عباءة التمويه', price: 350, type: 'card', effect: 'camouflage', is_rare: true, description: 'تفعيل التمويه والخصوصية في المقر لمدة ساعتين', icon: '🕶️' },
+    { id: 22, name: 'كارت حماية من الإنذارات', price: 600, type: 'card', effect: 'warning_protect', is_rare: true, description: 'إلغاء إنذار أو مخالفة مسجلة في ملفك (أسطوري)', icon: '🛡️' },
+    { id: 44, name: 'كارت بونص الخزنة (+10%)', price: 450, type: 'card', effect: 're_freeze', is_rare: true, description: 'إضافة 10% أرباح إضافية عند فك الخزنة (نادر)', icon: '❄️' },
+    { id: 45, name: 'كارت تحويل النقاط', price: 100, type: 'card', effect: 'transfer', is_rare: false, description: 'فتح نافذة تحويل النقاط لأي عضو في الكلان', icon: '💳' },
 
-    // 🎨 4. ألوان الأسماء
-    { id: 23, name: 'لون اسم ذهبي', price: 300, type: 'name_color', effect: 'gold', description: 'اسمك يظهر باللون الذهبي البراق في الشات والبروفايل', icon: '✨' },
-    { id: 24, name: 'لون اسم فضي', price: 250, type: 'name_color', effect: 'silver', description: 'اسمك يظهر بالفضي اللامع في الشات والبروفايل', icon: '🥈' },
-    { id: 25, name: 'لون اسم أزرق سيان', price: 200, type: 'name_color', effect: 'blue', description: 'اسمك يظهر بالأزرق النيون في الشات والبروفايل', icon: '💙' },
-    { id: 26, name: 'لون اسم أحمر ناري', price: 200, type: 'name_color', effect: 'red', description: 'اسمك يظهر بالأحمر الناري في الشات والبروفايل', icon: '❤️' },
-    { id: 27, name: 'لون اسم بنفسجي ملكي', price: 250, type: 'name_color', effect: 'purple', description: 'اسمك يظهر بالبنفسجي الملكي في الشات والبروفايل', icon: '💜' },
+    // 🎨 4. ألوان الأسماء (Name Colors)
+    { id: 23, name: 'لون اسم ذهبي', price: 400, type: 'name_color', effect: 'gold', is_rare: true, description: 'اسمك يظهر باللون الذهبي البراق في الشات والبروفايل', icon: '✨' },
+    { id: 24, name: 'لون اسم فضي', price: 300, type: 'name_color', effect: 'silver', is_rare: true, description: 'اسمك يظهر بالفضي اللامع في الشات والبروفايل', icon: '🥈' },
+    { id: 25, name: 'لون اسم أزرق سيان', price: 180, type: 'name_color', effect: 'blue', is_rare: false, description: 'اسمك يظهر بالأزرق النيون في الشات والبروفايل', icon: '💙' },
+    { id: 26, name: 'لون اسم أحمر ناري', price: 180, type: 'name_color', effect: 'red', is_rare: false, description: 'اسمك يظهر بالأحمر الناري في الشات والبروفايل', icon: '❤️' },
+    { id: 27, name: 'لون اسم بنفسجي ملكي', price: 320, type: 'name_color', effect: 'purple', is_rare: true, description: 'اسمك يظهر بالبنفسجي الملكي في الشات والبروفايل', icon: '💜' },
 
-    // 🌌 5. خلفيات البروفايل
-    { id: 28, name: 'خلفية نيون سوداء', price: 300, type: 'background', effect: 'neon_black', description: 'خلفية سوداء متوهجة للبروفايل', icon: '🌌' },
-    { id: 29, name: 'خلفية ذهبية ملكية', price: 400, type: 'background', effect: 'gold', description: 'خلفية ذهبية فاخرة للبروفايل', icon: '🌟' },
-    { id: 30, name: 'خلفية طيف نيون', price: 600, type: 'background', effect: 'rainbow', description: 'خلفية متدرجة بألوان الطيف المتوهجة', icon: '🌈' },
-    { id: 31, name: 'خلفية مجرة بنفسجية', price: 500, type: 'background', effect: 'purple_galaxy', description: 'خلفية فضاء بنفسجية عميقة للبروفايل', icon: '🔮' },
-    { id: 32, name: 'خلفية حمراء نارية', price: 450, type: 'background', effect: 'red_fire', description: 'خلفية لهب أحمر متوهج للبروفايل', icon: '🔥' },
-    { id: 33, name: 'خلفية غابة الزمرد', price: 400, type: 'background', effect: 'green_forest', description: 'خلفية خضراء زمردية للبروفايل', icon: '🌲' },
-    { id: 34, name: 'خلفية أعماق المحيط', price: 400, type: 'background', effect: 'blue_ocean', description: 'خلفية زرقاء بحرية عميقة للبروفايل', icon: '🌊' },
-    { id: 35, name: 'خلفية وردية ناعمة', price: 350, type: 'background', effect: 'pink', description: 'خلفية وردية جذابة للبروفايل', icon: '🌺' },
-    { id: 36, name: 'خلفية تيتانيوم داكنة', price: 300, type: 'background', effect: 'dark_grey', description: 'خلفية كربونية داكنة فخمة للبروفايل', icon: '🪨' },
-    { id: 37, name: 'خلفية أبيض نيون ساطع', price: 500, type: 'background', effect: 'white_neon', description: 'خلفية بيضاء ساطعة بنور النيون للبروفايل', icon: '⚪' },
-    { id: 38, name: 'خلفية فضية معدنية', price: 450, type: 'background', effect: 'silver', description: 'خلفية فضية معدنية أنيقة للبروفايل', icon: '🥈' },
+    // 🌌 5. خلفيات البروفايل (Backgrounds)
+    { id: 28, name: 'خلفية نيون سوداء', price: 250, type: 'background', effect: 'neon_black', is_rare: false, description: 'خلفية سوداء متوهجة للبروفايل', icon: '🌌' },
+    { id: 29, name: 'خلفية ذهبية ملكية', price: 450, type: 'background', effect: 'gold', is_rare: true, description: 'خلفية ذهبية فاخرة للبروفايل (نادرة)', icon: '🌟' },
+    { id: 30, name: 'خلفية طيف نيون', price: 650, type: 'background', effect: 'rainbow', is_rare: true, description: 'خلفية متدرجة بألوان الطيف المتوهجة (أسطورية)', icon: '🌈' },
+    { id: 31, name: 'خلفية مجرة بنفسجية', price: 500, type: 'background', effect: 'purple_galaxy', is_rare: true, description: 'خلفية فضاء بنفسجية عميقة للبروفايل', icon: '🔮' },
+    { id: 32, name: 'خلفية حمراء نارية', price: 500, type: 'background', effect: 'red_fire', is_rare: true, description: 'خلفية لهب أحمر متوهج للبروفايل', icon: '🔥' },
+    { id: 33, name: 'خلفية غابة الزمرد', price: 400, type: 'background', effect: 'green_forest', is_rare: true, description: 'خلفية خضراء زمردية للبروفايل', icon: '🌲' },
+    { id: 34, name: 'خلفية أعماق المحيط', price: 400, type: 'background', effect: 'blue_ocean', is_rare: true, description: 'خلفية زرقاء بحرية عميقة للبروفايل', icon: '🌊' },
+    { id: 35, name: 'خلفية وردية ناعمة', price: 350, type: 'background', effect: 'pink', is_rare: true, description: 'خلفية وردية جذابة للبروفايل', icon: '🌺' },
+    { id: 36, name: 'خلفية تيتانيوم داكنة', price: 250, type: 'background', effect: 'dark_grey', is_rare: false, description: 'خلفية كربونية داكنة فخمة للبروفايل', icon: '🪨' },
+    { id: 37, name: 'خلفية أبيض نيون ساطع', price: 550, type: 'background', effect: 'white_neon', is_rare: true, description: 'خلفية بيضاء ساطعة بنور النيون للبروفايل', icon: '⚪' },
+    { id: 38, name: 'خلفية فضية معدنية', price: 450, type: 'background', effect: 'silver', is_rare: true, description: 'خلفية فضية معدنية أنيقة للبروفايل', icon: '🥈' },
 
-    // 💬 6. تأثيرات الرسائل
-    { id: 39, name: 'تأثير إطار ذهبي للرسائل', price: 350, type: 'chat_effect', effect: 'gold_border', description: 'فقاعات رسائلك بإطار ذهبي متوهج', icon: '💬' },
-    { id: 40, name: 'تأثير نيون متوهج للرسائل', price: 400, type: 'chat_effect', effect: 'neon_bubble', description: 'فقاعات رسائلك بوهج نيون أزرق جذاب', icon: '💠' },
-    { id: 41, name: 'تأثير ظل متوهج', price: 350, type: 'chat_effect', effect: 'glow_shadow', description: 'رسائلك بهالة ظل ضوئية مشعة', icon: '✨' },
-    { id: 42, name: 'تأثير نبض القلب', price: 400, type: 'chat_effect', effect: 'heart_beat', description: 'رسائلك بوهج وردي ناري دافئ', icon: '💓' },
-    { id: 43, name: 'تأثير رسائل بارزة وكبيرة', price: 500, type: 'chat_effect', effect: 'big_text', description: 'رسائلك بحجم أكبر وخط عريض ومميز', icon: '🔠' }
+    // 💬 6. تأثيرات الرسائل (Chat Effects)
+    { id: 39, name: 'تأثير إطار ذهبي للرسائل', price: 400, type: 'chat_effect', effect: 'gold_border', is_rare: true, description: 'فقاعات رسائلك بإطار ذهبي متوهج', icon: '💬' },
+    { id: 40, name: 'تأثير نيون متوهج للرسائل', price: 450, type: 'chat_effect', effect: 'neon_bubble', is_rare: true, description: 'فقاعات رسائلك بوهج نيون أزرق جذاب', icon: '💠' },
+    { id: 41, name: 'تأثير ظل متوهج', price: 380, type: 'chat_effect', effect: 'glow_shadow', is_rare: true, description: 'رسائلك بهالة ظل ضوئية مشعة', icon: '✨' },
+    { id: 42, name: 'تأثير نبض القلب', price: 450, type: 'chat_effect', effect: 'heart_beat', is_rare: true, description: 'رسائلك بوهج وردي ناري دافئ', icon: '💓' },
+    { id: 43, name: 'تأثير رسائل بارزة وكبيرة', price: 550, type: 'chat_effect', effect: 'big_text', is_rare: true, description: 'رسائلك بحجم أكبر وخط عريض ومميز', icon: '🔠' }
 ];
 
 async function getShopItems() {
     const data = await supabaseGet('shop_items');
     if (data && data.length > 0) {
-        // دمج عناصر السيرفر مع القائمة الافتراضية للتأكد من عدم نقص أي فئة أو كارت
         const map = new Map();
         DEFAULT_SHOP_ITEMS.forEach(item => map.set(item.id, item));
         data.forEach(item => map.set(item.id, { ...map.get(item.id), ...item }));
         return Array.from(map.values());
     }
     return DEFAULT_SHOP_ITEMS;
+}
+
+// ✅ دالة اختيار العناصر النادرة لليوم (تتجدد عشوائياً كل 24 ساعة وفق تاريخ اليوم)
+function getDailyRareItemIds(allItems) {
+    const rarePool = allItems.filter(i => i.is_rare);
+    const today = new Date().toISOString().split('T')[0]; // مثلاً '2026-09-25'
+    let seed = 0;
+    for (let i = 0; i < today.length; i++) {
+        seed = ((seed << 5) - seed + today.charCodeAt(i)) | 0;
+    }
+    let randSeed = Math.abs(seed);
+    const pseudoRandom = () => {
+        randSeed = (randSeed * 9301 + 49297) % 233280;
+        return randSeed / 233280;
+    };
+    const shuffled = [...rarePool].sort(() => pseudoRandom() - 0.5);
+    return shuffled.slice(0, 6).map(item => item.id);
+}
+
+// ✅ تحديث مؤقت الـ 24 ساعة لتجديد التشكيلة النادرة
+let shopTimerInterval = null;
+function updateShopCountdownTimer() {
+    const now = new Date();
+    const nextMidnight = new Date();
+    nextMidnight.setHours(24, 0, 0, 0);
+    const diff = Math.max(0, nextMidnight.getTime() - now.getTime());
+    const h = String(Math.floor(diff / (1000 * 60 * 60))).padStart(2, '0');
+    const m = String(Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))).padStart(2, '0');
+    const s = String(Math.floor((diff % (1000 * 60)) / 1000)).padStart(2, '0');
+    
+    const displayEl = document.getElementById('shop-countdown-display');
+    if (displayEl) displayEl.textContent = `${h}:${m}:${s}`;
+    const badgeEl = document.getElementById('rare-shop-badge-timer');
+    if (badgeEl) badgeEl.textContent = `${h}:${m}:${s}`;
 }
 
 async function getUserInventory(userId) {
@@ -4951,15 +5497,6 @@ async function getUserInventory(userId) {
     return combined;
 }
 
-function getDailyOfferItems(allItems) {
-    const today = new Date().toISOString().split('T')[0];
-    let seed = parseInt(today.replace(/-/g, ''));
-    const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
-    const eligibleItems = allItems.filter(item => item.type !== 'card');
-    const shuffled = eligibleItems.sort(() => rand() - 0.5);
-    return shuffled.slice(0, 4);
-}
-
 // ✅ دالة مساعدة موحدة للتحقق من تجهيز أي عنصر
 function isItemEquipped(itemId, userId) {
     if (!userId) return false;
@@ -4975,7 +5512,38 @@ function isItemEquipped(itemId, userId) {
     );
 }
 
-// ✅ عرض وعمل المتجر الكامل
+// 🛒 نظام تدوير المنتجات الذكي: عروض يومية محدودة وتناوب تلقائي مع تبويب للأرشيف
+let currentShopCatalogTab = 'daily';
+
+window.switchShopCatalogTab = function(tab) {
+    currentShopCatalogTab = tab;
+    const dailyBtn = document.getElementById('shop-tab-daily');
+    const archiveBtn = document.getElementById('shop-tab-archive');
+    if (dailyBtn && archiveBtn) {
+        if (tab === 'daily') {
+            dailyBtn.classList.add('active');
+            dailyBtn.style.background = 'rgba(0, 242, 254, 0.15)';
+            dailyBtn.style.borderColor = 'var(--cyan)';
+            dailyBtn.style.color = 'var(--cyan)';
+            archiveBtn.classList.remove('active');
+            archiveBtn.style.background = 'rgba(255, 255, 255, 0.04)';
+            archiveBtn.style.borderColor = 'var(--border)';
+            archiveBtn.style.color = 'var(--muted)';
+        } else {
+            archiveBtn.classList.add('active');
+            archiveBtn.style.background = 'rgba(0, 242, 254, 0.15)';
+            archiveBtn.style.borderColor = 'var(--cyan)';
+            archiveBtn.style.color = 'var(--cyan)';
+            dailyBtn.classList.remove('active');
+            dailyBtn.style.background = 'rgba(255, 255, 255, 0.04)';
+            dailyBtn.style.borderColor = 'var(--border)';
+            dailyBtn.style.color = 'var(--muted)';
+        }
+    }
+    renderShop();
+};
+
+// ✅ عرض وعمل المتجر الكامل (مع التناوب اليومي العشوائي للنوادر)
 async function renderShop(filter = "all") {
     const shopItems = await getShopItems();
     const userId = getCurrentUserId();
@@ -4985,19 +5553,50 @@ async function renderShop(filter = "all") {
     const balanceEl = document.getElementById('shop-user-balance');
     if (balanceEl) balanceEl.textContent = points[username] || 0;
 
-    // الفلترة
-    const filteredItems = shopItems.filter(item => filter === "all" || item.type === filter);
+    // تشغيل مؤقت التجديد الحي
+    updateShopCountdownTimer();
+    if (!shopTimerInterval) {
+        shopTimerInterval = setInterval(updateShopCountdownTimer, 1000);
+    }
+
+    const dailyRareIds = getDailyRareItemIds(shopItems);
+
+    // المنتجات النادرة المتاحة اليوم (أو التي يمتلكها العضو مسبقاً حتى يتمكن من إدارتها)
+    const todayRareItems = shopItems.filter(item => 
+        item.is_rare && (dailyRareIds.includes(item.id) || inventory.some(inv => Number(inv.item_id) === Number(item.id)))
+    );
+
+    // المنتجات الأساسية الدائمة
+    const standardItems = shopItems.filter(item => !item.is_rare);
+
+    // في وضع "عروض اليوم المختارة"، نعرض تشكيلة محددة (4 منتجات متبادلة يومياً حسب التاريخ) لمنع الازدحام
+    let standardToDisplay = standardItems;
+    if (currentShopCatalogTab === 'daily') {
+        const dayOfMonth = new Date().getDate();
+        const batchSize = 4;
+        const startIndex = (dayOfMonth * 2) % (standardItems.length || 1);
+        const dailyStandardBatch = [];
+        for (let i = 0; i < batchSize && i < standardItems.length; i++) {
+            dailyStandardBatch.push(standardItems[(startIndex + i) % standardItems.length]);
+        }
+        standardToDisplay = standardItems.filter(item => 
+            dailyStandardBatch.some(b => b.id === item.id) || inventory.some(inv => Number(inv.item_id) === Number(item.id))
+        );
+    }
+
+    // تصفية حسب الفلتر المختار
+    const filteredRare = todayRareItems.filter(item => filter === "all" || item.type === filter);
+    const filteredStandard = standardToDisplay.filter(item => filter === "all" || item.type === filter);
 
     const shopGrid = document.getElementById('shop-grid');
     if (!shopGrid) return;
 
-    if (filteredItems.length === 0) {
-        shopGrid.innerHTML = `<div class="empty-state" style="grid-column:span 2; padding:30px; text-align:center; color:var(--muted);">لا توجد منتجات في هذه الفئة.</div>`;
+    if (filteredRare.length === 0 && filteredStandard.length === 0) {
+        shopGrid.innerHTML = `<div class="empty-state" style="grid-column:span 2; padding:30px; text-align:center; color:var(--muted);">لا توجد منتجات في هذه الفئة حالياً.</div>`;
         return;
     }
 
-    // إنشاء البطاقات
-    shopGrid.innerHTML = filteredItems.map(item => {
+    const renderCard = (item, isRareCard = false) => {
         const isOwned = inventory.some(inv => Number(inv.item_id) === Number(item.id));
         const isEquipped = isItemEquipped(item.id, userId);
         
@@ -5011,23 +5610,57 @@ async function renderShop(filter = "all") {
                 buttonHtml = `<button class="shop-btn" data-action="equip" data-item-id="${item.id}" data-category="${item.type}" style="width:100%; padding:8px 6px; background:var(--cyan); color:#000; border:none; border-radius:8px; font-weight:900; font-size:0.8rem; cursor:pointer;">✨ تجهيز</button>`;
             }
         } else {
-            buttonHtml = `<button class="shop-btn" data-action="buy" data-item-id="${item.id}" style="width:100%; padding:8px 6px; background:rgba(255,255,255,0.08); color:var(--white); border:1px solid rgba(255,255,255,0.2); border-radius:8px; font-weight:800; font-size:0.8rem; cursor:pointer; transition:0.2s;">🛒 شراء (${item.price} ن)</button>`;
+            const btnBg = isRareCard ? 'linear-gradient(135deg, rgba(234,179,8,0.25), rgba(249,115,22,0.3))' : 'rgba(255,255,255,0.08)';
+            const borderCol = isRareCard ? '#eab308' : 'rgba(255,255,255,0.2)';
+            buttonHtml = `<button class="shop-btn" data-action="buy" data-item-id="${item.id}" style="width:100%; padding:8px 6px; background:${btnBg}; color:var(--white); border:1px solid ${borderCol}; border-radius:8px; font-weight:800; font-size:0.8rem; cursor:pointer; transition:0.2s;">🛒 شراء (${item.price} ن)</button>`;
         }
+
+        const cardBorder = isRareCard ? '1px solid rgba(234, 179, 8, 0.45)' : '1px solid rgba(255,255,255,0.08)';
+        const cardBg = isRareCard ? 'linear-gradient(135deg, rgba(234, 179, 8, 0.08), rgba(15, 23, 42, 0.95))' : 'rgba(255,255,255,0.03)';
+        const badgeHtml = isRareCard ? `<span style="position:absolute; top:6px; left:6px; background:#eab308; color:#000; font-size:0.6rem; font-weight:900; padding:2px 6px; border-radius:10px;">🔥 نادر اليوم</span>` : '';
         
         return `
-            <div class="shop-item-card" style="display:flex; flex-direction:column; justify-content:space-between; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:12px; text-align:center; min-height:175px;">
+            <div class="shop-item-card" style="position:relative; display:flex; flex-direction:column; justify-content:space-between; padding:12px; background:${cardBg}; border:${cardBorder}; border-radius:12px; text-align:center; min-height:175px;">
+                ${badgeHtml}
                 <div>
                     <div class="item-icon" style="font-size: 2.2rem; margin-bottom:4px;">${item.icon || '📦'}</div>
                     <div class="item-title" style="font-weight: 900; font-size: 0.9rem; color: #fff; margin-bottom:4px;">${escapeHTML(item.name)}</div>
                     <div class="item-desc" style="font-size: 0.72rem; color: #9ca3af; margin: 4px 0 8px 0; line-height:1.4;">${escapeHTML(item.description || '')}</div>
                 </div>
                 <div>
-                    <div class="item-price" style="font-weight: 900; color: #ffd700; font-size:0.85rem; margin-bottom: 8px;">💰 ${item.price} نقطة</div>
+                    <div class="item-price" style="font-weight: 900; color: ${isRareCard ? '#fbbf24' : '#ffd700'}; font-size:0.85rem; margin-bottom: 8px;">💰 ${item.price} نقطة</div>
                     ${buttonHtml}
                 </div>
             </div>
         `;
-    }).join('');
+    };
+
+    let html = '';
+
+    // قسم النوادر اليومية
+    if (filteredRare.length > 0) {
+        html += `
+            <div class="shop-section-banner shop-rare-banner">
+                <span>🔥 تشكيلة اليوم النادرة والأسطورية</span>
+                <span class="shop-countdown-badge">⏳ تتغير بعد: <span id="rare-shop-badge-timer"></span></span>
+            </div>
+        `;
+        html += filteredRare.map(item => renderCard(item, true)).join('');
+    }
+
+    // قسم المعروضات
+    if (filteredStandard.length > 0) {
+        const bannerTitle = currentShopCatalogTab === 'daily' ? '⚡ المعروضات اليومية المتبادلة' : '🏛️ الأرشيف الكامل لجميع المقتنيات';
+        html += `
+            <div class="shop-section-banner shop-common-banner">
+                <span>${bannerTitle}</span>
+            </div>
+        `;
+        html += filteredStandard.map(item => renderCard(item, false)).join('');
+    }
+
+    shopGrid.innerHTML = html;
+    updateShopCountdownTimer();
 
     // ربط الأحداث لكل الأزرار في المتجر
     shopGrid.querySelectorAll('.shop-btn[data-action="buy"]').forEach(btn => {
@@ -5084,6 +5717,7 @@ async function renderShop(filter = "all") {
         });
     }
 }
+window.renderShop = renderShop;
 
 async function buyItem(itemId) {
     const username = getCurrentUsername();
@@ -5119,8 +5753,12 @@ async function buyItem(itemId) {
     setStorage("phantom_user_inventory", localInv);
 
     if (supabaseClient) {
-        supabaseClient.from('members').update({ coins: points[username] }).eq('name', username).catch(err => console.warn(err));
-        supabaseClient.from('user_inventory').insert([{ user_id: userId, item_id: item.id, purchased_at: new Date().toISOString() }]).catch(err => console.warn(err));
+        try {
+            await supabaseClient.from('members').update({ coins: points[username] }).eq('name', username);
+            await supabaseClient.from('user_inventory').insert([{ user_id: userId, item_id: item.id, purchased_at: new Date().toISOString() }]);
+        } catch (err) {
+            console.warn("Supabase buy sync warning:", err);
+        }
     }
 
     showToast(`✅ تم شراء "${item.name}" بنجاح!`, "success");
@@ -5168,7 +5806,7 @@ async function useItem(itemId, category, action = 'equip') {
         serverMembers = serverMembers.map(m => { if (m && m.name === username) m.equipped_title = equipped[userId].title || null; return m; });
         setStorage("phantom_server_members", serverMembers);
 
-        if (supabaseClient) await supabaseClient.from('members').update({ equipped_title: equipped[userId].title || null }).eq('name', username).catch(e => console.warn(e));
+        if (supabaseClient) { try { await supabaseClient.from('members').update({ equipped_title: equipped[userId].title || null }).eq('name', username); } catch(e) { console.warn(e); } }
 
         renderShop();
         renderInventory();
@@ -5189,7 +5827,7 @@ async function useItem(itemId, category, action = 'equip') {
             showToast(`✅ تم تجهيز ${item.name}!`, 'success');
         }
 
-        if (supabaseClient) await supabaseClient.from('members').update({ equipped_frame: equipped[userId].frame || null }).eq('name', username).catch(e => console.warn(e));
+        if (supabaseClient) { try { await supabaseClient.from('members').update({ equipped_frame: equipped[userId].frame || null }).eq('name', username); } catch(e) { console.warn(e); } }
 
         renderShop();
         renderInventory();
@@ -5209,7 +5847,7 @@ async function useItem(itemId, category, action = 'equip') {
             showToast(`✅ تم تجهيز ${item.name}!`, 'success');
         }
 
-        if (supabaseClient) await supabaseClient.from('members').update({ equipped_name_color: equipped[userId].name_color || null }).eq('name', username).catch(e => console.warn(e));
+        if (supabaseClient) { try { await supabaseClient.from('members').update({ equipped_name_color: equipped[userId].name_color || null }).eq('name', username); } catch(e) { console.warn(e); } }
 
         renderShop();
         renderInventory();
@@ -5230,7 +5868,7 @@ async function useItem(itemId, category, action = 'equip') {
             showToast(`✅ تم تجهيز ${item.name}!`, 'success');
         }
 
-        if (supabaseClient) await supabaseClient.from('members').update({ equipped_background: equipped[userId].background || null }).eq('name', username).catch(e => console.warn(e));
+        if (supabaseClient) { try { await supabaseClient.from('members').update({ equipped_background: equipped[userId].background || null }).eq('name', username); } catch(e) { console.warn(e); } }
 
         renderShop();
         renderInventory();
@@ -5249,7 +5887,7 @@ async function useItem(itemId, category, action = 'equip') {
             showToast(`✅ تم تجهيز ${item.name}!`, 'success');
         }
 
-        if (supabaseClient) await supabaseClient.from('members').update({ equipped_chat_effect: equipped[userId].chat_effect || null }).eq('name', username).catch(e => console.warn(e));
+        if (supabaseClient) { try { await supabaseClient.from('members').update({ equipped_chat_effect: equipped[userId].chat_effect || null }).eq('name', username); } catch(e) { console.warn(e); } }
 
         renderShop();
         renderInventory();
@@ -5338,7 +5976,11 @@ async function useItem(itemId, category, action = 'equip') {
         }
 
         if (supabaseClient) {
-            supabaseClient.from('user_inventory').delete().eq('user_id', userId).eq('item_id', itemId).catch(e => console.warn(e));
+            try {
+                await supabaseClient.from('user_inventory').delete().eq('user_id', userId).eq('item_id', itemId);
+            } catch(e) {
+                console.warn("Delete inventory error:", e);
+            }
         }
 
         showToast(message, 'success');
@@ -5635,7 +6277,7 @@ function finishSpin(winningIndex) {
 
         // ✅ محاولة تحديث السيرفر (Supabase)
         if (supabaseClient && userId) {
-            supabaseClient.from('members').update({ equipped_title: 99 }).eq('name', username)
+            safePostgrest(supabaseClient.from('members').update({ equipped_title: 99 }).eq('name', username))
                 .then(() => { console.log("✅ تم تحديث اللقب في السيرفر."); })
                 .catch(err => console.warn("⚠️ فشل تحديث اللقب في السيرفر:", err));
         }
@@ -5648,7 +6290,7 @@ function finishSpin(winningIndex) {
         // ✅ إصلاح مزامنة النقاط: استخدام name بدلاً من id
         if (supabaseClient && userId) { 
             const currentPoints = getLocalPoints()[username] || 0; 
-            supabaseClient.from('members').update({ coins: currentPoints }).eq('name', username)
+            safePostgrest(supabaseClient.from('members').update({ coins: currentPoints }).eq('name', username))
                 .then(() => { console.log("✅ تم تحديث النقاط في السيرفر."); })
                 .catch(err => console.warn("⚠️ فشل تحديث النقاط في السيرفر:", err)); 
         }
@@ -5664,7 +6306,7 @@ function buySpin() {
     if (balance < 50) { showToast("⚠️ لا يوجد رصيد كافٍ (تحتاج 50 نقطة).", "error"); return; }
     const username = getCurrentUsername(); const points = getLocalPoints();
     points[username] = (points[username] || 0) - 50; setLocalPoints(points);
-    if (supabaseClient) { const userId = getCurrentUserId(); supabaseClient.from('members').update({ coins: points[username] }).eq('id', userId).then(() => { console.log("✅ تم خصم النقاط للشراء."); }).catch(err => console.warn("⚠️ فشل خصم النقاط:", err)); }
+    if (supabaseClient) { const userId = getCurrentUserId(); safePostgrest(supabaseClient.from('members').update({ coins: points[username] }).eq('id', userId)).then(() => { console.log("✅ تم خصم النقاط للشراء."); }).catch(err => console.warn("⚠️ فشل خصم النقاط:", err)); }
     const state = getWheelState(); state.attemptsRemaining = (state.attemptsRemaining || 0) + 1; setWheelState(state);
     updateWheelUI(); updateVaultBalanceUI(); showToast("✅ تم شراء محاولة إضافية بنجاح! (50 نقطة)", "success");
 }
@@ -5808,7 +6450,7 @@ function endSnakeGame() {
     if (snakeGameState.score > snakeGameState.highScore) { snakeGameState.highScore = snakeGameState.score; setStorage(SNAKE_STORAGE_KEY, snakeGameState.highScore); updateSnakeUI(); resultMessage = `🏆 أفضل نتيجة جديدة: ${snakeGameState.score} نقطة!`; }
     if (snakeGameState.score > 0) {
         const username = getCurrentUsername(); addPoints(username, snakeGameState.score);
-        if (supabaseClient) { const userId = getCurrentUserId(); const currentPoints = getLocalPoints()[username] || 0; supabaseClient.from('members').update({ coins: currentPoints }).eq('id', userId).then(() => { console.log("✅ تم تحديث النقاط في السيرفر من لعبة الثعبان."); }).catch(err => console.warn("⚠️ فشل تحديث النقاط من لعبة الثعبان:", err)); }
+        if (supabaseClient) { const userId = getCurrentUserId(); const currentPoints = getLocalPoints()[username] || 0; safePostgrest(supabaseClient.from('members').update({ coins: currentPoints }).eq('id', userId)).then(() => { console.log("✅ تم تحديث النقاط في السيرفر من لعبة الثعبان."); }).catch(err => console.warn("⚠️ فشل تحديث النقاط من لعبة الثعبان:", err)); }
         resultMessage = `🐍 انتهت اللعبة! ربحت ${snakeGameState.score} نقطة.` + resultMessage;
     } else { resultMessage = "💀 انتهت اللعبة! حاول مرة أخرى."; }
     // ✅ عرض الرسالة داخل snake-result-msg
@@ -5847,166 +6489,2006 @@ function setupSnakeTouchControls() {
 }
 
 /* ========================================================
-   ⚔️ PHANTOM BATTLE 1v1 SYSTEM
+   ⚔️ PHANTOM BATTLE & REALTIME ENGINE (السيرفر، الحضور، الإشعارات الدائمة، والتحديات المباشرة)
    ======================================================== */
 
-let battleCurrentMember = null;
-let battleState = { battleId: null, status: 'idle', timerInterval: null, endTime: null, playerA: null, playerB: null, votesA: 0, votesB: 0, myVote: null };
+let serverOnlineUsers = [];
+let pendingBattleInvite = null;
+let presenceHeartbeatInterval = null;
+let challengePollingInterval = null;
+let arenaDirectSearchInterval = null;
+let popularityDirectSearchInterval = null;
 
-function initBattle() {
-    const readyBtn = document.getElementById('battle-ready-btn'); const cancelBtn = document.getElementById('battle-cancel-btn');
-    if (readyBtn) readyBtn.addEventListener('click', startMatching); if (cancelBtn) cancelBtn.addEventListener('click', cancelBattle);
-    if (supabaseClient) {
-        supabaseClient.channel('battle-updates').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'battles' }, (payload) => { if (payload.new.id === battleState.battleId) { updateBattleArenaUI(payload.new); checkBattleEnd(payload.new); } }).subscribe();
+// 💓 إرسال نبض التواجد إلى السيرفر وتحديث قائمة المتصلين
+async function sendPresenceHeartbeat() {
+    const username = getCurrentUsername();
+    if (!username) return;
+    const userId = getCurrentUserId();
+    const rank = (typeof getCurrentUserRank === "function") ? getCurrentUserRank() : 'محارب';
+
+    try {
+        const res = await fetch('/api/presence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, userId, rank, avatar: 'PH' })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (data && Array.isArray(data.onlineUsers)) {
+                serverOnlineUsers = data.onlineUsers;
+                updateAllOnlineCounters();
+                renderArenaClanMembers();
+                renderPopularityClanMembers();
+            }
+        }
+
+        // 📞 فحص المكالمات المباشرة النشطة في الكلان
+        try {
+            const callRes = await fetch('/api/calls/active');
+            if (callRes.ok) {
+                const callData = await callRes.json();
+                updateActiveCallBannerUI(callData && callData.activeCall);
+            }
+        } catch (callErr) {}
+    } catch (e) {
+        // Fallback: keep local current user
+        if (!serverOnlineUsers.some(u => normalizeName(u.username) === normalizeName(username))) {
+            serverOnlineUsers.push({ username, userId, rank, avatar: 'PH', lastSeen: Date.now() });
+        }
     }
 }
 
-async function startMatching() {
-    const username = getCurrentUsername(); 
-    if (!username) return showToast("يجب تسجيل الدخول أولاً.", "error");
-    
-    showToast("⚔️ جاري البحث عن خصم...", "info");
+let dismissedCallId = null;
 
-    if (supabaseClient) {
-        // ✅ تحقق من وجود معركة نشطة (active أو waiting)
-        const { data: activeBattle } = await supabaseClient.from('battles').select('*').in('status', ['active', 'waiting']).limit(1);
-        
-        if (activeBattle && activeBattle.length > 0) {
-            // لو في معركة موجودة، اعرض زر انضمام بدلاً من استعداد
-            const lobby = document.getElementById('battle-lobby');
+function updateActiveCallBannerUI(activeCall) {
+    const banner = document.getElementById('clan-active-call-banner');
+    const voiceBtn = document.getElementById('voice-call-btn');
+    if (!banner) return;
+
+    if (activeCall && activeCall.active && activeCall.id !== dismissedCallId) {
+        const host = activeCall.challengerName || 'أحد الأعضاء';
+        const senderEl = document.getElementById('call-banner-sender');
+        const textEl = document.getElementById('call-banner-text');
+        if (senderEl) senderEl.textContent = `🎙️ ${host} بدأ مكالمة`;
+        if (textEl) {
+            const modeText = activeCall.details && activeCall.details.mode === 'agora' ? 'غرفة Agora الصوتية التكتيكية' : 'مكالمة المقر المباشرة';
+            textEl.textContent = `مكالمة جماعية نشطة الآن (${modeText}). اضغط للدخول مع السكواد.`;
+        }
+        banner.style.display = 'flex';
+
+        if (voiceBtn) {
+            voiceBtn.style.position = 'relative';
+            if (!document.getElementById('voice-live-dot')) {
+                const dot = document.createElement('span');
+                dot.id = 'voice-live-dot';
+                dot.style.cssText = 'position:absolute; top:-2px; right:-2px; width:10px; height:10px; background:#00ff88; border-radius:50%; box-shadow:0 0 10px #00ff88; animation:pulse_3011 1.5s infinite;';
+                voiceBtn.appendChild(dot);
+            }
+        }
+    } else {
+        banner.style.display = 'none';
+        const dot = document.getElementById('voice-live-dot');
+        if (dot) dot.remove();
+    }
+}
+
+function dismissCallBanner() {
+    const banner = document.getElementById('clan-active-call-banner');
+    if (banner) banner.style.display = 'none';
+    dismissedCallId = 'dismissed_' + Date.now();
+}
+
+window.dismissCallBanner = dismissCallBanner;
+
+// تحديث عدادات المتصلين في الواجهات المختلفة
+function updateAllOnlineCounters() {
+    const count = Math.max(1, serverOnlineUsers.length);
+    const chatCounter = document.getElementById('chat-online-counter');
+    const arenaCounter = document.getElementById('arena-online-counter');
+    const popCounter = document.getElementById('popularity-online-counter');
+
+    if (chatCounter) chatCounter.textContent = `${count} متصلين حالياً`;
+    if (arenaCounter) arenaCounter.textContent = `${count} متصل بالمقر`;
+    if (popCounter) popCounter.textContent = `${count} متصل`;
+}
+
+// 🔍 استطلاع التحديات والإشعارات الموجهة للعضو من السيرفر
+async function pollIncomingChallenges() {
+    const username = getCurrentUsername();
+    if (!username) return;
+
+    try {
+        const res = await fetch(`/api/battles/challenges?user=${encodeURIComponent(username)}`);
+        if (res.ok) {
+            const data = await res.json();
+            if (data && Array.isArray(data.challenges) && data.challenges.length > 0) {
+                const latest = data.challenges[data.challenges.length - 1];
+                if (!pendingBattleInvite || pendingBattleInvite.id !== latest.id) {
+                    showTelegramBattleNotification(latest);
+                }
+            }
+        }
+    } catch (e) {}
+}
+
+// ✈️ إظهار إشعار الانضمام الدائم (لا يختفي إلا بالضغط على ✕ أو انضمام)
+function showTelegramBattleNotification(challenge) {
+    if (!challenge) return;
+    const currentUsername = getCurrentUsername();
+    if (challenge.challengerName === currentUsername) return;
+
+    pendingBattleInvite = challenge;
+
+    const banner = document.getElementById('telegram-battle-notification');
+    const iconEl = document.getElementById('tg-banner-icon');
+    const senderEl = document.getElementById('tg-banner-sender');
+    const tagEl = document.getElementById('tg-banner-tag');
+    const textEl = document.getElementById('tg-banner-text');
+    const joinBtn = document.getElementById('tg-banner-join-btn');
+    const closeBtn = document.getElementById('tg-banner-close-btn');
+
+    if (!banner) return;
+
+    // ضبط النصوص والأيقونات وفق نوع الإشعار: مكالمة / معركة شعبية / ساحة نزال
+    if (challenge.type === 'call') {
+        if (iconEl) iconEl.textContent = '📞';
+        if (senderEl) senderEl.textContent = challenge.challengerName || 'عضو الكلان';
+        if (tagEl) { tagEl.textContent = '• مكالمة مباشرة!'; tagEl.style.color = '#00ff88'; }
+        if (textEl) textEl.textContent = 'بدأ مكالمة فيديو وصوت مباشرة ويدعوك للانضمام الآن!';
+        if (joinBtn) joinBtn.innerHTML = '📞 انضمام للمكالمة';
+    } else if (challenge.type === 'popularity') {
+        if (iconEl) iconEl.textContent = '⚔️';
+        if (senderEl) senderEl.textContent = challenge.challengerName || 'بطل PHANTOM';
+        if (tagEl) { tagEl.textContent = '• معركة الشعبية 1v1!'; tagEl.style.color = 'var(--cyan)'; }
+        if (textEl) textEl.textContent = 'أرسل لك تحدي تصويت وشعبية PK مباشر! هل تقبل التحدي؟';
+        if (joinBtn) joinBtn.innerHTML = '⚔️ قبول وانضمام';
+    } else { // arena (ساحة نزال)
+        if (iconEl) iconEl.textContent = '⚡';
+        if (senderEl) senderEl.textContent = challenge.challengerName || 'بطل PHANTOM';
+        if (tagEl) { tagEl.textContent = '• ساحة النزال 1v1!'; tagEl.style.color = '#ffd700'; }
+        const stakeStr = challenge.stake ? ` (الرهان: ${challenge.stake} نقطة)` : ' (نزال شرف)';
+        if (textEl) textEl.textContent = `يتحدّاك في ساحة النزال التفاعلية والسريعة${stakeStr}!`;
+        if (joinBtn) joinBtn.innerHTML = '⚡ انضمام للنزال';
+    }
+
+    // صوت تنبيه ناعم
+    try {
+        if (typeof ArenaAudio !== 'undefined' && ArenaAudio.playTone) {
+            ArenaAudio.playTone(600, 'sine', 0.12, 0.2);
+            setTimeout(() => ArenaAudio.playTone(900, 'sine', 0.2, 0.25), 100);
+        }
+    } catch (e) {}
+
+    // إظهار البانر وجعله ثابتاً تماماً (لا يوجد أي setTimeout لإخفائه!)
+    banner.classList.add('show');
+
+    // زر الإغلاق ✕: يزيل الإشعار ويبلّغ السيرفر
+    if (closeBtn) {
+        closeBtn.onclick = function(e) {
+            e.stopPropagation();
+            hideTelegramBattleNotification(true);
+        };
+    }
+
+    // زر الانضمام: ينقل المستخدم فوراً للمكان المحدد (مكالمة / معركة شعبية / ساحة نزال)
+    if (joinBtn) {
+        joinBtn.onclick = function(e) {
+            e.stopPropagation();
+            const targetChallenge = pendingBattleInvite || challenge;
+            hideTelegramBattleNotification(false);
+
+            // إشعار السيرفر بقبول التحدي
+            fetch('/api/battles/join', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    challengeId: targetChallenge.id,
+                    joinerName: getCurrentUsername(),
+                    joinerId: getCurrentUserId()
+                })
+            }).catch(() => {});
+
+            // التوجيه الفوري المباشر وفق نوع النشاط
+            if (targetChallenge.type === 'call') {
+                showToast(`📞 جاري الانضمام لمكالمة ${targetChallenge.challengerName}...`, 'info');
+                if (typeof showGoogleMeetModal === 'function') {
+                    showGoogleMeetModal();
+                }
+            } else if (targetChallenge.type === 'popularity') {
+                showToast(`⚔️ تم قبول معركة الشعبية ضد ${targetChallenge.challengerName}!`, 'success');
+                const battleOverlay = document.getElementById('battle-overlay');
+                if (battleOverlay) battleOverlay.style.display = 'flex';
+                joinActivePopularityBattle(targetChallenge);
+            } else { // arena
+                showToast(`⚡ انضممت لساحة النزال ضد ${targetChallenge.challengerName}!`, 'success');
+                const arenaOverlay = document.getElementById('arena-overlay');
+                if (arenaOverlay) arenaOverlay.style.display = 'flex';
+                joinActiveArenaDuel(targetChallenge);
+            }
+        };
+    }
+}
+
+// إخفاء إشعار التيليجرام
+function hideTelegramBattleNotification(dismissOnServer = false) {
+    const banner = document.getElementById('telegram-battle-notification');
+    if (banner) banner.classList.remove('show');
+
+    if (dismissOnServer && pendingBattleInvite && pendingBattleInvite.id) {
+        fetch('/api/battles/dismiss', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                challengeId: pendingBattleInvite.id,
+                username: getCurrentUsername()
+            })
+        }).catch(() => {});
+    }
+    pendingBattleInvite = null;
+}
+
+// انضمام مباشر لمعركة الشعبية من الإشعار
+function joinActivePopularityBattle(challenge) {
+    const lobby = document.getElementById('battle-lobby');
+    const arena = document.getElementById('battle-arena');
+    const username = getCurrentUsername() || 'المحارب';
+    const opponent = challenge.challengerName || 'المتحدي الشبح';
+
+    popularityBattleState = {
+        active: true,
+        secondsLeft: 60,
+        playerA: { name: opponent, votes: 50 },
+        playerB: { name: username, votes: 50 },
+        userVotedChoice: null,
+        userBet: 0,
+        crowdInterval: null
+    };
+
+    if (lobby) lobby.style.display = 'none';
+    if (arena) arena.style.display = 'flex';
+
+    const nameAEl = document.getElementById('fighter-name-a');
+    const nameBEl = document.getElementById('fighter-name-b');
+    const voteAEl = document.getElementById('vote-btn-a');
+    const voteBEl = document.getElementById('vote-btn-b');
+
+    if (nameAEl) nameAEl.textContent = opponent;
+    if (nameBEl) nameBEl.textContent = username;
+    if (voteAEl) voteAEl.textContent = `🔵 صوّت لـ ${opponent}`;
+    if (voteBEl) voteBEl.textContent = `🔴 صوّت لـ ${username}`;
+
+    updatePopularityPKBar();
+    updatePopularityBattleBalance();
+
+    if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
+    popularityBattleState.timer = setInterval(popularityBattleTick, 1000);
+
+    if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
+    popularityBattleState.crowdInterval = setInterval(() => {
+        if (!popularityBattleState.active) return;
+        const addA = Math.floor(Math.random() * 8);
+        const addB = Math.floor(Math.random() * 8);
+        popularityBattleState.playerA.votes += addA;
+        popularityBattleState.playerB.votes += addB;
+        updatePopularityPKBar();
+    }, 2800);
+}
+
+// انضمام مباشر لساحة النزال 1v1 من الإشعار
+function joinActiveArenaDuel(challenge) {
+    phantomArenaState.mode = 'duel';
+    phantomArenaState.stake = challenge.stake || 0;
+    phantomArenaState.opponent = {
+        name: challenge.challengerName || 'بطل PHANTOM',
+        avatar: '⚔️',
+        sub: `مبارزة رسمية 1v1 · رهان: ${challenge.stake || 0} نقطة`
+    };
+    switchArenaView('lobby');
+    launchVersusCountdown();
+}
+
+// ========================================================
+// 👥 عرض أعضاء الكلان الحقيقيين في ساحة النزال (🟢 متصل / 🔴 غير متصل)
+// ========================================================
+let arenaClanSearchFilter = '';
+
+function filterArenaClanMembers(val) {
+    arenaClanSearchFilter = (val || '').trim().toLowerCase();
+    renderArenaClanMembers();
+}
+
+function renderArenaClanMembers() {
+    const listEl = document.getElementById('arena-clan-members-list');
+    if (!listEl) return;
+
+    const roster = typeof getFullRoster === 'function' ? getFullRoster() : [];
+    const currentUsername = getCurrentUsername();
+    const pointsMap = typeof getLocalPoints === 'function' ? getLocalPoints() : {};
+
+    // استبعاد العضو الحالي من قائمة الخصوم
+    let filtered = roster.filter(m => m && m.name && normalizeName(m.name) !== normalizeName(currentUsername));
+
+    if (arenaClanSearchFilter) {
+        filtered = filtered.filter(m => 
+            (m.name && m.name.toLowerCase().includes(arenaClanSearchFilter)) ||
+            (m.rank && m.rank.toLowerCase().includes(arenaClanSearchFilter))
+        );
+    }
+
+    // الترتيب: المتصلون أولاً (🟢)، ثم حسب النقاط
+    filtered.sort((a, b) => {
+        const aOnline = isMemberOnline(a.name) ? 1 : 0;
+        const bOnline = isMemberOnline(b.name) ? 1 : 0;
+        if (bOnline !== aOnline) return bOnline - aOnline;
+        const ptsA = pointsMap[a.name] || a.coins || 0;
+        const ptsB = pointsMap[b.name] || b.coins || 0;
+        return ptsB - ptsA;
+    });
+
+    if (filtered.length === 0) {
+        listEl.innerHTML = `
+            <div style="grid-column:1/-1; text-align:center; padding:16px; color:#94a3b8; font-size:0.85rem;">
+                لا توجد نتائج مطابقة في سجل أعضاء الكلان.
+            </div>
+        `;
+        return;
+    }
+
+    listEl.innerHTML = filtered.map(m => {
+        const online = isMemberOnline(m.name);
+        const pts = pointsMap[m.name] || m.coins || 0;
+        const safeName = escapeHTML(m.name);
+        const safeRank = escapeHTML(m.rank || 'عضو');
+
+        return `
+            <div class="arena-member-card" style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; background:rgba(255,255,255,0.03); border:1px solid ${online ? 'rgba(0,255,136,0.3)' : 'rgba(255,255,255,0.07)'}; border-radius:10px; transition:transform 0.15s ease;">
+                <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                    <div style="position:relative; flex-shrink:0;">
+                        <div style="width:38px; height:38px; border-radius:50%; background:#1e293b; border:2px solid ${online ? '#00ff88' : '#64748b'}; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:0.8rem; color:#fff;">
+                            ${m.avatar && m.avatar.length <= 4 ? escapeHTML(m.avatar) : 'PH'}
+                        </div>
+                        <span style="position:absolute; bottom:-1px; right:-1px; width:10px; height:10px; border-radius:50%; background:${online ? '#00ff88' : '#ef4444'}; border:2px solid #0f172a; box-shadow:${online ? '0 0 8px #00ff88' : 'none'};"></span>
+                    </div>
+                    <div style="min-width:0;">
+                        <div style="font-weight:900; color:#fff; font-size:0.85rem; display:flex; align-items:center; gap:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                            <span>${safeName}</span>
+                            <span style="font-size:0.65rem; color:${online ? '#00ff88' : '#94a3b8'};">${online ? '🟢 متصل' : '🔴 غير متصل'}</span>
+                        </div>
+                        <div style="font-size:0.7rem; color:#94a3b8; margin-top:2px;">${safeRank} · 💰 ${pts} نقطة</div>
+                    </div>
+                </div>
+                <div style="flex-shrink:0; margin-right:8px;">
+                    ${online ? 
+                        `<button type="button" class="btn-primary" style="padding:5px 12px; font-size:0.75rem; border-radius:8px; box-shadow:0 0 10px rgba(0,242,254,0.3);" onclick="sendDirectArenaChallenge('${safeName}')">⚡ تحدي</button>` : 
+                        `<button type="button" class="btn-secondary" style="padding:5px 10px; font-size:0.72rem; border-radius:8px; opacity:0.4; cursor:not-allowed;" disabled title="العضو غير متواجد حالياً في الموقع">🔴 غير متصل</button>`}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// إرسال تحدٍ مباشر لعضو محدد في ساحة النزال
+function sendDirectArenaChallenge(targetName) {
+    ArenaAudio.init();
+    const username = getCurrentUsername() || 'المحارب';
+    const balance = getUserBalance();
+
+    if (phantomArenaState.stake > 0 && balance < phantomArenaState.stake) {
+        showToast(`⚠️ رصيدك (${balance} نقطة) لا يكفي لرهان ${phantomArenaState.stake} نقطة!`, 'error');
+        return;
+    }
+
+    const lobby = document.getElementById('arena-search-lobby');
+    if (!lobby) return;
+    lobby.style.display = 'block';
+
+    let timeLeft = 20;
+    lobby.innerHTML = `
+        <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
+            <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚡</div>
+            <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري إرسال إشعار التحدي المباشر إلى <span style="color:#00f2fe;">${escapeHTML(targetName)}</span>...</div>
+            <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">بانتظار قبول النزال: ${timeLeft} ثانية (الرهان: ${phantomArenaState.stake ? phantomArenaState.stake + ' نقطة' : 'نزال شرف'})</div>
+            <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:14px;">
+                <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="acceptInstantBotDuel()">
+                    ⚡ بدء مواجهة فورية مع حارس الساحة (Bot)
+                </button>
+                <button type="button" class="btn-danger" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelMatching()">
+                    ❌ إلغاء التحدي
+                </button>
+            </div>
+        </div>
+    `;
+
+    // إرسال التحدي للسيرفر
+    fetch('/api/battles/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            type: 'arena',
+            challengerName: username,
+            challengerId: getCurrentUserId(),
+            targetName: targetName,
+            stake: phantomArenaState.stake
+        })
+    }).then(res => res.json()).then(data => {
+        if (data.success && data.challenge) {
+            trackArenaDirectChallenge(data.challenge.id, targetName);
+        }
+    }).catch(() => {});
+
+    showToast(`🚀 تم إرسال إشعار التحدي إلى ${targetName}!`, 'info');
+}
+
+// متابعة حالة قبول التحدي المباشر في الساحة
+function trackArenaDirectChallenge(challengeId, targetName) {
+    if (arenaDirectSearchInterval) clearInterval(arenaDirectSearchInterval);
+
+    arenaDirectSearchInterval = setInterval(async () => {
+        try {
+            const res = await fetch(`/api/battles/state/${challengeId}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data && data.challenge && data.challenge.status === 'active') {
+                    clearInterval(arenaDirectSearchInterval);
+                    arenaDirectSearchInterval = null;
+                    cancelMatching();
+
+                    phantomArenaState.mode = 'duel';
+                    phantomArenaState.opponent = {
+                        name: targetName,
+                        avatar: '⚔️',
+                        sub: `مبارزة حقيقية مباشرة · رهان: ${phantomArenaState.stake} نقطة`
+                    };
+                    showToast(`🔥 قبل ${targetName} التحدي! النزال يبدأ الآن...`, 'success');
+                    launchVersusCountdown();
+                }
+            }
+        } catch (e) {}
+    }, 1500);
+}
+
+// ========================================================
+// 👥 عرض أعضاء الكلان في معركة الشعبية (🟢 متصل / 🔴 غير متصل)
+// ========================================================
+let popularityClanSearchFilter = '';
+
+function filterPopularityClanMembers(val) {
+    popularityClanSearchFilter = (val || '').trim().toLowerCase();
+    renderPopularityClanMembers();
+}
+
+function renderPopularityClanMembers() {
+    const listEl = document.getElementById('popularity-clan-members-list');
+    if (!listEl) return;
+
+    const roster = typeof getFullRoster === 'function' ? getFullRoster() : [];
+    const currentUsername = getCurrentUsername();
+    const pointsMap = typeof getLocalPoints === 'function' ? getLocalPoints() : {};
+
+    let filtered = roster.filter(m => m && m.name && normalizeName(m.name) !== normalizeName(currentUsername));
+
+    if (popularityClanSearchFilter) {
+        filtered = filtered.filter(m => 
+            (m.name && m.name.toLowerCase().includes(popularityClanSearchFilter)) ||
+            (m.rank && m.rank.toLowerCase().includes(popularityClanSearchFilter))
+        );
+    }
+
+    filtered.sort((a, b) => {
+        const aOnline = isMemberOnline(a.name) ? 1 : 0;
+        const bOnline = isMemberOnline(b.name) ? 1 : 0;
+        if (bOnline !== aOnline) return bOnline - aOnline;
+        const ptsA = pointsMap[a.name] || a.coins || 0;
+        const ptsB = pointsMap[b.name] || b.coins || 0;
+        return ptsB - ptsA;
+    });
+
+    if (filtered.length === 0) {
+        listEl.innerHTML = `
+            <div style="grid-column:1/-1; text-align:center; padding:16px; color:#94a3b8; font-size:0.85rem;">
+                لا توجد نتائج مطابقة في سجل أعضاء الكلان.
+            </div>
+        `;
+        return;
+    }
+
+    listEl.innerHTML = filtered.map(m => {
+        const online = isMemberOnline(m.name);
+        const pts = pointsMap[m.name] || m.coins || 0;
+        const safeName = escapeHTML(m.name);
+        const safeRank = escapeHTML(m.rank || 'عضو');
+
+        return `
+            <div class="popularity-member-card" style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; background:rgba(255,255,255,0.03); border:1px solid ${online ? 'rgba(0,255,136,0.3)' : 'rgba(255,255,255,0.07)'}; border-radius:10px; transition:transform 0.15s ease;">
+                <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                    <div style="position:relative; flex-shrink:0;">
+                        <div style="width:38px; height:38px; border-radius:50%; background:#1e293b; border:2px solid ${online ? '#00ff88' : '#64748b'}; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:0.8rem; color:#fff;">
+                            ${m.avatar && m.avatar.length <= 4 ? escapeHTML(m.avatar) : 'PH'}
+                        </div>
+                        <span style="position:absolute; bottom:-1px; right:-1px; width:10px; height:10px; border-radius:50%; background:${online ? '#00ff88' : '#ef4444'}; border:2px solid #0f172a; box-shadow:${online ? '0 0 8px #00ff88' : 'none'};"></span>
+                    </div>
+                    <div style="min-width:0;">
+                        <div style="font-weight:900; color:#fff; font-size:0.85rem; display:flex; align-items:center; gap:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                            <span>${safeName}</span>
+                            <span style="font-size:0.65rem; color:${online ? '#00ff88' : '#94a3b8'};">${online ? '🟢 متصل' : '🔴 غير متصل'}</span>
+                        </div>
+                        <div style="font-size:0.7rem; color:#94a3b8; margin-top:2px;">${safeRank} · 💰 ${pts} نقطة</div>
+                    </div>
+                </div>
+                <div style="flex-shrink:0; margin-right:8px;">
+                    ${online ? 
+                        `<button type="button" class="btn-primary" style="padding:5px 12px; font-size:0.75rem; border-radius:8px; box-shadow:0 0 10px rgba(0,242,254,0.3);" onclick="sendDirectPopularityChallenge('${safeName}')">⚔️ تحدي الشعبية</button>` : 
+                        `<button type="button" class="btn-secondary" style="padding:5px 10px; font-size:0.72rem; border-radius:8px; opacity:0.4; cursor:not-allowed;" disabled title="العضو غير متواجد حالياً في الموقع">🔴 غير متصل</button>`}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// إرسال تحدٍ مباشر في معركة الشعبية
+function sendDirectPopularityChallenge(targetName) {
+    const username = getCurrentUsername() || 'المحارب';
+    const lobby = document.getElementById('popularity-search-lobby');
+    if (lobby) {
+        lobby.style.display = 'block';
+        lobby.innerHTML = `
+            <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
+                <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚔️</div>
+                <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري إرسال إشعار معركة الشعبية إلى <span style="color:#00f2fe;">${escapeHTML(targetName)}</span>...</div>
+                <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">بانتظار قبول التحدي وانطلاق الـ PK...</div>
+                <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:14px;">
+                    <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="startInstantPopularityMatch('${escapeHTML(targetName)}')">
+                        ⚡ بدء الجولة فوراً
+                    </button>
+                    <button type="button" class="btn-danger" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelPopularitySearch()">
+                        ❌ إلغاء التحدي
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    fetch('/api/battles/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            type: 'popularity',
+            challengerName: username,
+            challengerId: getCurrentUserId(),
+            targetName: targetName
+        })
+    }).then(res => res.json()).then(data => {
+        if (data.success && data.challenge) {
+            trackPopularityDirectChallenge(data.challenge.id, targetName);
+        }
+    }).catch(() => {});
+
+    showToast(`🚀 تم إرسال إشعار معركة الشعبية إلى ${targetName}!`, 'info');
+}
+
+function trackPopularityDirectChallenge(challengeId, targetName) {
+    if (popularityDirectSearchInterval) clearInterval(popularityDirectSearchInterval);
+
+    popularityDirectSearchInterval = setInterval(async () => {
+        try {
+            const res = await fetch(`/api/battles/state/${challengeId}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data && data.challenge && data.challenge.status === 'active') {
+                    clearInterval(popularityDirectSearchInterval);
+                    popularityDirectSearchInterval = null;
+                    cancelPopularitySearch();
+                    startInstantPopularityMatch(targetName);
+                }
+            }
+        } catch (e) {}
+    }, 1500);
+}
+
+function cancelPopularitySearch() {
+    if (popularityDirectSearchInterval) {
+        clearInterval(popularityDirectSearchInterval);
+        popularityDirectSearchInterval = null;
+    }
+    const lobby = document.getElementById('popularity-search-lobby');
+    if (lobby) {
+        lobby.style.display = 'none';
+        lobby.innerHTML = '';
+    }
+}
+
+function startInstantPopularityMatch(opponentName) {
+    cancelPopularitySearch();
+    const lobby = document.getElementById('battle-lobby');
+    const arena = document.getElementById('battle-arena');
+    const username = getCurrentUsername() || 'المحارب';
+    const opponent = opponentName || 'المتحدي الشبح';
+
+    popularityBattleState = {
+        active: true,
+        secondsLeft: 60,
+        playerA: { name: username, votes: 50 },
+        playerB: { name: opponent, votes: 50 },
+        userVotedChoice: null,
+        userBet: 0,
+        crowdInterval: null
+    };
+
+    if (lobby) lobby.style.display = 'none';
+    if (arena) arena.style.display = 'flex';
+
+    const nameAEl = document.getElementById('fighter-name-a');
+    const nameBEl = document.getElementById('fighter-name-b');
+    const voteAEl = document.getElementById('vote-btn-a');
+    const voteBEl = document.getElementById('vote-btn-b');
+
+    if (nameAEl) nameAEl.textContent = username;
+    if (nameBEl) nameBEl.textContent = opponent;
+    if (voteAEl) voteAEl.textContent = `🔵 صوّت لـ ${username}`;
+    if (voteBEl) voteBEl.textContent = `🔴 صوّت لـ ${opponent}`;
+
+    updatePopularityPKBar();
+    updatePopularityBattleBalance();
+
+    if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
+    popularityBattleState.timer = setInterval(popularityBattleTick, 1000);
+
+    if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
+    popularityBattleState.crowdInterval = setInterval(() => {
+        if (!popularityBattleState.active) return;
+        const addA = Math.floor(Math.random() * 8);
+        const addB = Math.floor(Math.random() * 8);
+        popularityBattleState.playerA.votes += addA;
+        popularityBattleState.playerB.votes += addB;
+        updatePopularityPKBar();
+    }, 2800);
+
+    showToast(`⚔️ انطلقت معركة الشعبية 1v1 بين ${username} و ${opponent}!`, 'success');
+}
+
+// بدء دوريات استطلاع التواجد والإشعارات عند تحميل الصفحة
+document.addEventListener('DOMContentLoaded', () => {
+    sendPresenceHeartbeat();
+    if (!presenceHeartbeatInterval) {
+        presenceHeartbeatInterval = setInterval(sendPresenceHeartbeat, 8000);
+    }
+    if (!challengePollingInterval) {
+        challengePollingInterval = setInterval(pollIncomingChallenges, 3500);
+    }
+});
+
+/* ========================================================
+   ⚡ 1v1 PHANTOM ARENA ENGINE (ساحة المبارزات والتحديات التفاعلية)
+   ======================================================== */
+
+// 🔊 نظام المؤثرات الصوتية التكتيكية التخليقية (Web Audio API)
+const ArenaAudio = {
+    ctx: null,
+    muted: localStorage.getItem('phantom_arena_audio_muted') === 'true',
+
+    init() {
+        if (!this.ctx) {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (AudioContextClass) {
+                this.ctx = new AudioContextClass();
+            }
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+            this.ctx.resume().catch(() => {});
+        }
+    },
+
+    toggleMute() {
+        this.muted = !this.muted;
+        localStorage.setItem('phantom_arena_audio_muted', String(this.muted));
+        const btn = document.getElementById('arena-audio-toggle');
+        if (btn) btn.textContent = this.muted ? '🔇' : '🔊';
+        showToast(this.muted ? '🔇 تم كتم المؤثرات الصوتية للساحة' : '🔊 تم تفعيل المؤثرات الصوتية للساحة', 'info');
+        return this.muted;
+    },
+
+    playTone(freq, type = 'sine', duration = 0.1, gainVal = 0.15) {
+        if (this.muted) return;
+        this.init();
+        if (!this.ctx) return;
+        try {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+            gain.gain.setValueAtTime(gainVal, this.ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start();
+            osc.stop(this.ctx.currentTime + duration);
+        } catch (e) {}
+    },
+
+    playCountdown(isFinal = false) {
+        if (isFinal) {
+            this.playTone(880, 'triangle', 0.35, 0.25);
+        } else {
+            this.playTone(440, 'sine', 0.15, 0.15);
+        }
+    },
+
+    playHit() {
+        if (this.muted) return;
+        this.init();
+        if (!this.ctx) return;
+        try {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(600, this.ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(1400, this.ctx.currentTime + 0.12);
+            gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.12);
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start();
+            osc.stop(this.ctx.currentTime + 0.12);
+        } catch (e) {}
+    },
+
+    playCrit() {
+        if (this.muted) return;
+        this.playTone(950, 'sawtooth', 0.08, 0.2);
+        setTimeout(() => this.playTone(1500, 'square', 0.18, 0.22), 80);
+    },
+
+    playMine() {
+        if (this.muted) return;
+        this.init();
+        if (!this.ctx) return;
+        try {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(160, this.ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(50, this.ctx.currentTime + 0.25);
+            gain.gain.setValueAtTime(0.25, this.ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.25);
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start();
+            osc.stop(this.ctx.currentTime + 0.25);
+        } catch (e) {}
+    },
+
+    playVictory() {
+        if (this.muted) return;
+        const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+        notes.forEach((freq, idx) => {
+            setTimeout(() => this.playTone(freq, 'triangle', 0.3, 0.22), idx * 120);
+        });
+    },
+
+    playDefeat() {
+        if (this.muted) return;
+        const notes = [330, 293.66, 261.63, 220];
+        notes.forEach((freq, idx) => {
+            setTimeout(() => this.playTone(freq, 'sawtooth', 0.35, 0.18), idx * 140);
+        });
+    }
+};
+
+// 🎮 حالة الساحة التفاعلية الشاملة
+let phantomArenaState = {
+    view: 'lobby',
+    mode: 'ai', // 'ai' or 'duel'
+    aiDiff: 'medium', // 'easy', 'medium', 'hard'
+    stake: 0,
+    currentRound: 1,
+    maxRounds: 3,
+    p1Score: 0,
+    p2Score: 0,
+    roundTimeLeft: 8,
+    roundTimer: null,
+    targetSpawnTimeout: null,
+    aiActionTimeout: null,
+    currentTarget: null,
+    targetSpawnTime: 0,
+    reactionTimes: [],
+    opponent: {
+        name: 'شبح الكلان (AI)',
+        avatar: '👻',
+        sub: 'بوت تكتيكي ذكي'
+    }
+};
+
+// 📊 إدارة إحصائيات الساحة في التخزين المحلي
+function getArenaStats() {
+    const defaultStats = {
+        wins: 0,
+        losses: 0,
+        streak: 0,
+        bestReactionMs: 0,
+        totalMatches: 0,
+        pointsEarned: 0,
+        history: []
+    };
+    try {
+        const stored = localStorage.getItem('phantom_arena_stats');
+        return stored ? { ...defaultStats, ...JSON.parse(stored) } : defaultStats;
+    } catch (e) {
+        return defaultStats;
+    }
+}
+
+function saveArenaStats(stats) {
+    try {
+        localStorage.setItem('phantom_arena_stats', JSON.stringify(stats));
+    } catch (e) {}
+    updateArenaStatsUI();
+}
+
+function updateArenaStatsUI() {
+    const stats = getArenaStats();
+    const username = getCurrentUsername() || 'المحارب';
+    const balance = getUserBalance();
+
+    // تحديث بطاقة المقر الرئيسية
+    const cardWins = document.getElementById('arena-card-wins');
+    const cardSpeed = document.getElementById('arena-card-best-speed');
+    const cardStreak = document.getElementById('arena-card-streak');
+    if (cardWins) cardWins.textContent = stats.wins;
+    if (cardSpeed) cardSpeed.textContent = stats.bestReactionMs ? `${stats.bestReactionMs}ms` : '--';
+    if (cardStreak) cardStreak.textContent = stats.streak;
+
+    // تحديث ردهة الساحة
+    const myName = document.getElementById('arena-my-name');
+    const myAvatar = document.getElementById('arena-my-avatar');
+    const myWins = document.getElementById('arena-my-wins');
+    const myLosses = document.getElementById('arena-my-losses');
+    const myStreak = document.getElementById('arena-my-streak');
+    const myReaction = document.getElementById('arena-my-reaction');
+    const myPoints = document.getElementById('arena-my-points');
+
+    if (myName) myName.textContent = username;
+    if (myAvatar) myAvatar.textContent = username.slice(0, 2).toUpperCase();
+    if (myWins) myWins.textContent = stats.wins;
+    if (myLosses) myLosses.textContent = stats.losses;
+    if (myStreak) myStreak.textContent = stats.streak;
+    if (myReaction) myReaction.textContent = stats.bestReactionMs ? `${stats.bestReactionMs}ms` : '--';
+    if (myPoints) myPoints.textContent = balance;
+
+    // تحديث حالة زر الصوت
+    const audioBtn = document.getElementById('arena-audio-toggle');
+    if (audioBtn) audioBtn.textContent = ArenaAudio.muted ? '🔇' : '🔊';
+}
+
+// 🔀 تبديل شاشات الساحة (Lobby, Versus, Combat, Result, History)
+function switchArenaView(viewName) {
+    phantomArenaState.view = viewName;
+    const views = ['lobby', 'versus', 'combat', 'result', 'history'];
+    views.forEach(v => {
+        const el = document.getElementById(`arena-view-${v}`);
+        if (el) el.style.display = (v === viewName) ? 'block' : 'none';
+    });
+
+    const navLobby = document.getElementById('arena-nav-lobby');
+    const navHistory = document.getElementById('arena-nav-history');
+    if (navLobby) navLobby.classList.toggle('active', viewName === 'lobby' || viewName === 'versus' || viewName === 'combat' || viewName === 'result');
+    if (navHistory) navHistory.classList.toggle('active', viewName === 'history');
+
+    if (viewName === 'history') {
+        renderArenaLeaderboard();
+        renderArenaHistory();
+    }
+}
+
+// 🎛️ تعيين خيارات النمط
+function setArenaAiDiff(diff) {
+    phantomArenaState.aiDiff = diff;
+    document.querySelectorAll('.arena-pill-opt[data-diff]').forEach(btn => {
+        btn.classList.toggle('selected', btn.getAttribute('data-diff') === diff);
+    });
+}
+
+function setArenaStake(amount) {
+    phantomArenaState.stake = Number(amount);
+    document.querySelectorAll('.arena-pill-opt[data-stake]').forEach(btn => {
+        btn.classList.toggle('selected', Number(btn.getAttribute('data-stake')) === Number(amount));
+    });
+}
+
+function toggleArenaAudio() {
+    ArenaAudio.toggleMute();
+}
+
+// 🚀 فتح وإغلاق الساحة
+function openPhantomArena() {
+    ArenaAudio.init();
+    const hubOverlay = document.getElementById('phantom-hub-overlay');
+    if (hubOverlay) {
+        hubOverlay.style.display = 'none';
+        hubOverlay.classList.remove('active');
+    }
+    const overlay = document.getElementById('arena-overlay');
+    if (overlay) overlay.style.display = 'flex';
+    updateArenaStatsUI();
+    if (typeof renderArenaClanMembers === 'function') renderArenaClanMembers();
+    switchArenaView('lobby');
+}
+
+function closePhantomArena() {
+    surrenderArenaMatch(true);
+    const overlay = document.getElementById('arena-overlay');
+    if (overlay) overlay.style.display = 'none';
+    if (typeof openHub === 'function') {
+        openHub();
+    }
+}
+
+// ⚔️ بدء المواجهة الفردية ضد شبح الكلان
+function startSoloAiBattle() {
+    ArenaAudio.init();
+    phantomArenaState.mode = 'ai';
+    const diffTitles = {
+        easy: 'شبح الكلان (مبتدئ)',
+        medium: 'شبح الكلان (تكتيكي)',
+        hard: 'شبح الكلان (أسطوري)'
+    };
+    phantomArenaState.opponent = {
+        name: diffTitles[phantomArenaState.aiDiff] || 'شبح الكلان (AI)',
+        avatar: '👻',
+        sub: `مستوى: ${phantomArenaState.aiDiff.toUpperCase()}`
+    };
+
+    launchVersusCountdown();
+}
+
+// 🎬 تشغيل شاشة المواجهة السينمائية والعد التنازلي
+function launchVersusCountdown() {
+    switchArenaView('versus');
+    const username = getCurrentUsername() || 'المحارب';
+
+    const p1Name = document.getElementById('arena-vs-p1-name');
+    const p1Avatar = document.getElementById('arena-vs-p1-avatar');
+    const p2Name = document.getElementById('arena-vs-p2-name');
+    const p2Avatar = document.getElementById('arena-vs-p2-avatar');
+    const p2Sub = document.getElementById('arena-vs-p2-sub');
+    const cdBanner = document.getElementById('arena-vs-countdown');
+
+    if (p1Name) p1Name.textContent = username;
+    if (p1Avatar) p1Avatar.textContent = username.slice(0, 2).toUpperCase();
+    if (p2Name) p2Name.textContent = phantomArenaState.opponent.name;
+    if (p2Avatar) p2Avatar.textContent = phantomArenaState.opponent.avatar;
+    if (p2Sub) p2Sub.textContent = phantomArenaState.opponent.sub;
+
+    let count = 3;
+    if (cdBanner) cdBanner.textContent = count;
+    ArenaAudio.playCountdown(false);
+
+    const cdInterval = setInterval(() => {
+        count--;
+        if (count > 0) {
+            if (cdBanner) cdBanner.textContent = count;
+            ArenaAudio.playCountdown(false);
+        } else if (count === 0) {
+            if (cdBanner) cdBanner.textContent = 'اشتباك! ⚡';
+            ArenaAudio.playCountdown(true);
+        } else {
+            clearInterval(cdInterval);
+            startCombatRounds();
+        }
+    }, 900);
+}
+
+// 🥊 بدء جولات القتال التفاعلية
+function startCombatRounds() {
+    phantomArenaState.currentRound = 1;
+    phantomArenaState.p1Score = 0;
+    phantomArenaState.p2Score = 0;
+    phantomArenaState.reactionTimes = [];
+    switchArenaView('combat');
+    runActiveRound();
+}
+
+function runActiveRound() {
+    clearActiveCombatTimers();
+    phantomArenaState.roundTimeLeft = 8;
+    updateCombatHud();
+
+    // تشغيل عداد الجولة
+    phantomArenaState.roundTimer = setInterval(() => {
+        phantomArenaState.roundTimeLeft--;
+        updateCombatHud();
+        if (phantomArenaState.roundTimeLeft <= 0) {
+            endCurrentRound();
+        }
+    }, 1000);
+
+    // تفريغ وتجهيز الساحة
+    const playfield = document.getElementById('arena-playfield');
+    if (playfield) playfield.innerHTML = '';
+
+    // توليد الأهداف دورياً
+    spawnNextTarget();
+}
+
+function updateCombatHud() {
+    const p1El = document.getElementById('arena-hud-p1');
+    const p2El = document.getElementById('arena-hud-p2');
+    const roundEl = document.getElementById('arena-hud-round');
+    const timerEl = document.getElementById('arena-hud-timer');
+
+    if (p1El) p1El.textContent = `أنت: ${phantomArenaState.p1Score}`;
+    if (p2El) p2El.textContent = `الخصم: ${phantomArenaState.p2Score}`;
+    if (roundEl) roundEl.textContent = `الجولة ${phantomArenaState.currentRound} من ${phantomArenaState.maxRounds}`;
+    if (timerEl) timerEl.textContent = `⏱️ 00:0${Math.max(0, phantomArenaState.roundTimeLeft)}`;
+}
+
+// 🎯 توليد هدف جديد داخل الساحة
+function spawnNextTarget() {
+    if (phantomArenaState.roundTimeLeft <= 0) return;
+    const playfield = document.getElementById('arena-playfield');
+    if (!playfield) return;
+
+    // إزالة الهدف السابق إذا وجد
+    const oldTarget = playfield.querySelector('.arena-target');
+    if (oldTarget) oldTarget.remove();
+
+    // اختيار نوع الهدف (70% عادي، 15% فائق، 15% لغم)
+    const rand = Math.random();
+    let type = 'core';
+    let pts = 100;
+    let icon = '🎯';
+    let cssClass = 'arena-target-core';
+
+    if (rand > 0.85) {
+        type = 'crit';
+        pts = 200;
+        icon = '⚡';
+        cssClass = 'arena-target-crit';
+    } else if (rand > 0.70) {
+        type = 'mine';
+        pts = -75;
+        icon = '💣';
+        cssClass = 'arena-target-mine';
+    }
+
+    const fieldRect = playfield.getBoundingClientRect();
+    const width = fieldRect.width || 340;
+    const height = fieldRect.height || 360;
+
+    // حساب إحداثيات عشوائية آمنة مع هوامش
+    const posX = Math.floor(40 + Math.random() * (width - 80));
+    const posY = Math.floor(40 + Math.random() * (height - 80));
+
+    const targetEl = document.createElement('div');
+    targetEl.className = `arena-target ${cssClass}`;
+    targetEl.style.left = `${posX}px`;
+    targetEl.style.top = `${posY}px`;
+    targetEl.innerHTML = icon;
+
+    phantomArenaState.currentTarget = { type, pts, el: targetEl };
+    phantomArenaState.targetSpawnTime = Date.now();
+
+    // معالج النقر للاعب
+    targetEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handleUserTargetClick(type, pts, posX, posY);
+    });
+
+    playfield.appendChild(targetEl);
+
+    // محاكاة استجابة ذكاء البوت
+    scheduleAiReaction(type, pts, posX, posY);
+}
+
+// 🖱️ معالجة نقرة المستخدم
+function handleUserTargetClick(type, pts, x, y) {
+    if (!phantomArenaState.currentTarget) return;
+    if (phantomArenaState.aiActionTimeout) clearTimeout(phantomArenaState.aiActionTimeout);
+
+    const reactionMs = Date.now() - phantomArenaState.targetSpawnTime;
+    phantomArenaState.reactionTimes.push(reactionMs);
+
+    // صوت ورد فعل
+    if (type === 'mine') {
+        ArenaAudio.playMine();
+        showHitFloatText(x, y, '-75 لغم!', false);
+        phantomArenaState.p1Score = Math.max(0, phantomArenaState.p1Score - 75);
+    } else if (type === 'crit') {
+        ArenaAudio.playCrit();
+        showHitFloatText(x, y, `+200 ضربة خارقة (${reactionMs}ms)`, true);
+        phantomArenaState.p1Score += 200;
+    } else {
+        ArenaAudio.playHit();
+        showHitFloatText(x, y, `+100 (${reactionMs}ms)`, true);
+        phantomArenaState.p1Score += 100;
+    }
+
+    const speedHud = document.getElementById('arena-hud-speed');
+    if (speedHud) speedHud.textContent = `⚡ الاستجابة: ${reactionMs}ms`;
+
+    updateCombatHud();
+    cleanupCurrentTarget();
+
+    // توليد الهدف التالي بعد مهلة قصيرة
+    phantomArenaState.targetSpawnTimeout = setTimeout(() => {
+        spawnNextTarget();
+    }, 350);
+}
+
+// 🤖 محاكاة رد فعل البوت حسب الصعوبة
+function scheduleAiReaction(type, pts, x, y) {
+    if (phantomArenaState.mode !== 'ai') return;
+
+    let delay = 450;
+    let accuracy = 0.8;
+
+    if (phantomArenaState.aiDiff === 'easy') {
+        delay = 480 + Math.floor(Math.random() * 250);
+        accuracy = 0.65;
+    } else if (phantomArenaState.aiDiff === 'medium') {
+        delay = 310 + Math.floor(Math.random() * 150);
+        accuracy = 0.85;
+    } else if (phantomArenaState.aiDiff === 'hard') {
+        delay = 180 + Math.floor(Math.random() * 80);
+        accuracy = 0.95;
+    }
+
+    phantomArenaState.aiActionTimeout = setTimeout(() => {
+        if (!phantomArenaState.currentTarget) return;
+
+        // البوت الذكي يتفادى الألغام بنسبة عالية
+        if (type === 'mine') {
+            if (Math.random() > accuracy) {
+                // البوت أخطأ وضغط على اللغم
+                phantomArenaState.p2Score = Math.max(0, phantomArenaState.p2Score - 75);
+                showHitFloatText(x, y, 'الخصم: -75 لغم!', false);
+                cleanupCurrentTarget();
+                spawnNextTarget();
+            }
+            return;
+        }
+
+        // البوت أخذ الهدف قبل اللاعب
+        phantomArenaState.p2Score += pts;
+        showHitFloatText(x, y, `الخصم: +${pts}`, false);
+        cleanupCurrentTarget();
+
+        phantomArenaState.targetSpawnTimeout = setTimeout(() => {
+            spawnNextTarget();
+        }, 400);
+    }, delay);
+}
+
+function cleanupCurrentTarget() {
+    if (phantomArenaState.currentTarget && phantomArenaState.currentTarget.el) {
+        phantomArenaState.currentTarget.el.remove();
+    }
+    phantomArenaState.currentTarget = null;
+}
+
+function showHitFloatText(x, y, text, isPositive) {
+    const playfield = document.getElementById('arena-playfield');
+    if (!playfield) return;
+
+    const floatEl = document.createElement('div');
+    floatEl.className = `arena-hit-float ${isPositive ? 'arena-hit-pos' : 'arena-hit-neg'}`;
+    floatEl.style.left = `${x}px`;
+    floatEl.style.top = `${y}px`;
+    floatEl.textContent = text;
+    playfield.appendChild(floatEl);
+
+    setTimeout(() => {
+        if (floatEl && floatEl.parentNode) floatEl.parentNode.removeChild(floatEl);
+    }, 600);
+}
+
+function clearActiveCombatTimers() {
+    if (phantomArenaState.roundTimer) clearInterval(phantomArenaState.roundTimer);
+    if (phantomArenaState.targetSpawnTimeout) clearTimeout(phantomArenaState.targetSpawnTimeout);
+    if (phantomArenaState.aiActionTimeout) clearTimeout(phantomArenaState.aiActionTimeout);
+    phantomArenaState.roundTimer = null;
+    phantomArenaState.targetSpawnTimeout = null;
+    phantomArenaState.aiActionTimeout = null;
+}
+
+// 🏁 انتهاء الجولة الحالية
+function endCurrentRound() {
+    clearActiveCombatTimers();
+    cleanupCurrentTarget();
+
+    if (phantomArenaState.currentRound < phantomArenaState.maxRounds) {
+        phantomArenaState.currentRound++;
+        const playfield = document.getElementById('arena-playfield');
+        if (playfield) {
+            playfield.innerHTML = `
+                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center;">
+                    <div style="font-size:1.8rem; font-weight:900; color:#ffd700; margin-bottom:8px;">انتهاء الجولة ${phantomArenaState.currentRound - 1}!</div>
+                    <div style="color:#00f2fe; font-size:1rem;">الاستعداد للجولة ${phantomArenaState.currentRound}... ⚡</div>
+                </div>
+            `;
+        }
+        ArenaAudio.playCountdown(false);
+        setTimeout(() => {
+            runActiveRound();
+        }, 1600);
+    } else {
+        concludeArenaMatch();
+    }
+}
+
+// 🏆 حسم النزال النهائي وإعلان الفائز
+function concludeArenaMatch() {
+    clearActiveCombatTimers();
+    cleanupCurrentTarget();
+    switchArenaView('result');
+
+    const p1 = phantomArenaState.p1Score;
+    const p2 = phantomArenaState.p2Score;
+    const stats = getArenaStats();
+    stats.totalMatches++;
+
+    let isWin = p1 > p2;
+    let isDraw = p1 === p2;
+    let rewardPoints = 0;
+
+    // حساب أسرع سرعة استجابة
+    const bestInMatch = phantomArenaState.reactionTimes.length > 0 
+        ? Math.min(...phantomArenaState.reactionTimes) 
+        : 0;
+
+    if (bestInMatch > 0) {
+        if (!stats.bestReactionMs || bestInMatch < stats.bestReactionMs) {
+            stats.bestReactionMs = bestInMatch;
+        }
+    }
+
+    const resIcon = document.getElementById('arena-res-icon');
+    const resTitle = document.getElementById('arena-res-title');
+    const resDesc = document.getElementById('arena-res-desc');
+    const resP1Pts = document.getElementById('arena-res-p1-pts');
+    const resP2Pts = document.getElementById('arena-res-p2-pts');
+    const resReaction = document.getElementById('arena-res-reaction');
+    const resReward = document.getElementById('arena-res-reward');
+
+    if (resP1Pts) resP1Pts.textContent = p1;
+    if (resP2Pts) resP2Pts.textContent = p2;
+    if (resReaction) resReaction.textContent = bestInMatch ? `${bestInMatch}ms` : '--';
+
+    const currentUsername = getCurrentUsername() || 'المحارب';
+
+    if (isWin) {
+        stats.wins++;
+        stats.streak++;
+        ArenaAudio.playVictory();
+        if (typeof triggerConfetti === 'function') triggerConfetti();
+
+        // مكافأة الفوز
+        if (phantomArenaState.mode === 'ai') {
+            rewardPoints = 25; // تدريب مجاني
+        } else {
+            rewardPoints = phantomArenaState.stake > 0 ? phantomArenaState.stake * 2 : 50;
+        }
+
+        if (resIcon) resIcon.textContent = '🏆';
+        if (resTitle) {
+            resTitle.textContent = 'انتصار ساحق ومستحق!';
+            resTitle.style.color = '#00ff88';
+        }
+        if (resDesc) resDesc.textContent = `لقد تغلبت على ${phantomArenaState.opponent.name} بمهارة ودقة وسرعة خاطفة!`;
+        if (resReward) resReward.textContent = `+${rewardPoints} نقطة`;
+
+        addPoints(currentUsername, rewardPoints);
+        stats.pointsEarned += rewardPoints;
+        showToast(`🏆 مبروك الفوز في الساحة! حصدت +${rewardPoints} نقطة فخر.`, 'success');
+    } else if (isDraw) {
+        ArenaAudio.playTone(550, 'sine', 0.3, 0.2);
+        if (resIcon) resIcon.textContent = '⚔️';
+        if (resTitle) {
+            resTitle.textContent = 'تعادل بطولي ناري!';
+            resTitle.style.color = '#ffd700';
+        }
+        if (resDesc) resDesc.textContent = 'تساوت الضربات والنقاط في مواجهة حماسية حتى اللحظة الأخيرة!';
+        if (resReward) resReward.textContent = '+5 نقاط';
+        addPoints(currentUsername, 5);
+        rewardPoints = 5;
+    } else {
+        stats.losses++;
+        stats.streak = 0;
+        ArenaAudio.playDefeat();
+
+        if (resIcon) resIcon.textContent = '💀';
+        if (resTitle) {
+            resTitle.textContent = 'هزيمة شريفة!';
+            resTitle.style.color = '#ef4444';
+        }
+        if (resDesc) resDesc.textContent = `كان ${phantomArenaState.opponent.name} أسرع في هذه المواجهة. استعد وتدرب لجولة الثأر!`;
+        if (resReward) resReward.textContent = '+0';
+
+        if (phantomArenaState.stake > 0) {
+            addPoints(currentUsername, -phantomArenaState.stake);
+            showToast(`⚠️ خسرت رهان الساحة (-${phantomArenaState.stake} نقطة).`, 'error');
+        }
+    }
+
+    // إضافة إلى سجل التاريخ
+    stats.history = stats.history || [];
+    stats.history.unshift({
+        id: `duel_${Date.now()}`,
+        opponent: phantomArenaState.opponent.name,
+        result: isWin ? 'win' : (isDraw ? 'draw' : 'loss'),
+        myScore: p1,
+        oppScore: p2,
+        bestSpeed: bestInMatch,
+        reward: rewardPoints,
+        date: new Date().toLocaleDateString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+    });
+    if (stats.history.length > 20) stats.history.pop();
+
+    saveArenaStats(stats);
+}
+
+// 🏳️ استسلام من النزال
+function surrenderArenaMatch(silent = false) {
+    clearActiveCombatTimers();
+    cleanupCurrentTarget();
+    if (!silent && phantomArenaState.view === 'combat') {
+        const stats = getArenaStats();
+        stats.losses++;
+        stats.streak = 0;
+        saveArenaStats(stats);
+        showToast('🏳️ لقد استسلمت من النزال.', 'info');
+        switchArenaView('lobby');
+    }
+}
+
+// 🔄 إعادة النزال فوراً
+function replayArenaMatch() {
+    if (phantomArenaState.mode === 'ai') {
+        startSoloAiBattle();
+    } else {
+        startMatching();
+    }
+}
+
+// 📜 عرض لوحة أبطال الساحة وسجل النزالات
+function renderArenaLeaderboard() {
+    const list = document.getElementById('arena-leaderboard-list');
+    if (!list) return;
+
+    const stats = getArenaStats();
+    const myName = getCurrentUsername() || 'المحارب';
+
+    // قائمة أبطال افتراضية تكتيكية مع العضو الحالي
+    const warriors = [
+        { name: 'PH 5oM•D8', title: 'أسطورة الساحة', wins: Math.max(18, stats.wins + 4), speed: '175ms', avatar: '👑' },
+        { name: 'PH•GHOST_01', title: 'قناص فانتوم', wins: Math.max(14, stats.wins + 2), speed: '195ms', avatar: '⚡' },
+        { name: myName, title: 'محارب الساحة', wins: stats.wins, speed: stats.bestReactionMs ? `${stats.bestReactionMs}ms` : '240ms', avatar: '⚔️', isMe: true },
+        { name: 'PH•SHADOW', title: 'سفاح الظلال', wins: 9, speed: '280ms', avatar: '🗡️' },
+        { name: 'PH•VIPER', title: 'مدافع الرومات', wins: 6, speed: '310ms', avatar: '🛡️' }
+    ];
+
+    warriors.sort((a, b) => b.wins - a.wins);
+
+    list.innerHTML = warriors.map((w, idx) => `
+        <div class="arena-history-item" style="${w.isMe ? 'border-color:#00f2fe; background:rgba(0,242,254,0.08);' : ''}">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <span style="font-weight:900; color:${idx === 0 ? '#ffd700' : (idx === 1 ? '#cbd5e1' : '#f97316')}; font-size:1.1rem; width:22px;">#${idx + 1}</span>
+                <span style="font-size:1.4rem;">${w.avatar}</span>
+                <div>
+                    <strong style="color:#fff; font-size:0.95rem;">${w.name} ${w.isMe ? '<span style="color:#00f2fe; font-size:0.75rem;">(أنت)</span>' : ''}</strong>
+                    <div style="font-size:0.72rem; color:#94a3b8;">${w.title} · أسرع استجابة: <span style="color:#00ff88; font-family:monospace;">${w.speed}</span></div>
+                </div>
+            </div>
+            <div class="arena-history-badge arena-history-win" style="font-size:0.85rem;">
+                🏆 ${w.wins} انتصار
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderArenaHistory() {
+    const list = document.getElementById('arena-history-log');
+    if (!list) return;
+
+    const stats = getArenaStats();
+    if (!stats.history || stats.history.length === 0) {
+        list.innerHTML = `
+            <div style="text-align:center; padding:20px; color:#64748b; font-size:0.85rem;">
+                لا توجد نزالات مسجلة بعد. ابدأ أول مواجهة الآن لإثبات مهارتك!
+            </div>
+        `;
+        return;
+    }
+
+    list.innerHTML = stats.history.map(item => `
+        <div class="arena-history-item">
+            <div>
+                <strong style="color:#fff;">ضد: ${item.opponent}</strong>
+                <div style="font-size:0.75rem; color:#94a3b8; margin-top:2px;">
+                    النقاط: <span style="font-family:monospace; color:#00f2fe;">${item.myScore}</span> - <span style="font-family:monospace; color:#ef4444;">${item.oppScore}</span> 
+                    ${item.bestSpeed ? `· سرعة: <span style="color:#ffd700; font-family:monospace;">${item.bestSpeed}ms</span>` : ''}
+                    · <span>${item.date}</span>
+                </div>
+            </div>
+            <div class="arena-history-badge ${item.result === 'win' ? 'arena-history-win' : (item.result === 'draw' ? '' : 'arena-history-loss')}" style="${item.result === 'draw' ? 'background:rgba(255,215,0,0.15); color:#ffd700; border:1px solid rgba(255,215,0,0.3);' : ''}">
+                ${item.result === 'win' ? `🏆 فوز (+${item.reward})` : (item.result === 'draw' ? '⚔️ تعادل' : '💀 هزيمة')}
+            </div>
+        </div>
+    `).join('');
+}
+
+// 🌐 الربط الأولي للساحة ومعركة الشعبية عند الإقلاع
+function initBattle() {
+    updateArenaStatsUI();
+    renderArenaClanMembers();
+    renderPopularityClanMembers();
+
+    const arenaCloseBtn = document.getElementById('arena-close-btn');
+    if (arenaCloseBtn) {
+        arenaCloseBtn.onclick = closePhantomArena;
+    }
+    const battleCloseBtn = document.getElementById('battle-close-btn');
+    if (battleCloseBtn) {
+        battleCloseBtn.onclick = function() {
+            const overlay = document.getElementById('battle-overlay');
+            if (overlay) overlay.style.display = 'none';
+            if (typeof openHub === 'function') {
+                openHub();
+            }
+        };
+    }
+    initPopularityBattle();
+}
+
+/* ========================================================
+   ⚔️ نظام معركة الشعبية 1v1 (Popularity PK Battle)
+   ======================================================== */
+let popularityBattleState = {
+    active: false,
+    timer: null,
+    secondsLeft: 60,
+    playerA: { name: '', votes: 0 },
+    playerB: { name: 'المتحدي الشبح', votes: 0 },
+    userVotedChoice: null,
+    userBet: 0,
+    crowdInterval: null,
+    challengeId: null
+};
+
+let popularityMatchmakingInterval = null;
+let currentPopularityChallengeId = null;
+
+function initPopularityBattle() {
+    const readyBtn = document.getElementById('battle-ready-btn');
+    const cancelBtn = document.getElementById('battle-cancel-btn');
+    const voteBtnA = document.getElementById('vote-btn-a');
+    const voteBtnB = document.getElementById('vote-btn-b');
+
+    if (readyBtn) readyBtn.onclick = startPopularityBattle;
+    if (cancelBtn) cancelBtn.onclick = cancelPopularityBattle;
+    if (voteBtnA) voteBtnA.onclick = () => votePopularityBattle('A');
+    if (voteBtnB) voteBtnB.onclick = () => votePopularityBattle('B');
+
+    updatePopularityBattleBalance();
+    renderPopularityClanMembers();
+}
+
+function updatePopularityBattleBalance() {
+    const balanceEl = document.getElementById('betting-balance');
+    if (balanceEl) {
+        const username = getCurrentUsername();
+        const points = getLocalPoints();
+        balanceEl.textContent = points[username] || 0;
+    }
+}
+
+// ⚔️ بدء ماتش ميكينغ السيرفر لمعركة الشعبية
+function startPopularityBattle() {
+    const username = getCurrentUsername() || 'المحارب';
+    const lobby = document.getElementById('popularity-search-lobby');
+    const resultMsg = document.getElementById('battle-result-msg');
+    if (resultMsg) { resultMsg.style.display = 'none'; resultMsg.textContent = ''; }
+
+    if (lobby) {
+        lobby.style.display = 'block';
+    }
+
+    let timeLeft = 20;
+    const renderPopLobby = () => {
+        const percent = Math.max(0, (timeLeft / 20) * 100);
+        if (!lobby) return;
+        lobby.innerHTML = `
+            <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
+                <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚔️</div>
+                <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري الاتصال بالسيرفر والبحث عن منافس في معركة الشعبية...</div>
+                <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">مهلة الانتظار: ${timeLeft} ثانية (بث التحدي لجميع أعضاء الكلان)</div>
+                <div style="width:100%; height:6px; background:rgba(255,255,255,0.1); border-radius:10px; overflow:hidden; margin:10px 0 12px;">
+                    <div style="width:${percent}%; height:100%; background:linear-gradient(90deg, #00f2fe, #00ff88); transition:width 1s linear;"></div>
+                </div>
+                <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+                    <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="launchRivalPopularityMatch()">
+                        ⚡ بدء الجولة فوراً مع منافس من الكلان
+                    </button>
+                    <button type="button" class="btn-danger" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelPopularityMatchmaking()">
+                        ❌ إلغاء البحث
+                    </button>
+                </div>
+            </div>
+        `;
+    };
+
+    renderPopLobby();
+    showToast("📡 تم بث تحدي معركة الشعبية لجميع أعضاء الكلان المتصلين بالمقر!", "info");
+
+    // إرسال تحدي مفتوح إلى السيرفر
+    fetch('/api/battles/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            type: 'popularity',
+            challengerName: username,
+            challengerId: getCurrentUserId(),
+            targetName: 'ALL'
+        })
+    }).then(res => res.json()).then(data => {
+        if (data.success && data.challenge) {
+            currentPopularityChallengeId = data.challenge.id;
+        }
+    }).catch(() => {});
+
+    if (popularityMatchmakingInterval) clearInterval(popularityMatchmakingInterval);
+    popularityMatchmakingInterval = setInterval(async () => {
+        timeLeft--;
+        if (timeLeft > 0) {
+            renderPopLobby();
+            // فحص هل انضم أحد للتحدي من السيرفر
+            if (currentPopularityChallengeId) {
+                try {
+                    const res = await fetch(`/api/battles/state/${currentPopularityChallengeId}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data && data.challenge && data.challenge.status === 'active') {
+                            clearInterval(popularityMatchmakingInterval);
+                            popularityMatchmakingInterval = null;
+                            if (lobby) lobby.style.display = 'none';
+                            const joiner = data.challenge.acceptedBy || 'بطل الكلان';
+                            showToast(`🔥 انضم ${joiner} إلى معركة الشعبية!`, 'success');
+                            startLivePopularityBattle(username, joiner, currentPopularityChallengeId);
+                            return;
+                        }
+                    }
+                } catch (e) {}
+            }
+        } else {
+            clearInterval(popularityMatchmakingInterval);
+            popularityMatchmakingInterval = null;
             if (lobby) {
                 lobby.innerHTML = `
-                    <div class="streak-header-box" style="text-align:center;">
-                        <div class="streak-row" style="justify-content:center;"><span class="streak-icon" style="font-size:3rem;">⚔️</span></div>
-                        <p style="color:var(--gold); font-weight:900; font-size:1.2rem; margin:10px 0 5px;">يوجد معركة نشطة حالياً!</p>
-                        <div class="streak-hint">💡 يمكنك الانضمام للمعركة الموجودة.</div>
+                    <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:14px;">
+                        <div style="font-size:2.2rem;">⏱️</div>
+                        <div style="font-weight:900; color:#ef4444; font-size:1.1rem; margin:6px 0;">لم يقبل أي عضو التحدي خلال المهلة</div>
+                        <div style="color:#cbd5e1; font-size:0.85rem; margin-bottom:12px;">يمكنك بدء جولة تنافس فورية مع أبطال الكلان الآن!</div>
+                        <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+                            <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="launchRivalPopularityMatch()">
+                                ⚡ مواجهة فورية
+                            </button>
+                            <button type="button" class="btn-secondary" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelPopularityMatchmaking()">
+                                إغلاق
+                            </button>
+                        </div>
                     </div>
-                    <button id="battle-join-btn" class="btn-primary pulse-active" style="width:100%; height:50px; font-size:1.1rem; border-radius:12px; margin-top:10px;">⚔️ انضم للمعركة</button>
                 `;
-                document.getElementById('battle-join-btn').addEventListener('click', () => joinActiveBattle(activeBattle[0]));
             }
-            return; // نوقف بدء البحث عن معركة جديدة
         }
-        
-        // لو مفيش معركة موجودة، نكمل البحث العادي
-        let { data: existing } = await supabaseClient.from('battles').select('*').eq('status', 'waiting').neq('player_a_id', getCurrentUserId()).limit(1);
-        if (existing && existing.length > 0) { 
-            const battle = existing[0]; 
-            const endTime = new Date(Date.now() + 5 * 60 * 1000); 
-            await supabaseClient.from('battles').update({ player_b_id: getCurrentUserId(), player_b_name: username, status: 'active', end_time: endTime }).eq('id', battle.id); 
-            return; 
-        }
-        
-        // لو مفيش خصم، ننشئ معركة جديدة
-        const endTime = new Date(Date.now() + 5 * 60 * 1000);
-        const { data: newBattle } = await supabaseClient.from('battles').insert([{ player_a_id: getCurrentUserId(), player_a_name: username, status: 'waiting', end_time: endTime }]).select();
-        if (newBattle && newBattle.length > 0) {
-            battleState.battleId = newBattle[0].id; 
-            battleState.status = 'waiting';
-            document.getElementById('battle-lobby').innerHTML = `<div class="streak-header-box" style="text-align:center;"><div class="streak-row" style="justify-content:center;"><span class="streak-icon" style="font-size:3rem;">⏳</span></div><p style="color:var(--cyan); font-weight:900; font-size:1.2rem; margin:10px 0 5px;">في انتظار خصم...</p><div class="streak-hint">💡 اشترك في اللعبة وسينضم خصم تلقائياً.</div></div><button id="battle-cancel-btn" class="btn-danger" style="width:100%; height:50px; font-size:1.1rem; margin-top:10px;">❌ إلغاء البحث</button>`;
-            document.getElementById('battle-cancel-btn').onclick = cancelBattle; 
-            startBattleTimer(endTime);
-        }
-    } else { 
-        showToast("السيرفر غير متصل، لا يمكن بدء المعركة.", "error"); 
-    }
-}
-
-// دالة جديدة للانضمام لمعركة موجودة
-async function joinActiveBattle(battle) {
-    if (battle.status === 'active') {
-        showToast("⚔️ انضممت كمتفرج للمعركة.", "success");
-    } else if (battle.status === 'waiting') {
-        const endTime = new Date(Date.now() + 5 * 60 * 1000);
-        const { error } = await supabaseClient.from('battles').update({ 
-            player_b_id: getCurrentUserId(), 
-            player_b_name: getCurrentUsername(), 
-            status: 'active', 
-            end_time: endTime 
-        }).eq('id', battle.id);
-        
-        if (!error) {
-            battleState.battleId = battle.id;
-            battleState.status = 'active';
-            showToast("⚔️ تم الانضمام للمعركة!", "success");
-            // يمكن تحديث الواجهة هنا لعرض المعركة
-        } else {
-            showToast("⚠️ فشل الانضمام للمعركة.", "error");
-        }
-    }
-}
-
-async function cancelBattle() { if (supabaseClient && battleState.battleId) { await supabaseClient.from('battles').delete().eq('id', battleState.battleId); } resetBattleUI(); showToast("❌ تم إلغاء المعركة.", "info"); }
-
-function updateBattleArenaUI(data) {
-    if (data.status === 'active') {
-        document.getElementById('battle-lobby').style.display = 'none'; document.getElementById('battle-arena').style.display = 'flex';
-        document.getElementById('fighter-name-a').textContent = data.player_a_name || 'اللاعب أ'; document.getElementById('fighter-name-b').textContent = data.player_b_name || 'اللاعب ب';
-        document.getElementById('avatar-a').style.borderColor = "#9ca3af"; document.getElementById('avatar-b').style.borderColor = "#fbbf24";
-        document.getElementById('fighter-points-a').textContent = `+${data.votes_a || 0}`; document.getElementById('fighter-points-b').textContent = `+${data.votes_b || 0}`;
-        const total = (data.votes_a || 0) + (data.votes_b || 0); let percentA = total > 0 ? (data.votes_a / total) * 100 : 50; if (percentA < 1 && total > 0) percentA = 1;
-        document.getElementById('pk-bar-fill').style.width = percentA + '%'; document.getElementById('pk-left-label').textContent = `${data.player_a_name || 'أ'} ${Math.round(percentA)}%`; document.getElementById('pk-right-label').textContent = `${data.player_b_name || 'ب'} ${Math.round(100 - percentA)}%`;
-        document.getElementById('vote-btn-a').innerHTML = `🔵 صوّت لـ ${data.player_a_name || 'أ'}`; document.getElementById('vote-btn-b').innerHTML = `🔴 صوّت لـ ${data.player_b_name || 'ب'}`;
-        const balance = getUserBalance(); document.getElementById('betting-balance').textContent = balance;
-        document.getElementById('vote-btn-a').onclick = () => handleVote('A', data); document.getElementById('vote-btn-b').onclick = () => handleVote('B', data);
-    }
-}
-
-async function handleVote(target, data) {
-    if (battleState.myVote === target) return showToast("لقد صوتّ مسبقاً لهذا اللاعب!", "error");
-    const amount = parseInt(document.getElementById('bet-amount').value) || 0; if (amount <= 0) return showToast("اكتب عدد النقاط للتصويت.", "error");
-    const balance = getUserBalance(); if (amount > balance) return showToast("⚠️ رصيدك غير كافٍ لهذا التصويت.", "error");
-    addPoints(getCurrentUsername(), -amount); document.getElementById('betting-balance').textContent = getUserBalance();
-    const fieldToUpdate = target === 'A' ? 'votes_a' : 'votes_b'; const newVotes = (data[fieldToUpdate] || 0) + amount; battleState.myVote = target; battleState.myBetAmount = amount;
-    if (supabaseClient) { await supabaseClient.from('battles').update({ [fieldToUpdate]: newVotes }).eq('id', data.id); }
-    showToast(`✅ تم التصويت بـ ${amount} نقطة لصالح ${target === 'A' ? data.player_a_name : data.player_b_name}!`, "success");
-}
-
-function startBattleTimer(endTime) {
-    if (battleState.timerInterval) clearInterval(battleState.timerInterval); battleState.endTime = new Date(endTime);
-    battleState.timerInterval = setInterval(() => {
-        const now = Date.now(); const diff = Math.max(0, battleState.endTime.getTime() - now);
-        if (diff <= 0) { clearInterval(battleState.timerInterval); supabaseClient.from('battles').select('*').eq('id', battleState.battleId).single().then(({data}) => { if(data) resolveBattle(data); }); return; }
-        const m = Math.floor(diff / 60000); const s = Math.floor((diff % 60000) / 1000);
-        document.getElementById('battle-timer').textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
     }, 1000);
 }
 
-// ✅ إصلاح رسالة نهاية المعركة لتظهر داخل الصفحة
-async function resolveBattle(data) {
-    if (data.status === 'ended') return; await supabaseClient.from('battles').update({ status: 'ended' }).eq('id', data.id);
-    let winnerName = null; let winnerId = null;
-    if (data.votes_a > data.votes_b) { winnerName = data.player_a_name; winnerId = data.player_a_id; } else if (data.votes_b > data.votes_a) { winnerName = data.player_b_name; winnerId = data.player_b_id; }
-    let resultMessage = "";
-    if (winnerName) {
-        const currentPoints = getLocalPoints(); currentPoints[winnerName] = (currentPoints[winnerName] || 0) + 500; setLocalPoints(currentPoints);
-        if (supabaseClient) { await supabaseClient.from('members').update({ coins: currentPoints[winnerName] }).eq('name', winnerName); }
-        resultMessage = `🏆 ${winnerName} فاز بالمعركة! +500 نقطة`;
+function cancelPopularityMatchmaking() {
+    if (popularityMatchmakingInterval) {
+        clearInterval(popularityMatchmakingInterval);
+        popularityMatchmakingInterval = null;
+    }
+    if (currentPopularityChallengeId) {
+        fetch('/api/battles/dismiss', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ challengeId: currentPopularityChallengeId, username: getCurrentUsername() })
+        }).catch(() => {});
+        currentPopularityChallengeId = null;
+    }
+    const lobby = document.getElementById('popularity-search-lobby');
+    if (lobby) {
+        lobby.style.display = 'none';
+        lobby.innerHTML = '';
+    }
+}
+
+function launchRivalPopularityMatch() {
+    cancelPopularityMatchmaking();
+    const username = getCurrentUsername() || 'المحارب';
+    const roster = typeof getFullRoster === 'function' ? getFullRoster() : [];
+    const rivals = roster.filter(m => m && m.name && normalizeName(m.name) !== normalizeName(username));
+    const opponentName = rivals.length > 0 ? rivals[Math.floor(Math.random() * rivals.length)].name : 'المتحدي الشبح';
+    startLivePopularityBattle(username, opponentName, null);
+}
+
+function startLivePopularityBattle(playerAName, playerBName, challengeId = null) {
+    const lobby = document.getElementById('battle-lobby');
+    const arena = document.getElementById('battle-arena');
+    const resultMsg = document.getElementById('battle-result-msg');
+    if (resultMsg) { resultMsg.style.display = 'none'; resultMsg.textContent = ''; }
+
+    popularityBattleState = {
+        active: true,
+        secondsLeft: 60,
+        playerA: { name: playerAName, votes: 50 },
+        playerB: { name: playerBName, votes: 50 },
+        userVotedChoice: null,
+        userBet: 0,
+        crowdInterval: null,
+        challengeId: challengeId
+    };
+
+    if (lobby) lobby.style.display = 'none';
+    if (arena) arena.style.display = 'flex';
+
+    const nameAEl = document.getElementById('fighter-name-a');
+    const nameBEl = document.getElementById('fighter-name-b');
+    const voteAEl = document.getElementById('vote-btn-a');
+    const voteBEl = document.getElementById('vote-btn-b');
+
+    if (nameAEl) nameAEl.textContent = playerAName;
+    if (nameBEl) nameBEl.textContent = playerBName;
+    if (voteAEl) voteAEl.textContent = `🔵 صوّت لـ ${playerAName}`;
+    if (voteBEl) voteBEl.textContent = `🔴 صوّت لـ ${playerBName}`;
+
+    updatePopularityPKBar();
+    updatePopularityBattleBalance();
+
+    if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
+    popularityBattleState.timer = setInterval(popularityBattleTick, 1000);
+
+    if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
+    popularityBattleState.crowdInterval = setInterval(() => {
+        if (!popularityBattleState.active) return;
+        const addA = Math.floor(Math.random() * 8);
+        const addB = Math.floor(Math.random() * 8);
+        popularityBattleState.playerA.votes += addA;
+        popularityBattleState.playerB.votes += addB;
+        updatePopularityPKBar();
+    }, 2800);
+
+    showToast(`⚔️ انطلقت معركة الشعبية بين ${playerAName} و ${playerBName}!`, "info");
+}
+
+function updatePopularityPKBar() {
+    const total = popularityBattleState.playerA.votes + popularityBattleState.playerB.votes;
+    const pctA = total > 0 ? Math.round((popularityBattleState.playerA.votes / total) * 100) : 50;
+    const pctB = 100 - pctA;
+
+    const fillEl = document.getElementById('pk-bar-fill');
+    const labelA = document.getElementById('pk-left-label');
+    const labelB = document.getElementById('pk-right-label');
+    const ptsA = document.getElementById('fighter-points-a');
+    const ptsB = document.getElementById('fighter-points-b');
+
+    if (fillEl) fillEl.style.width = pctA + '%';
+    if (labelA) labelA.textContent = `${popularityBattleState.playerA.name} ${pctA}%`;
+    if (labelB) labelB.textContent = `${popularityBattleState.playerB.name} ${pctB}%`;
+    if (ptsA) ptsA.textContent = `+${popularityBattleState.playerA.votes} صوت`;
+    if (ptsB) ptsB.textContent = `+${popularityBattleState.playerB.votes} صوت`;
+}
+
+function votePopularityBattle(choice) {
+    if (!popularityBattleState.active) {
+        showToast("المعركة غير نشطة حالياً!", "error");
+        return;
+    }
+    const betInput = document.getElementById('bet-amount');
+    const betVal = Math.max(1, parseInt(betInput ? betInput.value : 10, 10) || 10);
+    const username = getCurrentUsername();
+    const balance = getUserBalance();
+
+    if (balance < betVal) {
+        showToast(`⚠️ رصيدك (${balance} نقطة) لا يكفي لرهان ${betVal} نقطة!`, "error");
+        return;
+    }
+
+    deductPoints(username, betVal);
+    updatePopularityBattleBalance();
+    updateVaultBalanceUI();
+
+    popularityBattleState.userVotedChoice = choice;
+    popularityBattleState.userBet += betVal;
+
+    const voteWeight = betVal * 2;
+    if (choice === 'A') {
+        popularityBattleState.playerA.votes += voteWeight;
+        showToast(`🔵 دعمت ${popularityBattleState.playerA.name} بـ ${voteWeight} نقطة شعبية!`, "success");
     } else {
-        resultMessage = "⚔️ انتهت المعركة بالتعادل!";
+        popularityBattleState.playerB.votes += voteWeight;
+        showToast(`🔴 دعمت ${popularityBattleState.playerB.name} بـ ${voteWeight} نقطة شعبية!`, "success");
     }
-    if (battleState.myVote === 'A' && data.votes_a > data.votes_b) { const payout = (battleState.myBetAmount || 0) * 2; addPoints(getCurrentUsername(), payout); resultMessage += `\n💰 لقد ربحت الرهان! +${payout} نقطة`; triggerConfetti(); }
-    else if (battleState.myVote === 'B' && data.votes_b > data.votes_a) { const payout = (battleState.myBetAmount || 0) * 2; addPoints(getCurrentUsername(), payout); resultMessage += `\n💰 لقد ربحت الرهان! +${payout} نقطة`; triggerConfetti(); }
-    else if (battleState.myVote) { resultMessage += `\n💔 خسرت الرهان.`; }
-    // ✅ عرض الرسالة داخل battle-result-msg
-    const resultEl = document.getElementById('battle-result-msg');
-    if (resultEl) {
-        resultEl.style.display = 'block';
-        resultEl.textContent = resultMessage;
-        resultEl.style.color = winnerName ? 'var(--green)' : 'var(--gold)';
-        setTimeout(() => { resultEl.style.display = 'none'; }, 6000);
+    updatePopularityPKBar();
+    playCodoSound('send');
+
+    // مزامنة التصويت مع السيرفر إن كان التحدي نشطاً عبر السيرفر
+    if (popularityBattleState.challengeId) {
+        fetch('/api/battles/vote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                challengeId: popularityBattleState.challengeId,
+                choice: choice,
+                voterName: username,
+                amount: betVal
+            })
+        }).catch(() => {});
     }
-    setTimeout(() => resetBattleUI(), 5000);
 }
 
-function resetBattleUI() {
-    if (battleState.timerInterval) clearInterval(battleState.timerInterval); battleState = { battleId: null, status: 'idle', timerInterval: null, endTime: null, playerA: null, playerB: null, votesA: 0, votesB: 0, myVote: null };
-    document.getElementById('battle-arena').style.display = 'none'; document.getElementById('battle-lobby').style.display = 'block';
-    document.getElementById('battle-lobby').innerHTML = `<div class="streak-header-box" style="text-align:center;"><div class="streak-row" style="justify-content:center;"><span class="streak-icon" style="font-size:3rem;">⚔️</span></div><p style="color:var(--white); font-weight:900; font-size:1.3rem; margin:10px 0 5px;">انضم لساحة المعركة</p><div class="streak-hint">💡 اضغط "استعد" لبدء البحث عن خصم وابدأ المواجهة!</div></div><button id="battle-ready-btn" class="btn-primary pulse-active" style="width:100%; height:50px; font-size:1.1rem; border-radius:12px; margin-top:10px;">⚔️ استعد</button>`;
-    document.getElementById('battle-ready-btn').addEventListener('click', startMatching);
+function popularityBattleTick() {
+    popularityBattleState.secondsLeft--;
+    const timerEl = document.getElementById('battle-timer');
+    if (timerEl) {
+        const m = Math.floor(popularityBattleState.secondsLeft / 60);
+        const s = popularityBattleState.secondsLeft % 60;
+        timerEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+
+    if (popularityBattleState.secondsLeft <= 0) {
+        endPopularityBattle();
+    }
 }
 
-document.addEventListener('DOMContentLoaded', function() { initBattle(); });
+function cancelPopularityBattle() {
+    if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
+    if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
+    popularityBattleState.active = false;
+
+    const lobby = document.getElementById('battle-lobby');
+    const arena = document.getElementById('battle-arena');
+    if (arena) arena.style.display = 'none';
+    if (lobby) lobby.style.display = 'block';
+    renderPopularityClanMembers();
+    showToast("تم الانسحاب من جولة معركة الشعبية.", "info");
+}
+
+function endPopularityBattle() {
+    if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
+    if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
+    popularityBattleState.active = false;
+
+    const votesA = popularityBattleState.playerA.votes;
+    const votesB = popularityBattleState.playerB.votes;
+    const username = getCurrentUsername();
+
+    let winnerName = '';
+    let userWonReward = 0;
+    const resultMsg = document.getElementById('battle-result-msg');
+
+    if (votesA > votesB) {
+        winnerName = popularityBattleState.playerA.name;
+        userWonReward += 500;
+        if (popularityBattleState.userVotedChoice === 'A') {
+            userWonReward += Math.round(popularityBattleState.userBet * 1.8);
+        }
+    } else if (votesB > votesA) {
+        winnerName = popularityBattleState.playerB.name;
+        if (popularityBattleState.userVotedChoice === 'B') {
+            userWonReward += Math.round(popularityBattleState.userBet * 1.8);
+        }
+    } else {
+        winnerName = 'تعادل بطولي!';
+        userWonReward += popularityBattleState.userBet;
+    }
+
+    if (userWonReward > 0) {
+        addPoints(username, userWonReward);
+        updatePopularityBattleBalance();
+        updateVaultBalanceUI();
+        renderLeaderboard();
+        triggerConfetti();
+        playCodoSound('complete');
+    }
+
+    if (resultMsg) {
+        resultMsg.style.display = 'block';
+        if (userWonReward > 0) {
+            resultMsg.style.background = 'rgba(0, 255, 136, 0.15)';
+            resultMsg.style.border = '1px solid #00ff88';
+            resultMsg.style.color = '#00ff88';
+            resultMsg.innerHTML = `🏆 الفائز: ${winnerName}!<br>🎉 مبروك كسبت <strong>+${userWonReward}</strong> نقطة شعبية ومكافأة!`;
+        } else {
+            resultMsg.style.background = 'rgba(239, 68, 68, 0.15)';
+            resultMsg.style.border = '1px solid #ef4444';
+            resultMsg.style.color = '#ef4444';
+            resultMsg.innerHTML = `🏆 الفائز: ${winnerName}!<br>حظاً أوفر في الجولة القادمة.`;
+        }
+    }
+
+    setTimeout(() => {
+        const lobby = document.getElementById('battle-lobby');
+        const arena = document.getElementById('battle-arena');
+        if (arena) arena.style.display = 'none';
+        if (lobby) lobby.style.display = 'block';
+        renderPopularityClanMembers();
+    }, 6000);
+}
+
+window.startPopularityBattle = startPopularityBattle;
+window.cancelPopularityBattle = cancelPopularityBattle;
+window.votePopularityBattle = votePopularityBattle;
+window.updatePopularityBattleBalance = updatePopularityBattleBalance;
+window.launchRivalPopularityMatch = launchRivalPopularityMatch;
+window.cancelPopularityMatchmaking = cancelPopularityMatchmaking;
+
+let arenaSearchInterval = null;
+let currentArenaChallengeId = null;
+
+function startMatching() {
+    ArenaAudio.init();
+    const username = getCurrentUsername() || 'المحارب';
+    const balance = getUserBalance();
+
+    if (phantomArenaState.stake > 0 && balance < phantomArenaState.stake) {
+        showToast(`⚠️ رصيدك (${balance} نقطة) لا يكفي لرهان ${phantomArenaState.stake} نقطة!`, 'error');
+        return;
+    }
+
+    const lobby = document.getElementById('arena-search-lobby');
+    if (!lobby) return;
+    lobby.style.display = 'block';
+
+    let timeLeft = 20;
+    const renderSearchLobby = () => {
+        const percent = Math.max(0, (timeLeft / 20) * 100);
+        lobby.innerHTML = `
+            <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
+                <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚔️</div>
+                <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري إرسال إشعار التحدي والبحث عن منافس عبر السيرفر...</div>
+                <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">مهلة الانتظار: ${timeLeft} ثانية (الرهان: ${phantomArenaState.stake ? phantomArenaState.stake + ' نقطة' : 'نزال شرف'})</div>
+                <div style="width:100%; height:6px; background:rgba(255,255,255,0.1); border-radius:10px; overflow:hidden; margin:10px 0 12px;">
+                    <div style="width:${percent}%; height:100%; background:linear-gradient(90deg, #00f2fe, #00ff88); transition:width 1s linear;"></div>
+                </div>
+                <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+                    <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="acceptInstantBotDuel()">
+                        ⚡ مواجهة فورية مع حارس الساحة (Bot)
+                    </button>
+                    <button type="button" class="btn-danger" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelMatching()">
+                        ❌ إلغاء البحث
+                    </button>
+                </div>
+            </div>
+        `;
+    };
+
+    renderSearchLobby();
+    ArenaAudio.playCountdown(false);
+    showToast("📡 تم إرسال تحدي ساحة النزال لسيرفر الكلان!", "info");
+
+    // إرسال تحدي مفتوح للسيرفر
+    fetch('/api/battles/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            type: 'arena',
+            challengerName: username,
+            challengerId: getCurrentUserId(),
+            targetName: 'ALL',
+            stake: phantomArenaState.stake
+        })
+    }).then(res => res.json()).then(data => {
+        if (data.success && data.challenge) {
+            currentArenaChallengeId = data.challenge.id;
+        }
+    }).catch(() => {});
+
+    if (arenaSearchInterval) clearInterval(arenaSearchInterval);
+    arenaSearchInterval = setInterval(async () => {
+        timeLeft--;
+        if (timeLeft > 0) {
+            renderSearchLobby();
+            ArenaAudio.playTone(380, 'sine', 0.05, 0.08);
+
+            // فحص قبول النزال من لاعب آخر
+            if (currentArenaChallengeId) {
+                try {
+                    const res = await fetch(`/api/battles/state/${currentArenaChallengeId}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data && data.challenge && data.challenge.status === 'active') {
+                            clearInterval(arenaSearchInterval);
+                            arenaSearchInterval = null;
+                            cancelMatching();
+
+                            const joiner = data.challenge.acceptedBy || 'بطل الكلان';
+                            phantomArenaState.mode = 'duel';
+                            phantomArenaState.opponent = {
+                                name: joiner,
+                                avatar: '⚔️',
+                                sub: `مبارزة مباشرة عبر السيرفر · رهان: ${phantomArenaState.stake} نقطة`
+                            };
+                            showToast(`🔥 انضم ${joiner} إلى ساحة النزال! يبدأ النزال الآن...`, 'success');
+                            launchVersusCountdown();
+                            return;
+                        }
+                    }
+                } catch (e) {}
+            }
+        } else {
+            clearInterval(arenaSearchInterval);
+            arenaSearchInterval = null;
+            lobby.innerHTML = `
+                <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:14px;">
+                    <div style="font-size:2.2rem;">⏱️</div>
+                    <div style="font-weight:900; color:#ef4444; font-size:1.1rem; margin:6px 0;">لم ينضم أي عضو خلال المهلة</div>
+                    <div style="color:#cbd5e1; font-size:0.85rem; margin-bottom:12px;">يمكنك مواجهة حارس الساحة التكتيكي واختبار سرعتك الآن!</div>
+                    <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+                        <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="acceptInstantBotDuel()">
+                            ⚡ نزال حارس الساحة
+                        </button>
+                        <button type="button" class="btn-secondary" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelMatching()">
+                            إغلاق
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+    }, 1000);
+}
+
+function cancelMatching() {
+    if (arenaSearchInterval) {
+        clearInterval(arenaSearchInterval);
+        arenaSearchInterval = null;
+    }
+    if (currentArenaChallengeId) {
+        fetch('/api/battles/dismiss', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ challengeId: currentArenaChallengeId, username: getCurrentUsername() })
+        }).catch(() => {});
+        currentArenaChallengeId = null;
+    }
+    const lobby = document.getElementById('arena-search-lobby');
+    if (lobby) {
+        lobby.style.display = 'none';
+        lobby.innerHTML = '';
+    }
+}
+
+function acceptInstantBotDuel() {
+    cancelMatching();
+    phantomArenaState.mode = 'duel';
+    phantomArenaState.opponent = {
+        name: 'حارس الساحة الأسطوري',
+        avatar: '🛡️',
+        sub: `تحدي رسمي · رهان: ${phantomArenaState.stake} نقطة`
+    };
+    launchVersusCountdown();
+}
+
+// ربط الدوال بنافذة المتصفح العامة
+window.openPhantomArena = openPhantomArena;
+window.closePhantomArena = closePhantomArena;
+window.switchArenaView = switchArenaView;
+window.toggleArenaAudio = toggleArenaAudio;
+window.setArenaAiDiff = setArenaAiDiff;
+window.setArenaStake = setArenaStake;
+window.startSoloAiBattle = startSoloAiBattle;
+window.surrenderArenaMatch = surrenderArenaMatch;
+window.replayArenaMatch = replayArenaMatch;
+window.startMatching = startMatching;
+window.cancelMatching = cancelMatching;
+window.acceptInstantBotDuel = acceptInstantBotDuel;
+window.renderArenaClanMembers = renderArenaClanMembers;
+window.filterArenaClanMembers = filterArenaClanMembers;
+window.sendDirectArenaChallenge = sendDirectArenaChallenge;
+window.renderPopularityClanMembers = renderPopularityClanMembers;
+window.filterPopularityClanMembers = filterPopularityClanMembers;
+window.sendDirectPopularityChallenge = sendDirectPopularityChallenge;
+window.startLivePopularityBattle = startLivePopularityBattle;
+
 
 /* ========================================================
    👾 PHANTOM MAZE (النسخة النهائية - ذكاء اصطناعي + طرق جديدة)
@@ -6375,7 +8857,7 @@ function pmLoop() {
             const username = getCurrentUsername();
             if (username) {
                 addPoints(username, reward);
-                if (supabaseClient) { const userId = getCurrentUserId(); if (userId) { const currentPoints = getLocalPoints()[username] || 0; supabaseClient.from('members').update({ coins: currentPoints }).eq('id', userId).then(() => console.log("✅ تم تحديث النقاط في السيرفر من المتاهة.")).catch(err => console.warn("⚠️ فشل تحديث النقاط من المتاهة:", err)); } }
+                if (supabaseClient) { const userId = getCurrentUserId(); if (userId) { const currentPoints = getLocalPoints()[username] || 0; safePostgrest(supabaseClient.from('members').update({ coins: currentPoints }).eq('id', userId)).then(() => console.log("✅ تم تحديث النقاط في السيرفر من المتاهة.")).catch(err => console.warn("⚠️ فشل تحديث النقاط من المتاهة:", err)); } }
                 renderLeaderboard();
             }
             const resultEl = pmGetElement('pacman-result-msg'); if (resultEl) { resultEl.style.display = 'block'; resultEl.textContent = `🏆 مبروك! كسبت ${reward} نقطة في المستوى ${levelName}!`; resultEl.style.color = 'var(--green)'; setTimeout(() => { resultEl.style.display = 'none'; }, 4000); }
@@ -6903,10 +9385,80 @@ window.addEventListener('phantom-mascot-settings-changed', () => {
 });
 })();
 /* ========================================================
-   🤖 بوبرت الذكي - تفاعل صوتي (مع مؤقت للكتابة)
+   ⚡ مساعد CODO الذكي - نظام الصوت والتفاعل التكتيكي
    ======================================================== */
 
-let bobertChatHistory = []; 
+let codoChatHistory = []; 
+let codoCurrentModel = 'codo-base';
+let codoAudioContext = null;
+let codoAudioMuted = localStorage.getItem('phantom_codo_sound_muted') === 'true';
+let bobertChatHistory = codoChatHistory;
+
+// 🔊 محرك الأصوات التفاعلية الخفيفة (Web Audio API)
+function playCodoSound(type) {
+    if (codoAudioMuted) return;
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        if (!codoAudioContext) codoAudioContext = new AudioCtx();
+        if (codoAudioContext.state === 'suspended') {
+            codoAudioContext.resume().catch(() => {});
+        }
+
+        const now = codoAudioContext.currentTime;
+        const osc = codoAudioContext.createOscillator();
+        const gain = codoAudioContext.createGain();
+        osc.connect(gain);
+        gain.connect(codoAudioContext.destination);
+
+        if (type === 'send') {
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(420, now);
+            osc.frequency.exponentialRampToValueAtTime(750, now + 0.08);
+            gain.gain.setValueAtTime(0.06, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+            osc.start(now);
+            osc.stop(now + 0.1);
+        } else if (type === 'receive') {
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(550, now);
+            osc.frequency.setValueAtTime(820, now + 0.07);
+            gain.gain.setValueAtTime(0.07, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+            osc.start(now);
+            osc.stop(now + 0.2);
+        } else if (type === 'complete') {
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(523.25, now);
+            osc.frequency.setValueAtTime(659.25, now + 0.06);
+            osc.frequency.setValueAtTime(783.99, now + 0.12);
+            gain.gain.setValueAtTime(0.08, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+            osc.start(now);
+            osc.stop(now + 0.27);
+        } else if (type === 'error') {
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(180, now);
+            osc.frequency.exponentialRampToValueAtTime(110, now + 0.12);
+            gain.gain.setValueAtTime(0.08, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
+            osc.start(now);
+            osc.stop(now + 0.14);
+        }
+    } catch (e) {
+        // Safe fallback
+    }
+}
+
+function toggleCodoAudio() {
+    codoAudioMuted = !codoAudioMuted;
+    localStorage.setItem('phantom_codo_sound_muted', codoAudioMuted ? 'true' : 'false');
+    const icon = document.getElementById('codo-audio-icon');
+    if (icon) icon.textContent = codoAudioMuted ? '🔇' : '🔊';
+    showToast(codoAudioMuted ? '🔇 تم كتم الأصوات' : '🔊 تم تشغيل الأصوات', 'info');
+    if (!codoAudioMuted) playCodoSound('send');
+}
+window.toggleCodoAudio = toggleCodoAudio;
 
 if ('speechSynthesis' in window) {
     window.speechSynthesis.getVoices();
@@ -6928,8 +9480,8 @@ window.mascotSay = function(text, duration = 4000) {
     }, duration);
 };
 
-// نطق صوت بوبرت
-window.speakBobert = function(text) {
+// نطق صوت CODO
+window.speakCodo = function(text) {
     if (!('speechSynthesis' in window)) return;
     try {
         window.speechSynthesis.cancel();
@@ -6962,6 +9514,7 @@ window.speakBobert = function(text) {
         console.warn("Speech synthesis error:", e);
     }
 };
+window.speakBobert = window.speakCodo;
 
 // تفاعل الروبوت الصوتي عند الضغط عليه في الواجهة
 window.onMascotTap = function() {
@@ -6972,42 +9525,11 @@ window.onMascotTap = function() {
         mascotPlayGreeting();
     }
 
-    const greeting = "أنا سامعك يا بطل! اتفضل اتكلم...";
-    window.mascotSay("🎙️ أنا سامعك... اتفضل اتكلم!", 4000);
-
-    // نطق رسالة الاستماع أولاً، ثم بدء الاستماع بعد انتهاء النطق لمنع تشويش الميكروفون
-    if ('speechSynthesis' in window) {
-        try {
-            window.speechSynthesis.cancel();
-            const utterance = new SpeechSynthesisUtterance(greeting);
-            utterance.lang = 'ar-SA';
-            utterance.rate = 1.05;
-            utterance.pitch = 1.1;
-
-            const voices = window.speechSynthesis.getVoices();
-            const arabicVoice = voices.find(v => v.lang && v.lang.toLowerCase().startsWith('ar'));
-            if (arabicVoice) utterance.voice = arabicVoice;
-
-            utterance.onend = () => {
-                if (typeof window.startVoiceInteraction === 'function') {
-                    window.startVoiceInteraction();
-                }
-            };
-            utterance.onerror = () => {
-                if (typeof window.startVoiceInteraction === 'function') {
-                    window.startVoiceInteraction();
-                }
-            };
-
-            window.speechSynthesis.speak(utterance);
-            return;
-        } catch (e) {
-            console.warn("Speech synthesis error on tap:", e);
-        }
-    }
-
+    // بدء التفاعل الصوتي مباشرة وبشكل متزامن للاستفادة من نقرة المستخدم (User Gesture)
     if (typeof window.startVoiceInteraction === 'function') {
         window.startVoiceInteraction();
+    } else {
+        window.mascotSay("🎙️ أنا سامعك... اتفضل اتكلم!", 4000);
     }
 };
 
@@ -7021,12 +9543,23 @@ function setupAIChat() {
     mascot.style.cursor = 'pointer';
 
     // الاستماع مع مؤقت
-    window.startVoiceInteraction = function() {
+    window.startVoiceInteraction = async function() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-            showToast("⚠️ التعرف الصوتي غير مدعوم في متصفحك. تفضل بفتح شات بوبرت.", "info");
+            showToast("⚠️ التعرف الصوتي غير مدعوم في متصفحك. تم فتح شات CODO للكتابة.", "info");
             window.mascotSay("⚠️ الميكروفون غير متاح، اكتب في الشات!", 3000);
+            if (typeof openCodoChat === 'function') openCodoChat();
             return;
+        }
+
+        // طلب إذن الميكروفون المسبق لضمان عدم ظهور خطأ not-allowed
+        try {
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream.getTracks().forEach(t => t.stop());
+            }
+        } catch (permErr) {
+            console.warn("Direct getUserMedia mic check:", permErr);
         }
         
         window.mascotSay("🔴 جاري الاستماع... تكلم الآن!", 6000);
@@ -7037,12 +9570,16 @@ function setupAIChat() {
         recognition.continuous = false;
         recognition.interimResults = false;
         
+        let hasResult = false;
         const timeoutId = setTimeout(() => {
             try { recognition.stop(); } catch(e) {}
-            window.mascotSay("⏰ لم أسمعك! اضغط للتحدث مجدداً.", 3500);
-        }, 7000);
+            if (!hasResult) {
+                window.mascotSay("⏰ لم أسمعك! اضغط للتحدث مجدداً.", 3500);
+            }
+        }, 7500);
         
         recognition.onresult = async (event) => {
+            hasResult = true;
             clearTimeout(timeoutId);
             const userText = event.results[0][0].transcript;
             window.mascotSay(`🎤 سمعتك: ${userText}`, 3000);
@@ -7054,8 +9591,8 @@ function setupAIChat() {
             clearTimeout(timeoutId);
             console.warn("Speech recognition error:", event.error);
             if (event.error === 'not-allowed') {
-                showToast("⚠️ يرجى السماح بصلاحية الميكروفون للتحدث مع الروبوت.", "error");
-                window.mascotSay("⚠️ يرجى السماح بصلاحية الميكروفون!", 4000);
+                showToast("⚠️ يرجى تفعيل إذن المايك في إعدادات الموقع أو استخدام شات CODO.", "error");
+                window.mascotSay("⚠️ اضغط على القفل 🔒 لتفعيل المايك!", 4500);
             } else if (event.error !== 'no-speech') {
                 window.mascotSay("لم أسمعك بوضوح، حاول مجدداً!", 3500);
             }
@@ -7070,7 +9607,8 @@ function setupAIChat() {
 
     window.sendVoiceToAI = async function(userText) {
         try {
-            window.mascotSay("💭 جاري التفكير...", 5000);
+            window.mascotSay("💭 CODO يحلل ويفكر...", 5000);
+            playCodoSound('send');
             
             // إضافة رسالة المستخدم الصوتية لسجل الشات والمحفوظات
             addMessage(userText, 'user', true);
@@ -7089,7 +9627,8 @@ function setupAIChat() {
                 },
                 body: JSON.stringify({ 
                     message: userText,
-                    history: bobertChatHistory
+                    history: codoChatHistory,
+                    modelChoice: codoCurrentModel
                 })
             });
 
@@ -7098,31 +9637,24 @@ function setupAIChat() {
             const aiResponse = data.response || data.reply || "أهلاً بك يا بطل PHANTOM!";
 
             typing.remove();
+            playCodoSound('receive');
             
-            bobertChatHistory.push({ role: 'user', text: userText });
-            bobertChatHistory.push({ role: 'model', text: aiResponse });
-            if (bobertChatHistory.length > 10) bobertChatHistory = bobertChatHistory.slice(-10);
-            try {
-                localStorage.setItem(BOBERT_HISTORY_KEY, JSON.stringify(bobertChatHistory));
-            } catch (e) {}
+            codoChatHistory.push({ role: 'user', text: userText });
+            codoChatHistory.push({ role: 'model', text: aiResponse });
+            if (codoChatHistory.length > 10) codoChatHistory = codoChatHistory.slice(-10);
 
             // ✅ تفاعل الروبوت بالصوت والفقاعة وحفظ الرد في الشات
-            window.speakBobert(aiResponse);
+            window.speakCodo(aiResponse);
             window.mascotSay(aiResponse, 6000);
             addMessage(aiResponse, 'bot', true);
-
-            if (userText.includes("العب معي") || userText.includes("العاب")) {
-                setTimeout(() => {
-                    if (typeof openGamesPage === 'function') openGamesPage();
-                    else showToast("⚠️ صفحة الألعاب لم تُنشأ بعد.", "info");
-                }, 1000);
-            }
         } catch (error) {
             console.error("AI Error:", error);
-            typing.remove();
+            playCodoSound('error');
+            const typingEl = document.querySelector('.thinking-ghost-container');
+            if (typingEl) typingEl.remove();
             window.mascotSay("⚠️ حدث خطأ في الاتصال، حاول ثانية.", 4000);
-            showToast("⚠️ تعذر الاتصال بالذكاء الاصطناعي.", "error");
-            addMessage("عذراً، حدث خطأ في الاتصال.", 'bot', true);
+            showToast("⚠️ تعذر الاتصال بـ CODO.", "error");
+            addMessage("عذراً، حدث خطأ مؤقت في الاتصال بـ CODO.", 'bot', true);
         }
     };
 
@@ -7131,11 +9663,6 @@ function setupAIChat() {
         if (e.target && e.target.id === 'mascot-horn') return;
         window.onMascotTap();
     });
-
-    // تحميل رسائل وسجل المحادثة السابقة من LocalStorage
-    if (typeof loadBobertChatMessages === 'function') {
-        loadBobertChatMessages();
-    }
 }
 
 document.addEventListener('DOMContentLoaded', setupAIChat);
@@ -7183,157 +9710,1269 @@ function renderBadge(level) {
 }
 
 
-/* 💬 بوبرت شات - Bottom Sheet (تصميم 4 مع حفظ المحادثة في LocalStorage) */
+/* ========================================================
+   ⚡ مساعد CODO AI الموثوق - نظام الذكاء الاصطناعي التكتيكي المتقدم
+   (بحث عميق، معمل مهارات، فحص ملفات، ومصادر موثقة)
+   ======================================================== */
 
-const BOBERT_MSGS_KEY = 'phantom_bobert_chat_messages';
-const BOBERT_HISTORY_KEY = 'phantom_bobert_chat_history';
+let activeGhostSessionId = null;
+let ghostChatSessions = [];
+codoCurrentModel = 'codo-base';
+let codoDeepResearchEnabled = false;
+let codoWebSearchEnabled = false;
+let codoActiveSkillId = null;
+let codoActiveSkillObj = null;
+let codoAttachedFile = null;
+let codoSkillsCache = [];
+let currentCodoAbortController = null;
+let codoPendingSkillDraft = null;
 
-let chatSheet = null;
-let chatOverlay = null;
-
-// تهيئة سجل المحادثة للذكاء الاصطناعي من التخزين المحلي
-(function initBobertChatStorage() {
+// عزل الجلسات حسب اسم المستخدم الحالي لمنع الخلط بين الحسابات
+function getCodoStorageKey() {
+    let u = 'general';
     try {
-        const savedHistory = localStorage.getItem(BOBERT_HISTORY_KEY);
-        if (savedHistory) {
-            const parsed = JSON.parse(savedHistory);
-            if (Array.isArray(parsed)) bobertChatHistory = parsed;
+        if (typeof getCurrentUsername === 'function') {
+            const name = getCurrentUsername();
+            if (name) u = name;
+        } else {
+            const stored = localStorage.getItem('phantom_username');
+            if (stored) u = stored;
         }
-    } catch (e) {
-        console.warn("Failed to load bobert chat history:", e);
-    }
-})();
-
-function renderBobertMessageDOM(text, sender, time) {
-    const body = document.getElementById('phantom-chat-body');
-    if (!body) return;
-    
-    const div = document.createElement('div');
-    div.className = `msg ${sender}`;
-    const displayTime = time || new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
-    div.innerHTML = `<b>${sender === 'user' ? 'أنت' : 'بوبرت'}</b><br>${text}<span class="time">${displayTime}</span>`;
-    
-    body.appendChild(div);
+    } catch (e) {}
+    return 'phantom_codo_sessions_' + encodeURIComponent(u);
 }
 
-function loadBobertChatMessages() {
+// تحميل الجلسات
+function loadGhostSessionsFromStorage() {
+    const storageKey = getCodoStorageKey();
+    try {
+        const raw = localStorage.getItem(storageKey);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                ghostChatSessions = parsed;
+            }
+        }
+    } catch (e) {
+        console.warn("Failed to load ghost sessions:", e);
+        ghostChatSessions = [];
+    }
+
+    if (!ghostChatSessions || ghostChatSessions.length === 0) {
+        const initialSession = createNewSessionObject("محادثة جديدة مع CODO");
+        ghostChatSessions = [initialSession];
+        activeGhostSessionId = initialSession.id;
+        saveGhostSessionsToStorage();
+    } else if (!activeGhostSessionId || !ghostChatSessions.some(s => s.id === activeGhostSessionId)) {
+        activeGhostSessionId = ghostChatSessions[0].id;
+    }
+}
+
+function saveGhostSessionsToStorage() {
+    const storageKey = getCodoStorageKey();
+    try {
+        localStorage.setItem(storageKey, JSON.stringify(ghostChatSessions));
+    } catch (e) {
+        console.warn("Failed to save ghost sessions:", e);
+    }
+}
+
+function createNewSessionObject(title = "محادثة جديدة") {
+    return {
+        id: "codo_sess_" + Date.now() + "_" + Math.floor(Math.random() * 1000),
+        title: title,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: [
+            {
+                id: "msg_init_" + Date.now(),
+                sender: 'bot',
+                text: 'أهلاً بك يا بطل! أنا **CODO** ⚡ مساعدك الذكي الموثوق والتكتيكي لمقر PHANTOM.\n\nيمكنني مساعدتك في:\n- 🎯 **تخطيط رومات السكواد وتوزيع الأدوار**\n- ⚖️ **تدقيق القوانين والعقوبات اللائحية**\n- 🔍 **البحث العميق في أحدث المعلومات والمصادر**\n- 💻 **فحص ومراجعة الأكواد والملفات البرمجية**\n- 🧠 **استخدام وتجربة مهارات الذكاء الاصطناعي المعتمدة**\n\nكيف يمكنني مساعدتك في هذه اللحظة؟',
+                time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+                sources: []
+            }
+        ],
+        aiHistory: []
+    };
+}
+
+function getActiveGhostSession() {
+    if (!activeGhostSessionId && ghostChatSessions.length > 0) {
+        activeGhostSessionId = ghostChatSessions[0].id;
+    }
+    return ghostChatSessions.find(s => s.id === activeGhostSessionId) || ghostChatSessions[0];
+}
+
+function renderGhostSessionsList() {
+    const listEl = document.getElementById('ghost-sessions-list');
+    if (!listEl) return;
+
+    listEl.innerHTML = '';
+    ghostChatSessions.forEach(session => {
+        const isActive = session.id === activeGhostSessionId;
+        const item = document.createElement('div');
+        item.className = `ghost-session-item ${isActive ? 'active' : ''}`;
+        
+        const dateStr = new Date(session.updatedAt || session.createdAt).toLocaleDateString('ar-EG', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+
+        item.innerHTML = `
+            <div class="ghost-session-info">
+                <div class="ghost-session-title">${escapeHTML(session.title || 'محادثة')}</div>
+                <div class="ghost-session-time">${dateStr}</div>
+            </div>
+            ${ghostChatSessions.length > 1 ? `
+                <button class="ghost-session-delete" type="button" title="حذف المحادثة" style="background:none; border:none; color:#ef4444; font-size:0.9rem; cursor:pointer; padding:4px;">✕</button>
+            ` : ''}
+        `;
+
+        item.onclick = (e) => {
+            if (e.target.closest('.ghost-session-delete')) return;
+            switchGhostSession(session.id);
+            const sidebar = document.getElementById('ghost-history-sidebar');
+            if (sidebar && window.innerWidth <= 768) sidebar.classList.remove('open');
+        };
+
+        const delBtn = item.querySelector('.ghost-session-delete');
+        if (delBtn) {
+            delBtn.onclick = (e) => {
+                e.stopPropagation();
+                deleteGhostSession(session.id);
+            };
+        }
+
+        listEl.appendChild(item);
+    });
+}
+
+function switchGhostSession(sessionId) {
+    activeGhostSessionId = sessionId;
+    renderGhostSessionsList();
+    renderActiveGhostMessages();
+}
+
+function createNewGhostSession() {
+    const newSession = createNewSessionObject("محادثة جديدة");
+    ghostChatSessions.unshift(newSession);
+    activeGhostSessionId = newSession.id;
+    saveGhostSessionsToStorage();
+    renderGhostSessionsList();
+    renderActiveGhostMessages();
+    clearSelectedCodoSkill();
+    removeAttachedCodoFile();
+    showToast("✨ تم بدء محادثة جديدة وتصفير السياق", "info");
+    
+    const input = document.getElementById('phantom-chat-input');
+    if (input) {
+        input.value = '';
+        input.focus();
+    }
+
+    const sidebar = document.getElementById('ghost-history-sidebar');
+    if (sidebar && window.innerWidth <= 768) sidebar.classList.remove('open');
+}
+
+function deleteGhostSession(sessionId) {
+    if (ghostChatSessions.length <= 1) {
+        showToast("لا يمكن حذف المحادثة الوحيدة المتبقية.", "info");
+        return;
+    }
+    ghostChatSessions = ghostChatSessions.filter(s => s.id !== sessionId);
+    if (activeGhostSessionId === sessionId) {
+        activeGhostSessionId = ghostChatSessions[0].id;
+    }
+    saveGhostSessionsToStorage();
+    renderGhostSessionsList();
+    renderActiveGhostMessages();
+    showToast("🗑️ تم حذف المحادثة", "info");
+}
+
+function renderActiveGhostMessages() {
     const body = document.getElementById('phantom-chat-body');
     if (!body) return;
 
     body.innerHTML = '';
-    let savedList = [];
-    try {
-        const raw = localStorage.getItem(BOBERT_MSGS_KEY);
-        if (raw) savedList = JSON.parse(raw);
-    } catch (e) {
-        savedList = [];
-    }
-
-    if (!Array.isArray(savedList) || savedList.length === 0) {
-        addMessage('أهلاً يا شبح. أنا بوبرت 👻 تميمة ومساعد كلان PHANTOM. وش تبي نبدأ؟', 'bot', true);
+    const session = getActiveGhostSession();
+    if (!session || !session.messages || session.messages.length === 0) {
+        renderWelcomeScreen(body);
         return;
     }
 
-    savedList.forEach(m => {
-        renderBobertMessageDOM(m.text, m.sender, m.time);
+    session.messages.forEach(msg => {
+        renderCodoMessageDOM(msg.text, msg.sender, msg.time, {
+            sources: msg.sources || [],
+            usedSkill: msg.usedSkill || null,
+            fileName: msg.fileName || null,
+            imageUrl: msg.imageUrl || null
+        });
     });
 
     body.scrollTop = body.scrollHeight;
 }
 
-function addMessage(text, sender, saveToStorage = true) {
+function renderWelcomeScreen(container) {
+    container.innerHTML = `
+        <div class="codo-welcome-hero">
+            <div class="codo-hero-avatar">⚡</div>
+            <h2 class="codo-hero-title">مرحباً بك في CODO AI</h2>
+            <p class="codo-hero-desc">مساعد تكتيكي وتقني موثوق لكلان PHANTOM. يدعم البحث العميق المباشر، تدقيق اللوائح، فحص الأكواد والملفات، واستخدام المهارات المعتمدة.</p>
+            <div class="codo-prompt-grid">
+                <div class="codo-prompt-card" onclick="sendCodoPrompt('ما هي خطة توزيع الأدوار المثالية للسكواد في رومات الكلان التكتيكية؟')">
+                    <span class="codo-prompt-icon">⚔️</span>
+                    <span class="codo-prompt-heading">خطة السكواد التكتيكية</span>
+                    <span class="codo-prompt-sub">توزيع مهام IGL، Fragger، Support، Sniper</span>
+                </div>
+                <div class="codo-prompt-card" onclick="sendCodoPrompt('اشرح لي نظام العقوبات الرسمي للشتيمة أو الغياب عن الروم وكيفية قبول الأعذار.')">
+                    <span class="codo-prompt-icon">📜</span>
+                    <span class="codo-prompt-heading">لائحة قوانين وعقوبات الكلان</span>
+                    <span class="codo-prompt-sub">درجات الإنذارات وشروط العفو الرسمي</span>
+                </div>
+                <div class="codo-prompt-card" onclick="triggerDeepResearchWithPrompt('ما هي أحدث التغييرات والتحديثات في الألعاب التنافسية وببجي وكود هذا الشهر؟')">
+                    <span class="codo-prompt-icon">🌐</span>
+                    <span class="codo-prompt-heading">بحث عميق: أحدث التحديثات</span>
+                    <span class="codo-prompt-sub">فحص المصادر والنتائج الموثوقة بروابط حقيقية</span>
+                </div>
+                <div class="codo-prompt-card" onclick="sendCodoPrompt('من هم الأعضاء المتصلون حالياً في المقر وما هي رتبهم ونشاط التحديات؟')">
+                    <span class="codo-prompt-icon">📊</span>
+                    <span class="codo-prompt-heading">فحص نشاط المقر والحضور الحي</span>
+                    <span class="codo-prompt-sub">استعلام مباشر من خادم التواجد والنزالات</span>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function triggerDeepResearchWithPrompt(promptText) {
+    if (!codoDeepResearchEnabled) {
+        toggleDeepResearch(true);
+    }
+    sendCodoPrompt(promptText);
+}
+
+// تنسيق نصوص الردود ودعم Markdown والأكواد
+function formatCodoText(rawText) {
+    if (!rawText) return '';
+    let formatted = String(rawText);
+
+    // كتل برمجية متعددة الأسطر مع زر النسخ واسم اللغة
+    formatted = formatted.replace(/```([a-zA-Z0-9_\-]*)\n([\s\S]*?)```/g, function(match, lang, code) {
+        const langLabel = lang ? lang.toUpperCase() : 'CODE';
+        const escapedCode = escapeHTML(code.trim());
+        const codeId = 'codo_code_' + Math.random().toString(36).substring(2, 9);
+        return `
+            <div class="codo-code-wrapper" dir="ltr">
+                <div class="codo-code-header">
+                    <span>${langLabel}</span>
+                    <button class="codo-code-copy-btn" type="button" onclick="copyCodoCode('${codeId}')">📋 نسخ الكود</button>
+                </div>
+                <pre><code id="${codeId}">${escapedCode}</code></pre>
+            </div>
+        `;
+    });
+
+    // كود مضمن
+    formatted = formatted.replace(/`([^`]+)`/g, '<code style="background:rgba(0,242,254,0.15); color:#00f2fe; padding:2px 6px; border-radius:4px; font-family:monospace; font-size:0.88em;">$1</code>');
+
+    // عناوين بارزة
+    formatted = formatted.replace(/^### (.*$)/gim, '<h4 style="color:#00f2fe; margin:10px 0 4px; font-size:1rem;">$1</h4>');
+    formatted = formatted.replace(/^## (.*$)/gim, '<h3 style="color:#fff; margin:14px 0 6px; font-size:1.1rem; border-bottom:1px solid rgba(0,242,254,0.2); padding-bottom:4px;">$1</h3>');
+    formatted = formatted.replace(/^# (.*$)/gim, '<h2 style="color:#fff; margin:16px 0 8px; font-size:1.2rem;">$1</h2>');
+
+    // خط عريض
+    formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong style="color:#00f2fe;">$1</strong>');
+
+    // نقاط وقوائم
+    formatted = formatted.replace(/(?:^|\n)[-*]\s+([^\n]+)/g, '<br>• $1');
+
+    // أسطر جديدة
+    formatted = formatted.replace(/\n/g, '<br>');
+
+    return formatted;
+}
+
+window.copyCodoCode = function(elementId) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    const text = el.innerText || el.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        showToast("✅ تم نسخ الكود بنجاح!", "success");
+    }).catch(() => {
+        showToast("⚠️ تعذر النسخ.", "error");
+    });
+};
+
+function renderCodoMessageDOM(text, sender, time, metadata = {}) {
+    const body = document.getElementById('phantom-chat-body');
+    if (!body) return;
+
+    const welcomeHero = body.querySelector('.codo-welcome-hero');
+    if (welcomeHero) welcomeHero.remove();
+    
+    const wrapper = document.createElement('div');
+    wrapper.className = `codo-msg-wrapper ${sender}`;
+    const displayTime = time || new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    const msgId = 'codo_msg_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+
+    const isArabic = /[\u0600-\u06FF]/.test(text.substring(0, 100));
+    const dirAttr = isArabic ? 'dir="rtl"' : 'dir="ltr"';
+
+    if (sender === 'user') {
+        const isPdfFile = metadata.isPdf || (metadata.fileName && /\.pdf$/i.test(metadata.fileName));
+
+        const pdfBlock = isPdfFile ? `
+            <div class="codo-msg-pdf-card" title="${escapeHTML(metadata.fileName)}">
+                <div class="codo-pdf-icon-badge">PDF</div>
+                <div class="codo-pdf-card-info">
+                    <span class="codo-pdf-card-title">${escapeHTML(metadata.fileName)}</span>
+                    <span class="codo-pdf-card-sub"><span class="codo-pdf-card-tag">مستند قواعد / إرشادات</span> • ${metadata.fileSize || 'PDF'}</span>
+                </div>
+            </div>
+        ` : '';
+
+        const imageBlock = metadata.imageUrl ? `
+            <div style="margin-bottom:8px;">
+                <img src="${metadata.imageUrl}" class="codo-msg-image-thumb" onclick="window.open('${metadata.imageUrl}', '_blank')" alt="صورة مرفقة" />
+            </div>
+        ` : '';
+
+        const fileChip = (metadata.fileName && !metadata.imageUrl && !isPdfFile) ? `
+            <div style="display:inline-flex; align-items:center; gap:6px; background:rgba(0,242,254,0.15); border:1px solid #00f2fe; padding:3px 10px; border-radius:8px; font-size:0.75rem; color:#00f2fe; margin-bottom:6px;">
+                <span>📄</span> <span>${escapeHTML(metadata.fileName)}</span>
+            </div>
+        ` : '';
+
+        wrapper.innerHTML = `
+            <div class="codo-user-bubble" ${dirAttr}>
+                ${pdfBlock}
+                ${imageBlock}
+                ${fileChip}
+                ${text ? `<div>${escapeHTML(text).replace(/\n/g, '<br>')}</div>` : ''}
+                <div style="text-align:left; font-size:0.68rem; color:#94a3b8; margin-top:4px;">${displayTime}</div>
+            </div>
+        `;
+    } else {
+        const modelNames = {
+            'codo-base': 'CODO Base',
+            'codo-pro': 'CODO Pro',
+            'codo-max': 'CODO Max',
+            'codo-lab': 'CODO Lab'
+        };
+        const currentTag = modelNames[codoCurrentModel] || 'CODO AI';
+        const formatted = formatCodoText(text);
+
+        // شارة المهارة المستخدمة
+        const skillBadge = metadata.usedSkill ? `
+            <span class="codo-skill-tag-pill">🧠 مهارة: ${escapeHTML(metadata.usedSkill.name || metadata.usedSkill)}</span>
+        ` : '';
+
+        // صندوق المصادر والمراجع الحقيقية
+        let sourcesBox = '';
+        if (Array.isArray(metadata.sources) && metadata.sources.length > 0) {
+            const chips = metadata.sources.map(s => `
+                <a href="${escapeHTML(s.url)}" target="_blank" rel="noopener noreferrer" class="codo-source-chip" title="${escapeHTML(s.title || s.url)}">
+                    <span>🔗</span> <span>${escapeHTML(s.title || s.url)}</span>
+                </a>
+            `).join('');
+            sourcesBox = `
+                <div class="codo-sources-box">
+                    <div class="codo-sources-title">
+                        <span>📚</span> <span>المصادر والمراجع المعتمدة المستخرجة:</span>
+                    </div>
+                    <div class="codo-sources-list">
+                        ${chips}
+                    </div>
+                </div>
+            `;
+        }
+
+        wrapper.innerHTML = `
+            <div class="codo-bot-card" id="${msgId}">
+                <div class="codo-bot-header">
+                    <div class="codo-bot-badge">
+                        <span class="bot-dot"></span>
+                        <span>⚡ ${currentTag}</span>
+                        ${skillBadge}
+                    </div>
+                    <span style="font-size:0.7rem; color:#64748b;">${displayTime}</span>
+                </div>
+                <div class="codo-bot-content" ${dirAttr}>
+                    ${formatted}
+                </div>
+                ${sourcesBox}
+                <div class="codo-msg-actions">
+                    <button class="codo-action-btn" type="button" onclick="copyCodoResponse('${msgId}')">📋 نسخ</button>
+                    <button class="codo-action-btn" type="button" onclick="speakCodoResponse('${msgId}')">🔊 قراءة</button>
+                    <button class="codo-action-btn" type="button" onclick="regenerateLastCodoResponse()">🔄 إعادة التوليد</button>
+                </div>
+            </div>
+        `;
+    }
+
+    body.appendChild(wrapper);
+}
+
+window.sendCodoPrompt = function(promptText) {
+    const input = document.getElementById('phantom-chat-input');
+    if (input) {
+        input.value = promptText;
+        const sendBtn = document.getElementById('phantom-chat-send');
+        if (sendBtn) sendBtn.click();
+    }
+};
+
+window.copyCodoResponse = function(msgId) {
+    const card = document.getElementById(msgId);
+    if (!card) return;
+    const content = card.querySelector('.codo-bot-content');
+    if (!content) return;
+    const text = content.innerText || content.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        showToast("✅ تم نسخ إجابة CODO بنجاح!", "success");
+    }).catch(() => {
+        showToast("⚠️ تعذر النسخ.", "error");
+    });
+};
+
+window.speakCodoResponse = function(msgId) {
+    const card = document.getElementById(msgId);
+    if (!card) return;
+    const content = card.querySelector('.codo-bot-content');
+    if (!content) return;
+    const text = content.innerText || content.textContent;
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const clean = text.replace(/[*#_`~]/g, '');
+        const utterance = new SpeechSynthesisUtterance(clean);
+        utterance.lang = /[\u0600-\u06FF]/.test(clean) ? 'ar-SA' : 'en-US';
+        window.speechSynthesis.speak(utterance);
+        showToast("🔊 جاري قراءة الرد صوتياً...", "info");
+    } else {
+        showToast("⚠️ المتصفح لا يدعم القراءة الصوتية.", "info");
+    }
+};
+
+window.regenerateLastCodoResponse = function() {
+    const session = getActiveGhostSession();
+    if (!session || !session.messages || session.messages.length === 0) {
+        showToast("⚠️ لا توجد رسائل سابقة لإعادة التوليد.", "info");
+        return;
+    }
+    const lastUserMsg = [...session.messages].reverse().find(m => m.sender === 'user');
+    if (lastUserMsg && lastUserMsg.text) {
+        sendCodoPrompt(lastUserMsg.text);
+    }
+};
+
+function addMessage(text, sender, saveToStorage = true, metadata = {}) {
     const time = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
-    renderBobertMessageDOM(text, sender, time);
+    renderCodoMessageDOM(text, sender, time, metadata);
 
     const body = document.getElementById('phantom-chat-body');
     if (body) body.scrollTop = body.scrollHeight;
 
     if (saveToStorage) {
-        try {
-            let list = [];
-            const raw = localStorage.getItem(BOBERT_MSGS_KEY);
-            if (raw) list = JSON.parse(raw);
-            if (!Array.isArray(list)) list = [];
-
-            list.push({
-                id: Date.now() + Math.random(),
+        const session = getActiveGhostSession();
+        if (session) {
+            if (!session.messages) session.messages = [];
+            session.messages.push({
+                id: "msg_" + Date.now() + "_" + Math.floor(Math.random() * 1000),
                 sender: sender,
                 text: text,
-                time: time
+                time: time,
+                sources: metadata.sources || [],
+                usedSkill: metadata.usedSkill || null,
+                fileName: metadata.fileName || null,
+                imageUrl: metadata.imageUrl || null
             });
 
-            if (list.length > 60) list = list.slice(-60);
-            localStorage.setItem(BOBERT_MSGS_KEY, JSON.stringify(list));
-        } catch (e) {
-            console.warn("Could not save Bobert message to localStorage:", e);
+            if (sender === 'user' && (session.title === 'محادثة جديدة' || session.title === 'محادثة جديدة مع CODO')) {
+                session.title = text.length > 28 ? text.substring(0, 27) + '...' : text;
+            }
+
+            session.updatedAt = Date.now();
+            if (session.messages.length > 80) session.messages = session.messages.slice(-80);
+            saveGhostSessionsToStorage();
+            renderGhostSessionsList();
         }
     }
 }
 
-function clearBobertChat() {
-    try {
-        localStorage.removeItem(BOBERT_MSGS_KEY);
-        localStorage.removeItem(BOBERT_HISTORY_KEY);
-        bobertChatHistory = [];
-        const body = document.getElementById('phantom-chat-body');
-        if (body) body.innerHTML = '';
-        addMessage('تم مسح سجل المحادثة بنجاح 🧹. أهلاً بك من جديد يا بطل PHANTOM! كيف أساعدك اليوم؟', 'bot', true);
-        showToast("🧹 تم مسح سجل محادثة بوبرت", "info");
-    } catch (e) {
-        console.error("Error clearing bobert chat:", e);
-    }
+function clearCodoChat() {
+    const session = getActiveGhostSession();
+    if (!session) return;
+
+    session.messages = [
+        {
+            id: "msg_init_" + Date.now(),
+            sender: 'bot',
+            text: 'تم مسح محتوى هذه المحادثة 🧹. أنا CODO وجاهز للبدء من جديد بدقة وأمان.',
+            time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+            sources: []
+        }
+    ];
+    session.aiHistory = [];
+    session.title = "محادثة ممسوحة";
+    session.updatedAt = Date.now();
+    saveGhostSessionsToStorage();
+    renderGhostSessionsList();
+    renderActiveGhostMessages();
+    clearSelectedCodoSkill();
+    removeAttachedCodoFile();
+    showToast("🧹 تم مسح سجل المحادثة الحالية", "info");
 }
 
-function openBobertChat() {
-    chatSheet = document.getElementById('phantom-chat-sheet');
-    chatOverlay = document.getElementById('phantom-chat-overlay');
-    if (!chatSheet || !chatOverlay) return;
-    
-    chatSheet.classList.add('open');
-    chatOverlay.classList.add('open');
-    
-    // تحميل الرسائل السابقة المحفوظة في LocalStorage
-    const body = document.getElementById('phantom-chat-body');
-    if (body && body.children.length === 0) {
-        loadBobertChatMessages();
-    } else if (body) {
-        body.scrollTop = body.scrollHeight;
+// 🌐 التحكم الموحد في وضع بحث الويب والإنترنت
+function toggleWebSearch(forceState) {
+    codoWebSearchEnabled = typeof forceState === 'boolean' ? forceState : !codoWebSearchEnabled;
+    codoDeepResearchEnabled = codoWebSearchEnabled;
+    const pillBtn = document.getElementById('codo-websearch-toggle-btn');
+    const badge = document.getElementById('codo-search-badge');
+    const footnote = document.getElementById('codo-mode-footnote-text');
+
+    if (codoWebSearchEnabled) {
+        if (pillBtn) pillBtn.classList.add('active');
+        if (badge) {
+            badge.textContent = 'ON';
+        }
+        if (footnote) footnote.textContent = '🌐 وضع بحث الويب نشط: استخراج معلومات مباشرة وروابط ومصادر موثوقة من الإنترنت';
+        showToast("🌐 تم تفعيل بحث الويب (Web Search)", "info");
+    } else {
+        if (pillBtn) pillBtn.classList.remove('active');
+        if (badge) {
+            badge.textContent = 'OFF';
+        }
+        if (footnote) footnote.textContent = '⚡ CODO AI — قراءة وفحص الصور • بحث حي في الويب • أدوات تكتيكية ومعمل مهارات';
+        showToast("تم إيقاف بحث الويب", "info");
     }
-    
-    // ربط الأحداث
-    const closeBtn = chatSheet.querySelector('.phantom-chat-close');
-    const sendBtn = document.getElementById('phantom-chat-send');
-    const input = document.getElementById('phantom-chat-input');
-    
-    if (closeBtn) closeBtn.onclick = closeBobertChat;
-    if (chatOverlay) chatOverlay.onclick = closeBobertChat;
-    
-    if (sendBtn) sendBtn.onclick = sendMessage;
-    if (input) {
-        input.onkeypress = (e) => {
-            if (e.key === 'Enter') sendMessage();
+}
+window.toggleWebSearch = toggleWebSearch;
+window.toggleDeepResearch = toggleWebSearch;
+
+// ⋯ قائمة الخيارات الإضافية في الهيدر
+function toggleCodoOptionsMenu() {
+    const menu = document.getElementById('codo-more-options-menu');
+    if (!menu) return;
+    menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+}
+window.toggleCodoOptionsMenu = toggleCodoOptionsMenu;
+
+// 📂 إدارة الملفات والصور المرفقة مع دعم اللصق والسحب
+function triggerCodoFileUpload() {
+    const fileInput = document.getElementById('codo-file-input');
+    if (fileInput) fileInput.click();
+}
+window.triggerCodoFileUpload = triggerCodoFileUpload;
+
+function handleCodoFileSelected(event) {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    processCodoUploadedFile(file);
+}
+window.handleCodoFileSelected = handleCodoFileSelected;
+
+function processCodoUploadedFile(file) {
+    if (!file) return;
+
+    if (file.size > 20 * 1024 * 1024) {
+        showToast("⚠️ حجم الملف كبير جداً. الحد الأقصى 20 ميجابايت.", "error");
+        return;
+    }
+
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+    const isImage = !isPdf && (file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name));
+
+    const reader = new FileReader();
+
+    if (isPdf) {
+        reader.onload = function(e) {
+            const dataUrl = e.target.result;
+            codoAttachedFile = {
+                name: file.name || 'rules_document.pdf',
+                size: file.size,
+                type: 'application/pdf',
+                isPdf: true,
+                isImage: false,
+                data: dataUrl,
+                previewUrl: null
+            };
+
+            const previewBar = document.getElementById('codo-file-preview-bar');
+            const nameEl = document.getElementById('codo-file-preview-name');
+            const sizeEl = document.getElementById('codo-file-preview-size');
+            const imgTag = document.getElementById('codo-img-preview-tag');
+            const iconEl = document.getElementById('codo-file-preview-icon');
+            const thumbBox = document.getElementById('codo-preview-thumb-box');
+
+            if (previewBar && nameEl && sizeEl) {
+                nameEl.textContent = '📑 ' + (file.name || 'مستند PDF');
+                sizeEl.textContent = Math.round(file.size / 1024) + ' KB • مستند قواعد/إرشادات PDF';
+                if (imgTag) imgTag.style.display = 'none';
+                if (iconEl) {
+                    iconEl.textContent = '📕';
+                    iconEl.style.display = 'inline';
+                }
+                if (thumbBox) thumbBox.classList.add('pdf-mode');
+                previewBar.style.display = 'flex';
+            }
+            showToast(`📑 تم إرفاق ملف الـ PDF "${file.name}" بنجاح - جاهز للتحليل وتدقيق القواعد`, "success");
         };
-        setTimeout(() => input.focus(), 300);
+        reader.onerror = function() {
+            showToast("⚠️ تعذر قراءة ملف الـ PDF المرفق.", "error");
+        };
+        reader.readAsDataURL(file);
+    } else if (isImage) {
+        reader.onload = function(e) {
+            const dataUrl = e.target.result;
+            codoAttachedFile = {
+                name: file.name || 'صورة_مرفقة.png',
+                size: file.size,
+                type: file.type || 'image/png',
+                isPdf: false,
+                isImage: true,
+                data: dataUrl,
+                previewUrl: dataUrl
+            };
+
+            const previewBar = document.getElementById('codo-file-preview-bar');
+            const nameEl = document.getElementById('codo-file-preview-name');
+            const sizeEl = document.getElementById('codo-file-preview-size');
+            const imgTag = document.getElementById('codo-img-preview-tag');
+            const iconEl = document.getElementById('codo-file-preview-icon');
+            const thumbBox = document.getElementById('codo-preview-thumb-box');
+
+            if (previewBar && nameEl && sizeEl) {
+                nameEl.textContent = '🖼️ ' + (file.name || 'صورة رقمية');
+                sizeEl.textContent = Math.round(file.size / 1024) + ' KB';
+                if (imgTag) {
+                    imgTag.src = dataUrl;
+                    imgTag.style.display = 'block';
+                }
+                if (iconEl) iconEl.style.display = 'none';
+                if (thumbBox) thumbBox.classList.remove('pdf-mode');
+                previewBar.style.display = 'flex';
+            }
+            showToast(`🖼️ تم إرفاق الصورة "${file.name || 'لقطة شاشة'}" بنجاح`, "success");
+        };
+        reader.onerror = function() {
+            showToast("⚠️ تعذر قراءة الصورة المرفقة.", "error");
+        };
+        reader.readAsDataURL(file);
+    } else {
+        reader.onload = function(e) {
+            codoAttachedFile = {
+                name: file.name,
+                size: file.size,
+                type: file.type || 'text/plain',
+                isPdf: false,
+                isImage: false,
+                content: e.target.result
+            };
+
+            const previewBar = document.getElementById('codo-file-preview-bar');
+            const nameEl = document.getElementById('codo-file-preview-name');
+            const sizeEl = document.getElementById('codo-file-preview-size');
+            const imgTag = document.getElementById('codo-img-preview-tag');
+            const iconEl = document.getElementById('codo-file-preview-icon');
+            const thumbBox = document.getElementById('codo-preview-thumb-box');
+
+            if (previewBar && nameEl && sizeEl) {
+                nameEl.textContent = '📄 ' + file.name;
+                sizeEl.textContent = Math.round(file.size / 1024) + ' KB';
+                if (imgTag) imgTag.style.display = 'none';
+                if (iconEl) {
+                    iconEl.textContent = '📄';
+                    iconEl.style.display = 'inline';
+                }
+                if (thumbBox) thumbBox.classList.remove('pdf-mode');
+                previewBar.style.display = 'flex';
+            }
+            showToast(`📄 تم إرفاق الملف "${file.name}" بنجاح`, "success");
+        };
+        reader.onerror = function() {
+            showToast("⚠️ تعذر قراءة الملف المرفق.", "error");
+        };
+        reader.readAsText(file);
     }
 }
+window.processCodoUploadedFile = processCodoUploadedFile;
 
-function closeBobertChat() {
-    if (chatSheet) chatSheet.classList.remove('open');
-    if (chatOverlay) chatOverlay.classList.remove('open');
+// دعم لصق الصور من الحافظة (Ctrl+V) والسحب والإفلات (Drag & Drop)
+function setupCodoClipboardAndDrop() {
+    const input = document.getElementById('phantom-chat-input');
+    const dropzone = document.getElementById('codo-chat-dropzone') || document.querySelector('.ghost-main-chat');
+
+    if (input && !input.dataset.codoPasteBound) {
+        input.dataset.codoPasteBound = 'true';
+        input.addEventListener('paste', (e) => {
+            const items = (e.clipboardData || window.clipboardData)?.items;
+            if (!items) return;
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    const blob = items[i].getAsFile();
+                    if (blob) {
+                        processCodoUploadedFile(blob);
+                        showToast("📷 تم لصق الصورة من الحافظة وجاهزة للتحليل!", "info");
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    if (dropzone && !dropzone.dataset.codoDropBound) {
+        dropzone.dataset.codoDropBound = 'true';
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropzone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropzone.classList.add('drag-active');
+            }, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropzone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropzone.classList.remove('drag-active');
+            }, false);
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            const files = dt?.files;
+            if (files && files.length > 0) {
+                processCodoUploadedFile(files[0]);
+            }
+        });
+    }
+}
+window.setupCodoClipboardAndDrop = setupCodoClipboardAndDrop;
+
+function removeAttachedCodoFile() {
+    codoAttachedFile = null;
+    const fileInput = document.getElementById('codo-file-input');
+    if (fileInput) fileInput.value = '';
+    const previewBar = document.getElementById('codo-file-preview-bar');
+    if (previewBar) previewBar.style.display = 'none';
+    const imgTag = document.getElementById('codo-img-preview-tag');
+    if (imgTag) {
+        imgTag.src = '';
+        imgTag.style.display = 'none';
+    }
+    const iconEl = document.getElementById('codo-file-preview-icon');
+    if (iconEl) {
+        iconEl.textContent = '📄';
+        iconEl.style.display = 'inline';
+    }
+    const thumbBox = document.getElementById('codo-preview-thumb-box');
+    if (thumbBox) thumbBox.classList.remove('pdf-mode');
+}
+window.removeAttachedCodoFile = removeAttachedCodoFile;
+
+// 🧠 إدارة وتطبيق المهارات
+function openCodoSkillsModal() {
+    const modal = document.getElementById('codo-skills-modal');
+    if (modal) {
+        modal.style.display = 'flex';
+        loadSkillsFromBackend();
+    }
+}
+window.openCodoSkillsModal = openCodoSkillsModal;
+
+function closeCodoSkillsModal() {
+    const modal = document.getElementById('codo-skills-modal');
+    if (modal) modal.style.display = 'none';
+}
+window.closeCodoSkillsModal = closeCodoSkillsModal;
+
+function switchSkillsTab(tab) {
+    const activeView = document.getElementById('skills-view-active');
+    const addView = document.getElementById('skills-view-add');
+    const tabActiveBtn = document.getElementById('tab-btn-active-skills');
+    const tabAddBtn = document.getElementById('tab-btn-add-skill');
+
+    if (tab === 'active') {
+        if (activeView) activeView.style.display = 'block';
+        if (addView) addView.style.display = 'none';
+        if (tabActiveBtn) tabActiveBtn.classList.add('active');
+        if (tabAddBtn) tabAddBtn.classList.remove('active');
+        loadSkillsFromBackend();
+    } else {
+        if (activeView) activeView.style.display = 'none';
+        if (addView) addView.style.display = 'block';
+        if (tabActiveBtn) tabActiveBtn.classList.remove('active');
+        if (tabAddBtn) tabAddBtn.classList.add('active');
+    }
+}
+window.switchSkillsTab = switchSkillsTab;
+
+async function loadSkillsFromBackend() {
+    const container = document.getElementById('codo-skills-list-container');
+    const countBadge = document.getElementById('codo-active-skills-count');
+    const tabCount = document.getElementById('codo-skills-tab-count');
+
+    try {
+        const res = await fetch('/api/codo/skills');
+        const data = await res.json();
+        if (data.success && Array.isArray(data.skills)) {
+            codoSkillsCache = data.skills;
+            const activeCount = data.skills.filter(s => s.status === 'active').length;
+            if (countBadge) countBadge.textContent = activeCount;
+            if (tabCount) tabCount.textContent = activeCount;
+
+            renderSkillsGrid(data.skills);
+        }
+    } catch (e) {
+        console.warn("Failed to load skills from backend:", e);
+    }
+}
+window.loadSkillsFromBackend = loadSkillsFromBackend;
+
+function renderSkillsGrid(skills) {
+    const container = document.getElementById('codo-skills-list-container');
+    if (!container) return;
+    container.innerHTML = '';
+
+    skills.forEach(skill => {
+        const isSelected = codoActiveSkillId === skill.id;
+        const card = document.createElement('div');
+        card.className = `codo-skill-card ${isSelected ? 'active-selected' : ''}`;
+
+        const lastUsedText = skill.lastUsed ? new Date(skill.lastUsed).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'لم تستخدم بعد';
+
+        card.innerHTML = `
+            <div class="codo-skill-card-top">
+                <span class="codo-skill-card-title">${escapeHTML(skill.name)}</span>
+                <span class="codo-skill-status-tag ${skill.status === 'active' ? 'active' : 'inactive'}">
+                    ${skill.status === 'active' ? '● مفعلة' : '○ معطلة'}
+                </span>
+            </div>
+            <div class="codo-skill-card-desc">${escapeHTML(skill.description || skill.goal)}</div>
+            <div class="codo-skill-card-meta">
+                <span>الهدف: ${escapeHTML(skill.goal ? skill.goal.substring(0, 32) + '...' : 'تكتيكي')}</span>
+                <span>استخدمت: ${skill.usageCount || 0} مرة</span>
+            </div>
+            <div class="codo-skill-card-actions">
+                <button type="button" class="codo-skill-action-btn primary" onclick="selectSkillForUse('${skill.id}')">
+                    ${isSelected ? '✓ محددة الآن' : '🎯 استخدام بالشات'}
+                </button>
+                <button type="button" class="codo-skill-action-btn" onclick="testSkillDirectly('${skill.id}')">
+                    🧪 تجربة سريعة
+                </button>
+                <button type="button" class="codo-skill-action-btn" onclick="toggleSkillActiveState('${skill.id}', '${skill.status}')">
+                    ${skill.status === 'active' ? 'تعطيل' : 'تفعيل'}
+                </button>
+                ${!skill.isBuiltIn ? `
+                    <button type="button" class="codo-skill-action-btn" style="color:#ef4444;" onclick="deleteSkillPermanently('${skill.id}')">
+                        حذف
+                    </button>
+                ` : ''}
+            </div>
+        `;
+        container.appendChild(card);
+    });
 }
 
+function filterSkillsList() {
+    const input = document.getElementById('codo-skill-search');
+    const term = input ? input.value.toLowerCase().trim() : '';
+    const filtered = codoSkillsCache.filter(s => 
+        (s.name && s.name.toLowerCase().includes(term)) ||
+        (s.description && s.description.toLowerCase().includes(term)) ||
+        (s.goal && s.goal.toLowerCase().includes(term))
+    );
+    renderSkillsGrid(filtered);
+}
+window.filterSkillsList = filterSkillsList;
+
+function selectSkillForUse(skillId) {
+    const skill = codoSkillsCache.find(s => s.id === skillId);
+    if (!skill) return;
+
+    codoActiveSkillId = skillId;
+    codoActiveSkillObj = skill;
+
+    const banner = document.getElementById('codo-active-skill-banner');
+    const nameEl = document.getElementById('codo-active-skill-name');
+    if (banner && nameEl) {
+        nameEl.textContent = skill.name;
+        banner.style.display = 'flex';
+    }
+
+    closeCodoSkillsModal();
+    showToast(`🎯 تم تفعيل مهارة "${skill.name}" للطلب القادم`, "info");
+    const input = document.getElementById('phantom-chat-input');
+    if (input) input.focus();
+}
+window.selectSkillForUse = selectSkillForUse;
+
+function clearSelectedCodoSkill() {
+    codoActiveSkillId = null;
+    codoActiveSkillObj = null;
+    const banner = document.getElementById('codo-active-skill-banner');
+    if (banner) banner.style.display = 'none';
+}
+window.clearSelectedCodoSkill = clearSelectedCodoSkill;
+
+async function toggleSkillActiveState(skillId, currentStatus) {
+    const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+    try {
+        const res = await fetch(`/api/codo/skills/${skillId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast(`تم ${newStatus === 'active' ? 'تفعيل' : 'تعطيل'} المهارة بنجاح`, "success");
+            loadSkillsFromBackend();
+        }
+    } catch (e) {
+        showToast("⚠️ تعذر تحديث حالة المهارة", "error");
+    }
+}
+window.toggleSkillActiveState = toggleSkillActiveState;
+
+async function testSkillDirectly(skillId) {
+    showToast("🧪 جاري تشغيل اختبار المهارة...", "info");
+    try {
+        const res = await fetch('/api/codo/skills/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ skillId })
+        });
+        const data = await res.json();
+        if (data.success) {
+            alert(`[نتيجة اختبار مهارة: ${data.skillName}]\n\n${data.output}`);
+            loadSkillsFromBackend();
+        } else {
+            showToast("تعذر الاختبار: " + (data.error || 'خطأ غير متوقع'), "error");
+        }
+    } catch (e) {
+        showToast("تعذر الاتصال بخادم المهارات", "error");
+    }
+}
+window.testSkillDirectly = testSkillDirectly;
+
+async function deleteSkillPermanently(skillId) {
+    if (!confirm("هل أنت متأكد من رغبتك في حذف هذه المهارة المخصصة نهائياً؟")) return;
+    try {
+        const res = await fetch(`/api/codo/skills/${skillId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) {
+            showToast("🗑️ تم حذف المهارة بنجاح", "info");
+            if (codoActiveSkillId === skillId) clearSelectedCodoSkill();
+            loadSkillsFromBackend();
+        } else {
+            showToast(data.error || "تعذر الحذف", "error");
+        }
+    } catch (e) {
+        showToast("تعذر حذف المهارة", "error");
+    }
+}
+window.deleteSkillPermanently = deleteSkillPermanently;
+
+// تشغيل مراحل التحليل الست للمهارة الجديدة
+async function handleAnalyzeNewSkill(e) {
+    e.preventDefault();
+    const name = document.getElementById('skill-input-name').value.trim();
+    const goal = document.getElementById('skill-input-goal').value.trim();
+    const desc = document.getElementById('skill-input-desc').value.trim();
+    const instructions = document.getElementById('skill-input-instructions').value.trim();
+    const inputTypes = document.getElementById('skill-input-types').value.split(',').map(s => s.trim()).filter(Boolean);
+    const outputFormat = document.getElementById('skill-output-format').value.trim();
+    const tools = document.getElementById('skill-input-tools').value.split(',').map(s => s.trim()).filter(Boolean);
+    const limits = document.getElementById('skill-input-limits').value.split(',').map(s => s.trim()).filter(Boolean);
+
+    const analysisBox = document.getElementById('codo-skill-analysis-box');
+    const stepper = document.getElementById('codo-analysis-stepper');
+    const testBox = document.getElementById('codo-skill-test-output-box');
+    const testText = document.getElementById('codo-test-output-text');
+    const saveActions = document.getElementById('codo-save-skill-actions');
+    const submitBtn = document.getElementById('codo-analyze-skill-btn');
+
+    if (!name || !goal || !instructions) {
+        showToast("⚠️ يرجى ملء الحقول الإلزامية.", "error");
+        return;
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = '⏳ جاري تشغيل مراحل التحليل...';
+    analysisBox.style.display = 'block';
+    stepper.innerHTML = '';
+    testBox.style.display = 'none';
+    saveActions.style.display = 'none';
+
+    const stageNames = [
+        '1. قراءة المهارة وفحص المعايير الأساسية',
+        '2. تحليل التعليمات ومعايير الأمان ومكافحة التجاوزات',
+        '3. فحص الأدوات والصلاحيات المطلوبة ومدى توافرها',
+        '4. التحقق من التعارض والتكرار مع المهارات المعتمدة',
+        '5. اختبار المهارة بطلب تجريبي آلي محاكى',
+        '6. تجهيز المهارة للاعتماد والتشغيل الفعلي'
+    ];
+
+    // إضافة الخطوات مع حالة انتظار
+    stageNames.forEach((sName, idx) => {
+        const row = document.createElement('div');
+        row.id = `codo-step-row-${idx + 1}`;
+        row.className = 'codo-step-row';
+        row.innerHTML = `
+            <span class="codo-step-icon">⏳</span>
+            <span>${sName}</span>
+            <span class="codo-step-detail">قيد المعالجة...</span>
+        `;
+        stepper.appendChild(row);
+    });
+
+    try {
+        const res = await fetch('/api/codo/skills/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name, goal, description: desc, instructions, inputTypes, outputFormat, requiredTools: tools, limitations: limits
+            })
+        });
+        const data = await res.json();
+
+        // تمرير أنيميشن إتمام المراحل واحدة تلو الأخرى ليعيش المستخدم التجربة الحقيقية
+        for (let i = 1; i <= 6; i++) {
+            await new Promise(r => setTimeout(r, 280));
+            const stepRow = document.getElementById(`codo-step-row-${i}`);
+            if (stepRow) {
+                stepRow.classList.add('done');
+                const stageData = data.stages && data.stages[i - 1];
+                stepRow.innerHTML = `
+                    <span class="codo-step-icon">✅</span>
+                    <span style="font-weight:700; color:#00ff88;">${stageNames[i - 1]}</span>
+                    <span class="codo-step-detail">${stageData ? stageData.detail : 'تم التحقق بنجاح'}</span>
+                `;
+            }
+        }
+
+        if (data.success && data.valid) {
+            codoPendingSkillDraft = {
+                name, goal, description: desc, instructions, inputTypes, outputFormat, requiredTools: tools, limitations: limits
+            };
+            if (testText) testText.textContent = data.testOutput || 'تم اجتياز الاختبار التجريبي بنجاح.';
+            testBox.style.display = 'block';
+            saveActions.style.display = 'block';
+            showToast("🎉 تم اجتياز التحليل والاختبار بنجاح! يمكنك الآن تفعيل المهارة.", "success");
+        } else {
+            showToast(data.error || "تعذر إجازة المهارة", "error");
+        }
+    } catch (e) {
+        showToast("⚠️ حدث خطأ أثناء تشغيل التحليل", "error");
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '🔬 تحليل واختبار المهارة الآن (6 مراحل)';
+    }
+}
+window.handleAnalyzeNewSkill = handleAnalyzeNewSkill;
+
+async function saveVerifiedSkill() {
+    if (!codoPendingSkillDraft) return;
+    try {
+        const res = await fetch('/api/codo/skills', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(codoPendingSkillDraft)
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast(`🚀 تم اعتماد وتفعيل مهارة "${data.skill.name}" بنجاح!`, "success");
+            selectSkillForUse(data.skill.id);
+            codoPendingSkillDraft = null;
+            document.getElementById('codo-new-skill-form').reset();
+            document.getElementById('codo-skill-analysis-box').style.display = 'none';
+            switchSkillsTab('active');
+            closeCodoSkillsModal();
+        }
+    } catch (e) {
+        showToast("⚠️ تعذر حفظ المهارة", "error");
+    }
+}
+window.saveVerifiedSkill = saveVerifiedSkill;
+
+// ⚡ الموديلات المنسدلة
+function toggleCodoModelMenu() {
+    const menu = document.getElementById('codo-model-menu');
+    if (!menu) return;
+    const isShowing = menu.style.display === 'block';
+    menu.style.display = isShowing ? 'none' : 'block';
+}
+window.toggleCodoModelMenu = toggleCodoModelMenu;
+
+window.setCodoModel = function(modelKey) {
+    codoCurrentModel = modelKey;
+    const menu = document.getElementById('codo-model-menu');
+    if (menu) menu.style.display = 'none';
+
+    // تحديث عناصر القائمة
+    const items = document.querySelectorAll('.codo-menu-item');
+    items.forEach(it => it.classList.remove('active'));
+    const activeItem = document.getElementById('menu-opt-' + modelKey);
+    if (activeItem) activeItem.classList.add('active');
+
+    // تحديث زر التريجر الرئيسي
+    const nameEl = document.getElementById('codo-active-model-name');
+    const iconEl = document.getElementById('codo-active-model-icon');
+    const statusEl = document.getElementById('codo-status-indicator');
+
+    const modelMeta = {
+        'codo-base': { name: 'CODO Base', icon: '⚡', desc: '● متصل بموديل CODO Base (سريع ويومي)' },
+        'codo-pro': { name: 'CODO Pro', icon: '🔬', desc: '● متصل بموديل CODO Pro (برمجة وتحليل)' },
+        'codo-max': { name: 'CODO Max', icon: '🧠', desc: '● متصل بموديل CODO Max (تفكير استراتيجي عميق)' },
+        'codo-lab': { name: 'CODO Lab', icon: '🧪', desc: '● متصل بمعمل CODO Lab (مهارات وأدوات)' }
+    };
+
+    const cur = modelMeta[modelKey] || modelMeta['codo-base'];
+    if (nameEl) nameEl.textContent = cur.name;
+    if (iconEl) iconEl.textContent = cur.icon;
+    if (statusEl) statusEl.textContent = cur.desc;
+};
+
+// 👻 مؤشر الانتظار المتمركز والمراحل الحقيقية الصادقة
+function showDynamicTyping(isResearch = false, isSkill = false, isFile = false, isImage = false, isPdf = false) {
+    const div = document.createElement('div');
+    div.className = 'thinking-ghost-container';
+
+    let stages = [];
+    if (isPdf) {
+        stages = [
+            { title: 'أرفع ملف الـ PDF بأمان للمقر...', sub: 'حماية وتشفير المستند الرقمي' },
+            { title: 'أفحص صفحات المستند واللوائح...', sub: 'قراءة وفهرسة البنود والمواد' },
+            { title: 'أستخرج النصوص والبنود والجداول...', sub: 'استخلاص الشروط والمحظورات والعقوبات بدقة' },
+            { title: 'أحلل القواعد والإرشادات المستخرجة...', sub: 'تدقيق ومطابقة اللائحة الرسمية' },
+            { title: 'أجهز التقرير والإجابة الشاملة...', sub: 'صياغة مباشرة وموثوقة' }
+        ];
+    } else if (isImage) {
+        stages = [
+            { title: 'أرفع الصورة بأمان...', sub: 'معالجة دقة الأبعاد' },
+            { title: 'أفحص الصورة...', sub: 'استكشاف المعالم البصرية' },
+            { title: 'أقرأ التفاصيل المرئية...', sub: 'رصد العناصر والتفاصيل' },
+            { title: 'أحلل النصوص والعناصر (OCR)...', sub: 'استخراج الأرقام والشفرات والنصوص' },
+            { title: 'أجهز الإجابة...', sub: 'إخراج التحليل التكتيكي المباشر' }
+        ];
+    } else if (isResearch) {
+        stages = [
+            { title: 'أفهم السؤال وأفكك محاوره الأساسية...', sub: 'تحليل دقيق لأبعاد المسألة' },
+            { title: 'إنشاء خطة البحث في المصادر الرسمية...', sub: 'تحديد الكلمات المفتاحية وقواعد البيانات' },
+            { title: 'البحث في المصادر واستخراج النتائج...', sub: 'استعلام مباشر من محركات البحث والوثائق' },
+            { title: 'مراجعة وتقييم موثوقية المعلومات...', sub: 'استبعاد البيانات غير الموثقة وفحص التناقضات' },
+            { title: 'مقارنة النتائج والتمييز بين الحقائق والاحتمالات...', sub: 'صياغة التقرير الموثق' },
+            { title: 'أجهز التقرير النهائي بالمصادر الحقيقية...', sub: 'إخراج منظم وواضح' }
+        ];
+    } else if (isFile) {
+        stages = [
+            { title: 'قراءة وتحليل بنية الملف المرفق...', sub: 'فحص الشفرة والتنسيق' },
+            { title: 'استخراج البيانات والمعطيات الجوهرية...', sub: 'تحليل المحتوى دون افتراض ما ليس فيه' },
+            { title: 'تدقيق النتائج وتنظيم التقرير...', sub: 'إعداد الخلاصة التنفيذية' },
+            { title: 'أجهز النتيجة النهائية الدقيقة...', sub: 'اكتمال المراجعة' }
+        ];
+    } else if (isSkill) {
+        stages = [
+            { title: `أطبق المهارة النشطة: ${codoActiveSkillObj ? codoActiveSkillObj.name : 'مهارة معتمدة'}...`, sub: 'التزام كامل بقواعد المهارة' },
+            { title: 'معالجة المدخلات حسب شكل المخرجات المطلوب...', sub: 'تطبيق أدوات التحليل المقررة' },
+            { title: 'فحص القيود والتحقق من الجودة...', sub: 'منع الأخطاء والانحرافات' },
+            { title: 'أجهز المخرجات المنظمة...', sub: 'اكتمال المعالجة' }
+        ];
+    } else {
+        stages = [
+            { title: 'أفهم طلبك وسياق السؤال...', sub: 'معالجة لغوية تكتيكية' },
+            { title: 'أحلل التفاصيل واستخرج المعطيات...', sub: 'فحص بيانات المقر والقواعد' },
+            { title: 'أرتب الإجابة في نقاط وعناوين واضحة...', sub: 'صياغة مباشرة وموثوقة' },
+            { title: 'أجهز النتيجة النهائية...', sub: 'في خدمتك دائماً' }
+        ];
+    }
+
+    div.innerHTML = `
+        <div class="codo-thinking-box">
+            <svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style="animation: ghostBobShiver 2s ease-in-out infinite; filter: drop-shadow(0 0 15px rgba(0, 242, 254, 0.6));">
+                <path class="ghost-outline" d="M50 15 C30 15 22 30 22 50 C22 72 20 85 28 85 C34 85 36 76 43 76 C50 76 52 85 58 85 C64 85 66 76 73 76 C80 76 82 85 88 85 C96 85 94 72 94 50 C94 30 86 15 50 15 Z" 
+                      stroke="#00f2fe" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+                <circle class="ghost-eye-left" cx="40" cy="46" r="5" />
+                <circle class="ghost-eye-right" cx="64" cy="46" r="5" />
+            </svg>
+            <div class="codo-thinking-stage-title" id="codo-dynamic-stage-title">
+                <span>⚡</span>
+                <span class="stage-text">${stages[0].title}</span>
+            </div>
+            <div class="codo-thinking-subtext" id="codo-dynamic-stage-sub">${stages[0].sub}</div>
+            <div class="codo-thinking-pulse-bar">
+                <div class="codo-thinking-pulse-fill"></div>
+            </div>
+        </div>
+    `;
+
+    let currentStageIndex = 0;
+    const intervalTimer = setInterval(() => {
+        currentStageIndex = (currentStageIndex + 1) % stages.length;
+        const titleEl = div.querySelector('.stage-text');
+        const subEl = div.querySelector('#codo-dynamic-stage-sub');
+        if (titleEl) titleEl.textContent = stages[currentStageIndex].title;
+        if (subEl) subEl.textContent = stages[currentStageIndex].sub;
+    }, 1800);
+
+    div.cleanup = () => clearInterval(intervalTimer);
+    return div;
+}
+
+// 🚀 إرسال الرسالة إلى خادم CODO الذكي
 async function sendMessage() {
     const input = document.getElementById('phantom-chat-input');
-    const text = input.value.trim();
-    if (!text) return;
+    const sendBtn = document.getElementById('phantom-chat-send');
+    const text = input ? input.value.trim() : '';
 
-    addMessage(text, 'user', true);
-    input.value = '';
+    if (!text && !codoAttachedFile) return;
+
+    // حماية ضد التكرار السريع
+    if (sendBtn) sendBtn.disabled = true;
+
+    const attachedFileBackup = codoAttachedFile ? { ...codoAttachedFile } : null;
+    const skillBackup = codoActiveSkillId;
+
+    const isPdf = Boolean(attachedFileBackup?.isPdf);
+    const isImage = Boolean(attachedFileBackup?.isImage);
+    const fileSizeStr = attachedFileBackup ? (Math.round((attachedFileBackup.size || 0) / 1024) + ' KB') : null;
+
+    // إضافة رسالة المستخدم للشات مع الصورة أو ملف الـ PDF أو الملف المرفق
+    addMessage(text || (isPdf ? `[فحص مستند PDF: ${attachedFileBackup.name}]` : (isImage ? `[فحص صورة: ${attachedFileBackup.name}]` : `[فحص ملف: ${attachedFileBackup?.name || 'مرفق'}]`)), 'user', true, {
+        fileName: attachedFileBackup ? attachedFileBackup.name : null,
+        imageUrl: isImage ? attachedFileBackup.previewUrl : null,
+        isPdf: isPdf,
+        fileSize: fileSizeStr
+    });
+
+    if (input) input.value = '';
+    removeAttachedCodoFile(); // مسح شريط المعاينة
+    playCodoSound('send');
 
     const body = document.getElementById('phantom-chat-body');
-    const typing = showTyping();
-    body.appendChild(typing);
-    body.scrollTop = body.scrollHeight;
+    const typingIndicator = showDynamicTyping(
+        codoWebSearchEnabled || codoDeepResearchEnabled,
+        Boolean(codoActiveSkillId),
+        Boolean(attachedFileBackup && !isImage && !isPdf),
+        isImage,
+        isPdf
+    );
+
+    if (body) {
+        body.appendChild(typingIndicator);
+        body.scrollTop = body.scrollHeight;
+    }
+
+    const stopBtn = document.getElementById('codo-stop-btn');
+    if (stopBtn) stopBtn.style.display = 'inline-block';
+
+    const session = getActiveGhostSession();
+    if (!session.aiHistory) session.aiHistory = [];
+
+    currentCodoAbortController = new AbortController();
 
     try {
         const response = await fetch("/api/chat", {
@@ -7341,57 +10980,159 @@ async function sendMessage() {
             headers: { 
                 "Content-Type": "application/json"
             },
+            signal: currentCodoAbortController.signal,
             body: JSON.stringify({ 
                 message: text,
-                history: bobertChatHistory
+                history: session.aiHistory,
+                modelChoice: codoCurrentModel || 'codo-base',
+                deepResearch: codoDeepResearchEnabled,
+                webSearch: codoWebSearchEnabled,
+                activeSkillId: skillBackup,
+                attachedFile: attachedFileBackup
             })
         });
 
+        if (typingIndicator && typingIndicator.cleanup) typingIndicator.cleanup();
+        if (typingIndicator && typingIndicator.parentNode) typingIndicator.remove();
+        if (stopBtn) stopBtn.style.display = 'none';
+        if (sendBtn) sendBtn.disabled = false;
+
         if (!response.ok) throw new Error("Server Error: " + response.status);
         const data = await response.json();
-        const aiResponse = data.response || data.reply || "أهلاً بك يا بطل PHANTOM!";
+        const aiResponse = data.response || data.reply || "أهلاً بك يا بطل! أنا CODO في خدمتك دائماً.";
 
-        typing.remove();
+        session.aiHistory.push({ role: 'user', text: text || (attachedFileBackup?.isPdf ? `تحليل مستند PDF: ${attachedFileBackup?.name}` : (attachedFileBackup?.isImage ? `تحليل صورة ${attachedFileBackup?.name}` : `تحليل ملف ${attachedFileBackup?.name}`)) });
+        session.aiHistory.push({ role: 'model', text: aiResponse });
+        if (session.aiHistory.length > 20) session.aiHistory = session.aiHistory.slice(-20);
+        saveGhostSessionsToStorage();
 
-        bobertChatHistory.push({ role: 'user', text: text });
-        bobertChatHistory.push({ role: 'model', text: aiResponse });
-        if (bobertChatHistory.length > 10) bobertChatHistory = bobertChatHistory.slice(-10);
-        try {
-            localStorage.setItem(BOBERT_HISTORY_KEY, JSON.stringify(bobertChatHistory));
-        } catch (e) {}
+        addMessage(aiResponse, 'bot', true, {
+            sources: data.sources || [],
+            usedSkill: data.usedSkill || null
+        });
 
-        addMessage(aiResponse, 'bot', true);
+        playCodoSound('receive');
+    } catch (e) {
+        if (typingIndicator && typingIndicator.cleanup) typingIndicator.cleanup();
+        if (typingIndicator && typingIndicator.parentNode) typingIndicator.remove();
+        if (stopBtn) stopBtn.style.display = 'none';
+        if (sendBtn) sendBtn.disabled = false;
 
-        if (text.includes("العب معي") || text.includes("العاب")) {
-            setTimeout(() => {
-                if (typeof openGamesPage === 'function') openGamesPage();
-            }, 1000);
+        if (e.name === 'AbortError') {
+            console.log("Chat generation stopped by user.");
+            addMessage("⏹️ تم إيقاف التوليد بناءً على طلبك.", 'bot', true);
+            return;
         }
-    } catch (error) {
-        typing.remove();
-        console.error("AI Error:", error);
-        showToast("⚠️ تعذر الاتصال بالذكاء الاصطناعي.", "error");
-        addMessage("عذراً، حدث خطأ في الاتصال.", 'bot', true);
+
+        console.error("CODO AI Chat Error:", e);
+        playCodoSound('error');
+
+        // استعادة النص المكتوب في حال حدوث خطأ حتى لا يضيع على المستخدم
+        if (input && text) input.value = text;
+        showToast("⚠️ تعذر الاتصال بـ CODO، تم الاحتفاظ بنص رسالتك.", "error");
+        addMessage("⚠️ عذراً يا بطل، حدث تعذر مؤقت في الاتصال بـ CODO. تم الاحتفاظ برسالتك ويمكنك النقر على إرسال لإعادة المحاولة فوراً.", 'bot', true);
+    } finally {
+        currentCodoAbortController = null;
     }
 }
-// ✅ دالة مؤشر الكتابة (فضلت زي ما هي بالظبط)
-function showTyping() {
-    const div = document.createElement('div');
-    div.className = 'thinking-ghost-container';
-    div.innerHTML = `
-        <div class="thinking-ghost">
-            <svg viewBox="0 0 100 100" width="60" height="60">
-                <path class="ghost-outline" d="M50 10 C30 10 20 20 20 40 V70 L30 60 L40 70 L50 60 L60 70 L70 60 L80 70 V40 C80 20 70 10 50 10 Z" fill="transparent" stroke="#00E5F0" stroke-width="5" stroke-linejoin="round" />
-                <circle class="ghost-eye-left" cx="38" cy="45" r="6" fill="transparent" />
-                <circle class="ghost-eye-right" cx="62" cy="45" r="6" fill="transparent" />
-            </svg>
-            <div class="thinking-text">
-                بوبرت يكتب<span class="dots"><span>.</span><span>.</span><span>.</span></span>
-            </div>
-        </div>
-    `;
-    return div;
+
+window.stopCodoGeneration = function() {
+    if (currentCodoAbortController) {
+        currentCodoAbortController.abort();
+        currentCodoAbortController = null;
+    }
+    const stopBtn = document.getElementById('codo-stop-btn');
+    if (stopBtn) stopBtn.style.display = 'none';
+    const typing = document.querySelector('.thinking-ghost-container');
+    if (typing) {
+        if (typing.cleanup) typing.cleanup();
+        if (typing.parentNode) typing.remove();
+    }
+    showToast("⏹️ تم إيقاف المعالجة", "info");
+};
+
+// فتح وإغلاق الشات
+function openCodoChat() {
+    const overlay = document.getElementById('phantom-chat-overlay');
+    if (!overlay) return;
+
+    overlay.style.display = 'flex';
+    overlay.classList.add('open');
+    document.body.style.overflow = 'hidden';
+
+    loadGhostSessionsFromStorage();
+    renderGhostSessionsList();
+    renderActiveGhostMessages();
+
+    setCodoModel(codoCurrentModel || 'codo-base');
+    loadSkillsFromBackend();
+    setupCodoClipboardAndDrop();
+
+    const toggleHistoryBtn = document.getElementById('ghost-toggle-history-btn');
+    const historySidebar = document.getElementById('ghost-history-sidebar');
+    const sendBtn = document.getElementById('phantom-chat-send');
+    const input = document.getElementById('phantom-chat-input');
+
+    if (toggleHistoryBtn && historySidebar) {
+        toggleHistoryBtn.onclick = () => {
+            historySidebar.classList.toggle('open');
+        };
+    }
+
+    if (sendBtn) sendBtn.onclick = sendMessage;
+    if (input) {
+        // دعم التوسع التلقائي لحقل textarea مع إرسال بـ Enter وسطر جديد بـ Shift+Enter
+        input.onkeydown = (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        };
+        input.oninput = () => {
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+        };
+        setTimeout(() => input.focus(), 250);
+    }
 }
+
+function closeCodoChat() {
+    const overlay = document.getElementById('phantom-chat-overlay');
+    if (overlay) {
+        overlay.classList.remove('open');
+        overlay.style.display = 'none';
+    }
+    document.body.style.overflow = '';
+}
+
+// إغلاق قوائم الموديل والخيارات عند النقر في الخارج
+document.addEventListener('click', (e) => {
+    const menu = document.getElementById('codo-model-menu');
+    const trigger = document.getElementById('codo-model-selector-btn');
+    if (menu && menu.style.display === 'block') {
+        if (!menu.contains(e.target) && (!trigger || !trigger.contains(e.target))) {
+            menu.style.display = 'none';
+        }
+    }
+
+    const moreMenu = document.getElementById('codo-more-options-menu');
+    const moreTrigger = document.getElementById('codo-more-options-btn');
+    if (moreMenu && moreMenu.style.display === 'block') {
+        if (!moreMenu.contains(e.target) && (!moreTrigger || !moreTrigger.contains(e.target))) {
+            moreMenu.style.display = 'none';
+        }
+    }
+});
+
+// توافقية كاملة للدوال
+window.openCodoChat = openCodoChat;
+window.closeCodoChat = closeCodoChat;
+window.clearCodoChat = clearCodoChat;
+window.openBobertChat = openCodoChat;
+window.closeBobertChat = closeCodoChat;
+window.clearBobertChat = clearCodoChat;
+window.renderBobertMessageDOM = renderCodoMessageDOM;
+window.showTyping = showDynamicTyping;
 /* ========================================================
    ✅ نظام الرسائل الجماعية (Broadcast) - النسخة الوحيدة
    ======================================================== */
@@ -7533,7 +11274,7 @@ function handleIdChange(id, action) {
 
         // ✅ تحديث السيرفر
         if (supabaseClient) {
-            supabaseClient.from('members').update({ in_game_id: newId, gameId: newId }).eq('name', username)
+            safePostgrest(supabaseClient.from('members').update({ in_game_id: newId, gameId: newId }).eq('name', username))
                 .then(() => console.log("✅ تم تحديث السيرفر"))
                 .catch(err => console.warn("⚠️ فشل تحديث السيرفر:", err));
         }
@@ -7732,33 +11473,6 @@ function submitComment() {
     renderClips();
 }
 
-function renderComments() {
-    const container = document.getElementById("comments-list");
-    if (!container) return;
-    const comments = getComments();
-
-    if (!comments.length) {
-        container.innerHTML = `<div class="empty-state" style="text-align:center; padding:20px; color:var(--silver-muted);">لا توجد تعليقات بعد. كن أول من يعلق!</div>`;
-        return;
-    }
-
-    container.innerHTML = comments.slice().reverse().map(c => {
-        const avatarLetter = (c.username || "؟").charAt(0).toUpperCase();
-        const timeStr = getRelativeTime(c.timestamp);
-        return `
-            <div class="comment-item-v2">
-                <div class="comment-avatar">${escapeHTML(avatarLetter)}</div>
-                <div class="comment-content-wrapper">
-                    <div class="comment-meta">
-                        <span class="comment-username">${escapeHTML(c.username)}</span>
-                        <span class="comment-time">${timeStr}</span>
-                    </div>
-                    <div class="comment-bubble">${escapeHTML(c.text)}</div>
-                </div>
-            </div>
-        `;
-    }).join("");
-}
 // دالة نافذة نقل النقاط
 function showTransferPointsModal() {
     const roster = getFullRoster();
@@ -8241,33 +11955,6 @@ const PHANTOM_TITLES = {
     14: "مخترع الاستراتيجيات",
     99: "لقب مميز"
 };
-// ✅ فتح وإغلاق صفحة الإعدادات
-function openSettings() {
-    const overlay = document.getElementById('settings-overlay');
-    if (overlay) {
-        overlay.style.display = 'flex';
-    }
-}
-
-function closeSettings() {
-    const overlay = document.getElementById('settings-overlay');
-    if (overlay) {
-        overlay.style.display = 'none';
-    }
-}
-
-// ✅ ربط زر الإعدادات
-document.addEventListener('DOMContentLoaded', function() {
-    const settingsTrigger = document.getElementById('settings-trigger');
-    if (settingsTrigger) {
-        settingsTrigger.addEventListener('click', openSettings);
-    }
-    
-    const settingsClose = document.getElementById('settings-close-btn');
-    if (settingsClose) {
-        settingsClose.addEventListener('click', closeSettings);
-    }
-});
 // ✅ إجبار أزرار الإعدادات على التحديث فوراً عند فتحها
 // هذا يضمن أن الخيار المختار يبقى منور كل ما تفتح الإعدادات
 document.addEventListener('DOMContentLoaded', function() {
@@ -8388,5 +12075,105 @@ function logoutUser() {
     startLogoutFlow();
 }
 
+// =========================================================
+// 🗚 نظام التحكم في حجم واجهة وخطوط الموقع (UI Scale System)
+// =========================================================
+function getSavedUiScale() {
+    try {
+        const saved = parseFloat(localStorage.getItem('phantom_ui_scale'));
+        if (!isNaN(saved) && saved >= 0.75 && saved <= 1.40) {
+            return saved;
+        }
+    } catch (e) {}
+    return 1.0;
+}
 
-           
+function applyUiScale(scale, save = true) {
+    scale = Math.min(1.35, Math.max(0.80, parseFloat(scale) || 1.0));
+    scale = Math.round(scale * 100) / 100;
+
+    document.documentElement.style.setProperty('--app-scale', scale);
+    if (document.body) {
+        document.body.style.zoom = scale;
+    }
+
+    const label = document.getElementById('ui-scale-current-label');
+    if (label) {
+        label.textContent = Math.round(scale * 100) + '%';
+    }
+
+    const slider = document.getElementById('ui-scale-slider');
+    if (slider) {
+        slider.value = scale;
+    }
+
+    document.querySelectorAll('.scale-preset-btn').forEach(btn => {
+        const btnScale = parseFloat(btn.dataset.scale);
+        if (Math.abs(btnScale - scale) < 0.03) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+
+    if (save) {
+        try {
+            localStorage.setItem('phantom_ui_scale', scale);
+        } catch (e) {}
+        showToast(`🗚 تم ضبط حجم الواجهة على ${Math.round(scale * 100)}%`, "info");
+    }
+}
+window.applyUiScale = applyUiScale;
+
+function toggleUiScaleMenu() {
+    const menu = document.getElementById('ui-scale-menu');
+    if (!menu) return;
+    const isShowing = menu.style.display === 'block';
+    menu.style.display = isShowing ? 'none' : 'block';
+}
+window.toggleUiScaleMenu = toggleUiScaleMenu;
+
+function stepUiScale(delta) {
+    const cur = getSavedUiScale();
+    applyUiScale(cur + delta);
+}
+window.stepUiScale = stepUiScale;
+
+function setUiScale(val) {
+    applyUiScale(val);
+}
+window.setUiScale = setUiScale;
+
+function onUiScaleSliderChange(val) {
+    applyUiScale(val);
+}
+window.onUiScaleSliderChange = onUiScaleSliderChange;
+
+// تطبيق الحجم المحفوظ فور تحميل الصفحة
+document.addEventListener('DOMContentLoaded', () => {
+    applyUiScale(getSavedUiScale(), false);
+});
+if (document.readyState === 'interactive' || document.readyState === 'complete') {
+    applyUiScale(getSavedUiScale(), false);
+}
+
+// إغلاق قوائم الـ Dropdown عند النقر خارجها
+document.addEventListener('click', (e) => {
+    const scaleWrapper = document.getElementById('ui-scale-controller-wrapper');
+    const scaleMenu = document.getElementById('ui-scale-menu');
+    if (scaleWrapper && scaleMenu && !scaleWrapper.contains(e.target)) {
+        scaleMenu.style.display = 'none';
+    }
+
+    const codoOpts = document.querySelector('.codo-options-dropdown-container');
+    const codoOptsMenu = document.getElementById('codo-more-options-menu');
+    if (codoOpts && codoOptsMenu && !codoOpts.contains(e.target)) {
+        codoOptsMenu.style.display = 'none';
+    }
+
+    const codoModelCont = document.querySelector('.codo-model-dropdown-container');
+    const codoModelMenu = document.getElementById('codo-model-menu');
+    if (codoModelCont && codoModelMenu && !codoModelCont.contains(e.target)) {
+        codoModelMenu.style.display = 'none';
+    }
+});

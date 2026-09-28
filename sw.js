@@ -7,8 +7,8 @@
 importScripts("https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js");
 importScripts("https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js");
 
-// ✅ تم تحديث الإصدار إلى v6 لمسح الكاش القديم
-const CACHE_NAME = "phantom-hq-v6";
+// ✅ تم تحديث الإصدار إلى v7 لمسح الكاش القديم
+const CACHE_NAME = "phantom-hq-v7";
 
 /* ========================================================
    📦 CORE FILES
@@ -124,6 +124,24 @@ self.addEventListener("fetch", (event) => {
                         );
                     });
                 })
+        );
+        return;
+    }
+
+    // ✅ للملفات البرمجية الأساسية، نفضل جلب أحدث نسخة من الشبكة أولاً مع الرجوع للكاش عند انقطاع الاتصال
+    if (url.pathname.endsWith("script.js") || url.pathname.endsWith("data.js") || url.pathname.endsWith("style.css")) {
+        event.respondWith(
+            fetch(request)
+                .then((networkResponse) => {
+                    if (networkResponse && networkResponse.ok) {
+                        const responseClone = networkResponse.clone();
+                        caches.open(CACHE_NAME).then((cache) => {
+                            cache.put(request, responseClone);
+                        });
+                    }
+                    return networkResponse;
+                })
+                .catch(() => caches.match(request))
         );
         return;
     }

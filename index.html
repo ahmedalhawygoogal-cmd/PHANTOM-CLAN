@@ -20,6 +20,34 @@
 
 <body>
 
+    <!-- ✈️ TELEGRAM-STYLE IN-APP NOTIFICATION BANNER -->
+    <div id="telegram-battle-notification" class="telegram-banner">
+        <div class="telegram-banner-icon" id="tg-banner-icon">⚔️</div>
+        <div class="telegram-banner-content">
+            <div class="telegram-banner-title">
+                <span id="tg-banner-sender">[اسم العضو]</span>
+                <span id="tg-banner-tag" style="color:var(--cyan); font-size:0.75rem;">• تحدي جديد!</span>
+            </div>
+            <div class="telegram-banner-desc" id="tg-banner-text">يبحث عن منافس في معركة الشعبية 1v1 الآن!</div>
+        </div>
+        <button id="tg-banner-join-btn" class="telegram-banner-action" type="button">⚔️ انضمام</button>
+        <button id="tg-banner-close-btn" class="telegram-banner-close" type="button">✕</button>
+    </div>
+
+    <!-- 📞 FLOATING ACTIVE CALL NOTIFICATION BANNER -->
+    <div id="clan-active-call-banner" class="telegram-banner" style="display:none; background:linear-gradient(135deg, rgba(16,185,129,0.95), rgba(6,78,59,0.98)); border:1px solid #00ff88; box-shadow:0 10px 35px rgba(0,255,136,0.35); z-index:9999999;">
+        <div class="telegram-banner-icon" style="background:rgba(255,255,255,0.2); animation:pulse_3011 2s infinite;">🎙️</div>
+        <div class="telegram-banner-content">
+            <div class="telegram-banner-title">
+                <span id="call-banner-sender" style="color:#fff; font-weight:900;">[مكالمة جارية]</span>
+                <span style="color:#a7f3d0; font-size:0.75rem; font-weight:700;">• مكالمة مباشرة نشطة الآن</span>
+            </div>
+            <div class="telegram-banner-desc" id="call-banner-text" style="color:#ecfdf5;">مكالمة صوتية وفيديو مفتوحة لجميع أبطال الكلان! اضغط للدخول.</div>
+        </div>
+        <button id="call-banner-join-btn" class="telegram-banner-action" type="button" onclick="showGoogleMeetModal();" style="background:#fff; color:#064e3b; font-weight:900; box-shadow:0 0 10px rgba(255,255,255,0.5);">📞 انضمام</button>
+        <button id="call-banner-close-btn" class="telegram-banner-close" type="button" onclick="dismissCallBanner()">✕</button>
+    </div>
+
     <!-- ==================================================
          🔐 BOOT / IDENTITY GATE
     =================================================== -->
@@ -98,6 +126,33 @@
             </div>
         </div>
         <div class="header-actions">
+            <!-- أداة التحكم في حجم الواجهة والخط (UI Scale Controller) -->
+            <div class="ui-scale-controller-wrapper" id="ui-scale-controller-wrapper">
+                <button id="ui-scale-trigger-btn" class="ui-scale-trigger-btn" type="button" onclick="toggleUiScaleMenu()" title="التحكم في حجم خط وواجهة الموقع">
+                    <span class="ui-scale-icon">🗚</span>
+                    <span id="ui-scale-current-label" class="ui-scale-val">100%</span>
+                </button>
+                <div id="ui-scale-menu" class="ui-scale-menu" style="display:none;">
+                    <div class="ui-scale-menu-header">
+                        <span>حجم الواجهة والخط</span>
+                        <button type="button" class="ui-scale-reset-btn" onclick="setUiScale(1.0)" title="استعادة الحجم الافتراضي">إعادة ضبط</button>
+                    </div>
+                    <div class="ui-scale-quick-actions">
+                        <button type="button" class="scale-step-btn" onclick="stepUiScale(-0.05)" title="تصغير الواجهة (A-)">A-</button>
+                        <div class="scale-range-track">
+                            <input type="range" id="ui-scale-slider" min="0.80" max="1.30" step="0.05" value="1.0" oninput="onUiScaleSliderChange(this.value)" />
+                        </div>
+                        <button type="button" class="scale-step-btn" onclick="stepUiScale(0.05)" title="تكبير الواجهة (A+)">A+</button>
+                    </div>
+                    <div class="ui-scale-presets">
+                        <button type="button" class="scale-preset-btn" data-scale="0.85" onclick="setUiScale(0.85)">85% مدمج</button>
+                        <button type="button" class="scale-preset-btn active" data-scale="1.0" onclick="setUiScale(1.0)">100% عادي</button>
+                        <button type="button" class="scale-preset-btn" data-scale="1.15" onclick="setUiScale(1.15)">115% كبير</button>
+                        <button type="button" class="scale-preset-btn" data-scale="1.30" onclick="setUiScale(1.30)">130% أقصى</button>
+                    </div>
+                </div>
+            </div>
+
             <button id="phantom-ghost-trigger" onclick="toggleGhostMenu()" style="background:transparent; border:none; cursor:pointer; padding:5px; line-height:0; position:relative; z-index:999999;">
                 <svg viewBox="0 0 100 100" width="32" height="32" fill="none" stroke="#00f2fe" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M20 80 V50 C20 25 35 10 50 10 C65 10 80 25 80 50 V80 L70 70 L60 80 L50 70 L40 80 L30 70 Z"></path>
@@ -105,8 +160,8 @@
                     <circle cx="60" cy="45" r="4" fill="#00f2fe" stroke="none"></circle>
                 </svg>
             </button>
-            <button type="button" class="btn" id="open-bobert-chat-btn" onclick="openBobertChat()">
-                <strong>CHAT</strong>
+            <button type="button" class="btn" id="open-bobert-chat-btn" onclick="openCodoChat()" title="مساعد CODO الذكي">
+                <strong>CODO</strong>
                 <div id="container-stars"><div id="stars"></div></div>
                 <div id="glow"><div class="circle"></div><div class="circle"></div></div>
             </button>
@@ -257,6 +312,7 @@
             <div class="hub-card" id="open-vault-fullscreen-btn"><div class="hub-card-icon">🔒</div><div class="hub-card-title">الخزنة الاستثمارية</div><div class="hub-card-desc">تجميد واستثمار النقاط</div></div>
             <div class="hub-card" id="open-store-fullscreen-btn"><div class="hub-card-icon">🛒</div><div class="hub-card-title">المتجر والمزايا</div><div class="hub-card-desc">ألقاب، إطارات نيون، وكروت</div></div>
             <div class="hub-card" id="open-battle-fullscreen-btn"><div class="hub-card-icon">⚔️</div><div class="hub-card-title">معركة الشعبية 1v1</div><div class="hub-card-desc">ساحة التنافس ودعم الـ PK</div></div>
+            <div class="hub-card" id="open-arena-fullscreen-btn" onclick="openPhantomArena()"><div class="hub-card-icon">⚡</div><div class="hub-card-title">ساحة النزال 1v1</div><div class="hub-card-desc">مبارزات تفاعلية وسرعة رد الفعل</div><span class="hub-badge" style="background:#00f2fe; color:#050b14;">جديد!</span></div>
         </div>
     </div>
 </div>
@@ -436,13 +492,19 @@
         </div>
         
         <!-- رأس المتجر -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding: 0 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding: 0 10px; flex-wrap: wrap; gap: 8px;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <div style="width: 32px; height: 32px; border-radius: 50%; background: rgba(212, 175, 55, 0.15); display: flex; align-items: center; justify-content: center; font-size: 1rem;">💰</div>
                 <div style="display: flex; flex-direction: column; line-height: 1.2;">
                     <span style="font-size: 0.6rem; color: var(--muted);">الرصيد</span>
                     <strong id="shop-user-balance" style="font-size: 1rem; color: var(--gold); font-weight: 900;">0</strong>
                 </div>
+            </div>
+
+            <!-- مؤقت تجديد العناصر النادرة -->
+            <div id="shop-timer-container" style="display: flex; align-items: center; gap: 6px; background: rgba(234, 179, 8, 0.1); border: 1px solid rgba(234, 179, 8, 0.35); padding: 4px 10px; border-radius: 20px;">
+                <span style="font-size: 0.72rem; color: #fbbf24; font-weight: 800;">⏳ تجديد النوادر:</span>
+                <span id="shop-countdown-display" style="font-size: 0.78rem; color: #ffd700; font-weight: 900; font-family: monospace;">23:59:59</span>
             </div>
             
             <!-- زر الفلاتر الدائري -->
@@ -464,12 +526,22 @@
             </div>
         </div>
 
+        <!-- تبويبات تدوير المتجر (عروض اليوم المختارة vs الأرشيف الكامل) -->
+        <div class="shop-main-tabs" style="display: flex; gap: 8px; margin-bottom: 14px; padding: 0 10px;">
+            <button class="shop-tab-pill active" id="shop-tab-daily" type="button" onclick="switchShopCatalogTab('daily')" style="flex: 1; padding: 8px 12px; background: rgba(0, 242, 254, 0.15); border: 1px solid var(--cyan); border-radius: 8px; color: var(--cyan); font-weight: 800; font-size: 0.85rem; cursor: pointer;">
+                <span>⚡ عروض اليوم المختارة</span>
+            </button>
+            <button class="shop-tab-pill" id="shop-tab-archive" type="button" onclick="switchShopCatalogTab('archive')" style="flex: 1; padding: 8px 12px; background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-weight: 800; font-size: 0.85rem; cursor: pointer;">
+                <span>🏛️ الأرشيف الكامل</span>
+            </button>
+        </div>
+
         <!-- شبكة المتجر -->
         <div id="shop-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 0 10px 20px 10px;"></div>
     </div>
 </div>
 
-<!-- ⚔️ 6. معركة الشعبية 1v1 -->
+<!-- ⚔️ 6. معركة الشعبية 1v1 (Popularity PK Battle) -->
 <div id="battle-overlay" class="fullscreen-overlay" style="display:none;">
     <div class="fullscreen-container">
         <div class="fullscreen-header">
@@ -482,10 +554,36 @@
                     <div class="streak-row" style="justify-content:center;">
                         <span class="streak-icon" style="font-size:3rem;">⚔️</span>
                     </div>
-                    <p style="color:var(--white); font-weight:900; font-size:1.3rem; margin:10px 0 5px;">انضم لساحة المعركة</p>
-                    <div class="streak-hint">💡 اضغط "استعد" لبدء البحث عن خصم وابدأ المواجهة!</div>
+                    <p style="color:var(--white); font-weight:900; font-size:1.3rem; margin:10px 0 5px;">انضم لساحة معركة الشعبية</p>
+                    <div class="streak-hint">💡 اضغط "استعد" لبدء البحث عن خصم عبر السيرفر أو اختر بطلاً متصلاً وتحدّه فوراً!</div>
                 </div>
-                <button id="battle-ready-btn" class="btn-primary pulse-active" style="width:100%; height:50px; font-size:1.1rem; border-radius:12px; margin-top:10px;">⚔️ استعد</button>
+                <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;">
+                    <button id="battle-ready-btn" class="btn-primary pulse-active" style="width:100%; height:50px; font-size:1.05rem; border-radius:12px;">⚔️ استعد (ماتش ميكينغ السيرفر)</button>
+                </div>
+
+                <!-- مساحة حالة البحث عن المنافس في الشعبية -->
+                <div id="popularity-search-lobby" style="display:none; margin-top:12px;"></div>
+
+                <!-- قائمة أعضاء الكلان للتحدي المباشر في الشعبية -->
+                <div class="popularity-members-section" style="margin-top:18px; background:rgba(15,23,42,0.6); border:1px solid rgba(0,242,254,0.18); border-radius:14px; padding:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+                        <div style="font-weight:900; color:var(--white); font-size:1rem; display:flex; align-items:center; gap:8px;">
+                            <span>👑 تحدي الشعبية المباشر مع أعضاء الكلان</span>
+                            <span id="popularity-online-counter" style="font-size:0.75rem; background:rgba(0,255,136,0.15); color:#00ff88; padding:2px 8px; border-radius:12px; border:1px solid rgba(0,255,136,0.3);">0 متصل</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:6px; font-size:0.75rem;">
+                            <span style="color:#00ff88; display:flex; align-items:center; gap:3px;"><span style="width:8px; height:8px; border-radius:50%; background:#00ff88; display:inline-block; box-shadow:0 0 8px #00ff88;"></span> متصل بالموقع</span>
+                            <span style="color:#64748b;">•</span>
+                            <span style="color:#ef4444; display:flex; align-items:center; gap:3px;"><span style="width:8px; height:8px; border-radius:50%; background:#ef4444; display:inline-block;"></span> غير متصل</span>
+                        </div>
+                    </div>
+                    <div style="position:relative; margin-bottom:10px;">
+                        <input type="text" id="popularity-member-search" placeholder="🔍 ابحث عن عضو بالاسم لتحديه..." style="width:100%; padding:8px 12px; background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#fff; font-size:0.85rem;" oninput="filterPopularityClanMembers(this.value)">
+                    </div>
+                    <div id="popularity-clan-members-list" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:10px; max-height:240px; overflow-y:auto; padding:4px;">
+                        <!-- يتم التوليد التلقائي هنا -->
+                    </div>
+                </div>
             </div>
             <div id="battle-arena" style="display:none; flex-direction:column; gap:15px;">
                 <div class="streak-header-box" style="border:none; background:transparent; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
@@ -529,9 +627,234 @@
                     <div style="display:flex; gap:8px;">
                         <button id="vote-btn-a" class="btn-primary" style="flex:1; padding:10px; background:#3498db; box-shadow:0 0 15px rgba(52,152,219,0.3);">🔵 صوّت لـ [اللاعب أ]</button>
                         <button id="vote-btn-b" class="btn-primary" style="flex:1; padding:10px; background:#e74c3c; box-shadow:0 0 15px rgba(231,76,60,0.3);">🔴 صوّت لـ [اللاعب ب]</button>
-                        <div id="battle-result-msg" style="display:none; margin-top:15px; padding:14px; border-radius:10px; text-align:center; font-weight:900; font-size:1.1rem;"></div>
+                    </div>
+                    <div id="battle-result-msg" style="display:none; margin-top:15px; padding:14px; border-radius:10px; text-align:center; font-weight:900; font-size:1.1rem;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ⚡ 7. ساحة المبارزات 1v1 التفاعلية · PHANTOM ARENA -->
+<div id="arena-overlay" class="fullscreen-overlay" style="display:none;">
+    <div class="fullscreen-container" style="max-width:850px;">
+        <div class="fullscreen-header">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <h2 style="font-size:1.2rem; margin:0;">⚡ ساحة المبارزات 1v1 · PHANTOM ARENA</h2>
+            </div>
+            <div class="arena-top-actions">
+                <button id="arena-audio-toggle" type="button" class="arena-icon-btn" onclick="toggleArenaAudio()" title="كتم/تشغيل المؤثرات الصوتية">🔊</button>
+                <button id="arena-close-btn" class="fullscreen-close-btn" type="button" onclick="closePhantomArena()">[PH]</button>
+            </div>
+        </div>
+
+        <div class="daily-content-wrapper" style="padding:15px 12px;">
+            <!-- شريط التبويبات -->
+            <div class="arena-tabs-nav" id="arena-tabs-container">
+                <button class="arena-tab-btn active" id="arena-nav-lobby" type="button" onclick="switchArenaView('lobby')">⚔️ ردهة التحديات والمواجهة</button>
+                <button class="arena-tab-btn" id="arena-nav-history" type="button" onclick="switchArenaView('history')">🏆 لوحة الأبطال والسجل</button>
+            </div>
+
+            <!-- 1. واجهة الردهة (LOBBY) -->
+            <div id="arena-view-lobby">
+                <!-- بطاقة المقاتل الحالية -->
+                <div class="arena-player-card">
+                    <div class="arena-player-meta">
+                        <div class="arena-player-avatar" id="arena-my-avatar">PH</div>
+                        <div>
+                            <div class="arena-player-title" id="arena-my-name">المقاتل الشبح</div>
+                            <div class="arena-player-sub" id="arena-my-rank">رتبة: محارب فانتوم</div>
+                        </div>
+                    </div>
+                    <div class="arena-stat-pills">
+                        <div class="arena-stat-badge">
+                            <span class="arena-stat-val" id="arena-my-wins">0</span>
+                            <span class="arena-stat-lbl">انتصارات</span>
+                        </div>
+                        <div class="arena-stat-badge">
+                            <span class="arena-stat-val" id="arena-my-losses">0</span>
+                            <span class="arena-stat-lbl">هزائم</span>
+                        </div>
+                        <div class="arena-stat-badge">
+                            <span class="arena-stat-val" id="arena-my-streak">0</span>
+                            <span class="arena-stat-lbl">سلسلة فوز</span>
+                        </div>
+                        <div class="arena-stat-badge">
+                            <span class="arena-stat-val" id="arena-my-reaction">--</span>
+                            <span class="arena-stat-lbl">أسرع سرعة</span>
+                        </div>
+                        <div class="arena-stat-badge">
+                            <span class="arena-stat-val" id="arena-my-points">0</span>
+                            <span class="arena-stat-lbl">نقاط الرصيد</span>
+                        </div>
                     </div>
                 </div>
+
+                <!-- شبكة الأنماط -->
+                <div class="arena-modes-grid">
+                    <!-- نمط التدريب الفوري ضد البوت -->
+                    <div class="arena-mode-box">
+                        <div class="arena-mode-header">
+                            <div class="arena-mode-icon">🤖</div>
+                            <div>
+                                <div class="arena-mode-title">اشتباك سريع ضد شبح الكلان</div>
+                                <div class="arena-mode-desc">مواجهة فورية لاختبار سرعة رد الفعل والتصويب دون الحاجة لانتظار خصم.</div>
+                            </div>
+                        </div>
+                        <div>
+                            <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:6px; font-weight:700;">مستوى صعوبة البوت:</div>
+                            <div class="arena-options-row">
+                                <button type="button" class="arena-pill-opt" data-diff="easy" onclick="setArenaAiDiff('easy')">🟢 سهل</button>
+                                <button type="button" class="arena-pill-opt selected" data-diff="medium" onclick="setArenaAiDiff('medium')">🟡 تكتيكي</button>
+                                <button type="button" class="arena-pill-opt" data-diff="hard" onclick="setArenaAiDiff('hard')">🔴 أسطوري</button>
+                            </div>
+                        </div>
+                        <button type="button" class="arena-action-btn arena-action-ai" onclick="startSoloAiBattle()">
+                            <span>⚡</span> ابدأ المواجهة فوراً
+                        </button>
+                    </div>
+
+                    <!-- نمط تحدي أعضاء الكلان -->
+                    <div class="arena-mode-box">
+                        <div class="arena-mode-header">
+                            <div class="arena-mode-icon" style="background:rgba(239,68,68,0.1); border-color:rgba(239,68,68,0.2);">⚔️</div>
+                            <div>
+                                <div class="arena-mode-title">تحدي أعضاء الكلان 1v1</div>
+                                <div class="arena-mode-desc">إرسال إشعار فوري وتحدي أبطال الكلان مع رهان بنقاط الشبح.</div>
+                            </div>
+                        </div>
+                        <div>
+                            <div style="font-size:0.75rem; color:#94a3b8; margin-bottom:6px; font-weight:700;">قيمة الرهان بالنقاط:</div>
+                            <div class="arena-options-row">
+                                <button type="button" class="arena-pill-opt selected" data-stake="0" onclick="setArenaStake(0)">🛡️ ودي (0)</button>
+                                <button type="button" class="arena-pill-opt" data-stake="50" onclick="setArenaStake(50)">⚡ 50 نقطة</button>
+                                <button type="button" class="arena-pill-opt" data-stake="100" onclick="setArenaStake(100)">🔥 100 نقطة</button>
+                                <button type="button" class="arena-pill-opt" data-stake="250" onclick="setArenaStake(250)">👑 250 نقطة</button>
+                            </div>
+                        </div>
+                        <button type="button" class="arena-action-btn arena-action-duel" id="arena-match-btn" onclick="startMatching()">
+                            <span>⚔️</span> بحث عن خصم / إرسال تحدٍ
+                        </button>
+                    </div>
+                </div>
+
+                <!-- مساحة حالة البحث عن المنافس -->
+                <div id="arena-search-lobby" style="display:none; margin-top:10px;"></div>
+
+                <!-- قائمة أعضاء الكلان للتحدي المباشر وحالة الاتصال بالسيرفر -->
+                <div class="arena-members-section" style="margin-top:20px; background:rgba(15,23,42,0.6); border:1px solid rgba(0,242,254,0.18); border-radius:14px; padding:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+                        <div style="font-weight:900; color:var(--white); font-size:1rem; display:flex; align-items:center; gap:8px;">
+                            <span>⚔️ أبطال الكلان للتحدي المباشر</span>
+                            <span id="arena-online-counter" style="font-size:0.75rem; background:rgba(0,255,136,0.15); color:#00ff88; padding:2px 8px; border-radius:12px; border:1px solid rgba(0,255,136,0.3);">0 متصل بالمقر</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:6px; font-size:0.75rem;">
+                            <span style="color:#00ff88; display:flex; align-items:center; gap:3px;"><span style="width:8px; height:8px; border-radius:50%; background:#00ff88; display:inline-block; box-shadow:0 0 8px #00ff88;"></span> متصل</span>
+                            <span style="color:#64748b;">•</span>
+                            <span style="color:#ef4444; display:flex; align-items:center; gap:3px;"><span style="width:8px; height:8px; border-radius:50%; background:#ef4444; display:inline-block;"></span> غير متصل</span>
+                        </div>
+                    </div>
+                    <div style="position:relative; margin-bottom:12px;">
+                        <input type="text" id="arena-member-search" placeholder="🔍 ابحث عن عضو بالاسم أو الرتبة..." style="width:100%; padding:8px 12px; background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.1); border-radius:8px; color:#fff; font-size:0.85rem;" oninput="filterArenaClanMembers(this.value)">
+                    </div>
+                    <div id="arena-clan-members-list" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:10px; max-height:280px; overflow-y:auto; padding:4px;">
+                        <!-- يتم التوليد التلقائي هنا -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. واجهة الشاشة السينمائية (VERSUS REVEAL) -->
+            <div id="arena-view-versus" class="arena-versus-view" style="display:none;">
+                <div style="font-size:1.1rem; color:#00f2fe; font-weight:800; letter-spacing:1px;">⚡ إشارة بدء النزال ⚡</div>
+                <div class="arena-vs-cards">
+                    <div class="arena-fighter-card">
+                        <div class="arena-fighter-avatar" id="arena-vs-p1-avatar">PH</div>
+                        <div class="arena-fighter-name" id="arena-vs-p1-name">أنت</div>
+                        <div class="arena-fighter-sub" id="arena-vs-p1-sub">المتحدي الأول</div>
+                    </div>
+                    <div class="arena-vs-badge">VS</div>
+                    <div class="arena-fighter-card opponent">
+                        <div class="arena-fighter-avatar" id="arena-vs-p2-avatar">👻</div>
+                        <div class="arena-fighter-name" id="arena-vs-p2-name">شبح الكلان</div>
+                        <div class="arena-fighter-sub" id="arena-vs-p2-sub">الخصم المدافع</div>
+                    </div>
+                </div>
+                <div class="arena-countdown-banner" id="arena-vs-countdown">3</div>
+            </div>
+
+            <!-- 3. واجهة الاشتباك والقتال (COMBAT VIEW) -->
+            <div id="arena-view-combat" class="arena-combat-view" style="display:none;">
+                <div class="arena-combat-hud">
+                    <div class="arena-score-block">
+                        <span class="arena-score-p1" id="arena-hud-p1">أنت: 0</span>
+                        <span style="color:#64748b;">·</span>
+                        <span class="arena-score-p2" id="arena-hud-p2">الخصم: 0</span>
+                    </div>
+                    <div id="arena-hud-round" class="arena-round-badge">الجولة 1 من 3</div>
+                    <div class="arena-timer-badge" id="arena-hud-timer">⏱️ 00:08</div>
+                    <div id="arena-hud-speed" style="font-family:monospace; color:#00ff88; font-size:0.85rem; font-weight:800;">⚡ الاستجابة: --</div>
+                </div>
+
+                <!-- ساحة التصويب والنقر التفاعلية -->
+                <div class="arena-playfield" id="arena-playfield">
+                    <!-- يتم توليد الأهداف والألغام والمؤثرات ديناميكياً هنا -->
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.75rem; color:#94a3b8; padding:0 4px;">
+                    <div>🎯 الهدف الأزرق: <strong style="color:#00f2fe;">+100</strong> | ⚡ الهدف الذهبي: <strong style="color:#ffd700;">+200</strong> | 💣 اللغم الأحمر: <strong style="color:#ef4444;">-75</strong></div>
+                    <button type="button" class="btn-secondary" style="padding:4px 10px; font-size:0.75rem; border-radius:6px;" onclick="surrenderArenaMatch()">استسلام</button>
+                </div>
+            </div>
+
+            <!-- 4. واجهة النتيجة والتتويج (RESULT VIEW) -->
+            <div id="arena-view-result" class="arena-result-card" style="display:none;">
+                <div class="arena-trophy-icon" id="arena-res-icon">🏆</div>
+                <div class="arena-result-title" id="arena-res-title">انتصار مستحق!</div>
+                <div class="arena-result-desc" id="arena-res-desc">تمت هزيمة الخصم وسحق أهدافه بنجاح.</div>
+
+                <div class="arena-result-grid">
+                    <div class="arena-res-metric">
+                        <span class="arena-res-val" id="arena-res-p1-pts">0</span>
+                        <span class="arena-res-lbl">نقاطك في النزال</span>
+                    </div>
+                    <div class="arena-res-metric">
+                        <span class="arena-res-val" id="arena-res-p2-pts">0</span>
+                        <span class="arena-res-lbl">نقاط الخصم</span>
+                    </div>
+                    <div class="arena-res-metric">
+                        <span class="arena-res-val" id="arena-res-reaction">--</span>
+                        <span class="arena-res-lbl">أسرع سرعة نقر</span>
+                    </div>
+                    <div class="arena-res-metric">
+                        <span class="arena-res-val" id="arena-res-reward" style="color:#ffd700;">+0</span>
+                        <span class="arena-res-lbl">مكافأة الساحة</span>
+                    </div>
+                </div>
+
+                <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
+                    <button type="button" class="btn-primary" style="padding:10px 24px; font-weight:800; border-radius:10px;" onclick="replayArenaMatch()">
+                        🔄 جولة جديدة
+                    </button>
+                    <button type="button" class="btn-secondary" style="padding:10px 20px; border-radius:10px;" onclick="switchArenaView('lobby')">
+                        ⬅️ العودة للردهة
+                    </button>
+                </div>
+            </div>
+
+            <!-- 5. واجهة سجل الأبطال وتاريخ النزالات (HISTORY VIEW) -->
+            <div id="arena-view-history" style="display:none;">
+                <div style="margin-bottom:15px;">
+                    <h3 style="color:#ffd700; margin:0 0 4px 0; font-size:1.1rem; display:flex; align-items:center; gap:8px;">
+                        <span>👑</span> أبطال ساحة PHANTOM
+                    </h3>
+                    <p style="color:#94a3b8; font-size:0.82rem; margin:0;">أعلى المحاربين تصنيفاً وجمعاً للانتصارات في الساحة.</p>
+                </div>
+                <div id="arena-leaderboard-list" class="arena-history-list" style="margin-bottom:20px;"></div>
+
+                <div style="margin-bottom:10px;">
+                    <h4 style="color:#fff; margin:0 0 6px 0; font-size:0.95rem;">📜 سجل مبارزاتك الأخيرة</h4>
+                </div>
+                <div id="arena-history-log" class="arena-history-list"></div>
             </div>
         </div>
     </div>
@@ -935,10 +1258,32 @@
         function isFounderSession() {
             return localStorage.getItem('admin_authenticated') === 'true';
         }
+
+        function getCurrentUserRank() {
+            if (typeof isFounderSession === "function" && isFounderSession()) {
+                return "رئيس";
+            }
+            try {
+                var idRaw = localStorage.getItem("phantom_user_identity");
+                var identity = idRaw ? JSON.parse(idRaw) : null;
+                var username = (identity && identity.username) || localStorage.getItem("phantom_active_username") || "";
+                if (!username) return "محارب";
+                var customRoster = JSON.parse(localStorage.getItem("phantom_custom_roster") || "[]");
+                var serverRoster = JSON.parse(localStorage.getItem("phantom_server_members") || "[]");
+                var all = [].concat(serverRoster, customRoster);
+                var found = all.find(function(m) {
+                    return m && m.name && m.name.trim().toLowerCase() === username.trim().toLowerCase();
+                });
+                if (found && found.rank) return found.rank;
+            } catch (e) {}
+            return "محارب";
+        }
+        window.getCurrentUserRank = getCurrentUserRank;
+        window.inAppCallMode = 'voice';
     </script>
 
     <!-- تم إضافة مكتبة Agora في الـ Head، وإضافة عناصر الـ HTML الجديدة هنا -->
-    <script src="script.js?v=20260905"></script>
+    <script src="script.js?v=20260927_agora_codo_v6"></script>
   <style>
 .toast, #phantom-toast-container, .notification-toast, .popup-msg, .custom-toast, .alert-box, .message-popup {
     z-index: 999999999 !important;
@@ -1665,8 +2010,14 @@
             setupServiceButton('open-pacman-fullscreen-btn', 'pacman-overlay');
             setupServiceButton('open-wheel-fullscreen-btn', 'wheel-overlay');
             setupServiceButton('open-game-fullscreen-btn', 'game-overlay');
-            setupServiceButton('open-vault-fullscreen-btn', 'vault-overlay', loadVaultData);
-            setupServiceButton('open-store-fullscreen-btn', 'store-overlay', renderShop);
+            setupServiceButton('open-vault-fullscreen-btn', 'vault-overlay', function() {
+                if (typeof window.loadVaultData === 'function') window.loadVaultData();
+                else if (typeof loadVaultData === 'function') loadVaultData();
+            });
+            setupServiceButton('open-store-fullscreen-btn', 'store-overlay', function() {
+                if (typeof window.renderShop === 'function') window.renderShop();
+                else if (typeof renderShop === 'function') renderShop();
+            });
             setupServiceButton('open-battle-fullscreen-btn', 'battle-overlay');
 
             // ✅ حل مشكلة 31 + 41: الرجوع يرجع للهب لو اتفتحت منه، ويقفل لو لاء
@@ -1704,8 +2055,6 @@
             setupCloseButton('inventory-close-btn', 'inventory-overlay', false);
         });
     </script>
-        
-    </script>
 <!-- 🤖 PHANTOM MASCOT -->
 <div id="phantom-mascot" aria-hidden="true">
     <div id="mascot-banner">『PH』 PHANTOM HQ</div>
@@ -1732,24 +2081,272 @@
     </div>
 </div>
 
-<!-- 📱 بوبرت شات (Bottom Sheet) - تصميم 4 -->
-<div id="phantom-chat-overlay" class="phantom-chat-overlay"></div>
-<div id="phantom-chat-sheet" class="phantom-chat-sheet">
-  <div class="phantom-chat-header">
-    <div class="bot-avatar">👻</div>
-    <div class="phantom-chat-title">
-      <strong>بوبرت</strong>
-      <small>PHANTOM NODE • متصل</small>
+<!-- ⚡ مساعد CODO الذكي (الموثوق، فحص الصور والملفات، بحث الويب، وإدارة المهارات) -->
+<div id="phantom-chat-overlay" class="ghost-fullpage-overlay">
+  <div class="ghost-fullpage-header">
+    <div class="ghost-fullpage-brand">
+      <div class="ghost-avatar-glow" style="background:rgba(0,242,254,0.12); border:1px solid #00f2fe; border-radius:50%; width:38px; height:38px; display:flex; align-items:center; justify-content:center; font-weight:900; color:#00f2fe; font-size:1.1rem; box-shadow:0 0 15px rgba(0,242,254,0.3);">⚡</div>
+      <div class="ghost-fullpage-title">
+        <h3>مساعد <span>CODO AI</span></h3>
+        <small id="codo-status-indicator">● متصل ومستعد للإجابة والتحليل</small>
+      </div>
+
+      <!-- مربع اختيار النموذج الاحترافي الصغير المنسدل -->
+      <div class="codo-model-dropdown-container">
+        <button id="codo-model-selector-btn" class="codo-model-trigger-btn" type="button" onclick="toggleCodoModelMenu()" title="اختيار نموذج الذكاء الاصطناعي">
+          <span class="codo-model-badge-icon" id="codo-active-model-icon">⚡</span>
+          <span id="codo-active-model-name">CODO Base</span>
+          <span class="codo-dropdown-arrow">▾</span>
+        </button>
+        <div id="codo-model-menu" class="codo-model-menu-popup" style="display:none;">
+          <div class="codo-menu-item active" id="menu-opt-codo-base" onclick="setCodoModel('codo-base')">
+            <div class="codo-menu-item-title">⚡ CODO Base <span class="codo-menu-badge">افتراضي</span></div>
+            <div class="codo-menu-item-desc">سريع ومباشر للمهام والاستفسارات اليومية والتكتيكات</div>
+          </div>
+          <div class="codo-menu-item" id="menu-opt-codo-pro" onclick="setCodoModel('codo-pro')">
+            <div class="codo-menu-item-title">🔬 CODO Pro <span class="codo-menu-badge">تحليل وكود</span></div>
+            <div class="codo-menu-item-desc">تحليل عميق، برمجة وشرح أكواد، وحلول تقنية مفصلة</div>
+          </div>
+          <div class="codo-menu-item" id="menu-opt-codo-max" onclick="setCodoModel('codo-max')">
+            <div class="codo-menu-item-title">🧠 CODO Max <span class="codo-menu-badge">تفكير عميق</span></div>
+            <div class="codo-menu-item-desc">أقصى مستويات التفكير والتحليل المنطقي متعدد المراحل</div>
+          </div>
+          <div class="codo-menu-item" id="menu-opt-codo-lab" onclick="setCodoModel('codo-lab')">
+            <div class="codo-menu-item-title">🧪 CODO Lab <span class="codo-menu-badge">معمل المهارات</span></div>
+            <div class="codo-menu-item-desc">معمل تطوير واختبار المهارات والأدوات المخصصة</div>
+          </div>
+        </div>
+      </div>
     </div>
-    <button id="phantom-chat-clear" class="phantom-chat-clear-btn" onclick="clearBobertChat()" title="مسح المحادثة" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:6px; color:#9ca3af; font-size:0.85rem; cursor:pointer; padding:4px 8px; margin-left:auto; margin-right:8px; display:inline-flex; align-items:center; gap:4px;">
-      <span>🧹</span> مسح
-    </button>
-    <button class="phantom-chat-close">『PH』</button>
+
+    <!-- أزرار رأسية موحدة بدون تكرار -->
+    <div class="ghost-fullpage-actions">
+      <!-- زر فتح قائمة سجل المحادثات السابقة -->
+      <button id="ghost-toggle-history-btn" class="ghost-header-btn" type="button" title="المحادثات السابقة">
+        <span>💬</span>
+      </button>
+
+      <!-- زر قائمة الخيارات الإضافية المنسدلة (مسح، صوت) -->
+      <div class="codo-options-dropdown-container">
+        <button id="codo-more-options-btn" class="ghost-header-btn" type="button" onclick="toggleCodoOptionsMenu()" title="خيارات إضافية">
+          <span>⋯</span>
+        </button>
+        <div id="codo-more-options-menu" class="codo-options-menu-popup" style="display:none;">
+          <div class="codo-opt-action" onclick="toggleUiScaleMenu(); toggleCodoOptionsMenu();">
+            <span>🗚</span>
+            <span>التحكم في حجم الواجهة والخط</span>
+          </div>
+          <div class="codo-opt-action" onclick="toggleCodoAudio(); toggleCodoOptionsMenu();">
+            <span id="codo-audio-icon">🔊</span>
+            <span id="codo-audio-label">كتم/تشغيل المؤثرات</span>
+          </div>
+          <div class="codo-opt-action danger" onclick="clearCodoChat(); toggleCodoOptionsMenu();">
+            <span>🧹</span>
+            <span>مسح المحادثة الحالية</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- زر العودة للمقر -->
+      <button class="ghost-header-btn ghost-back-btn" type="button" onclick="closeCodoChat()" title="العودة للمقر">
+        <span>✕</span>
+      </button>
+    </div>
   </div>
-  <div id="phantom-chat-body" class="phantom-chat-body"></div>
-  <div class="phantom-chat-input-area">
-    <input type="text" id="phantom-chat-input" placeholder="اكتب رسالتك لبوبرت..." />
-    <button id="phantom-chat-send">➤</button>
+
+  <div class="ghost-fullpage-layout">
+    <!-- قائمة المحادثات المحفوظة الجانبية (نسخة واحدة نظيفة لزر محادثة جديدة) -->
+    <aside id="ghost-history-sidebar" class="ghost-history-sidebar">
+      <div class="ghost-sidebar-header">
+        <button id="ghost-new-session-btn" class="ghost-new-chat-btn" type="button" onclick="createNewGhostSession()">
+          <span>➕</span> محادثة جديدة
+        </button>
+      </div>
+      <div id="ghost-sessions-list" class="ghost-sessions-list">
+        <!-- جلسات المحادثة السابقة المحفوظة تضاف هنا ديناميكياً -->
+      </div>
+    </aside>
+
+    <!-- مساحة الشات الرئيسية -->
+    <main class="ghost-main-chat" id="codo-chat-dropzone">
+      <div id="phantom-chat-body" class="ghost-messages-viewport">
+        <!-- رسالة الترحيب والبطاقات الذكية ستظهر عند بدء المحادثة -->
+      </div>
+      
+      <!-- شريط إدخال الرسائل الفاخر العائم المتطور -->
+      <div class="codo-floating-input-wrapper">
+        <!-- شريط معاينة الملف أو الصورة المرفقة -->
+        <div id="codo-file-preview-bar" class="codo-file-preview-bar" style="display:none;">
+          <div class="codo-file-preview-thumb-container" id="codo-preview-thumb-box">
+            <span id="codo-file-preview-icon" class="codo-file-preview-icon">📄</span>
+            <img id="codo-img-preview-tag" src="" alt="معاينة الصورة" style="display:none;" />
+          </div>
+          <div class="codo-file-preview-info">
+            <span id="codo-file-preview-name" class="codo-file-preview-name">ملف</span>
+            <span id="codo-file-preview-size" class="codo-file-preview-size">0 KB</span>
+          </div>
+          <button class="codo-file-remove-btn" type="button" onclick="removeAttachedCodoFile()" title="إزالة المرفق">✕</button>
+        </div>
+
+        <!-- شريط المهارة المحددة إن وجدت -->
+        <div id="codo-active-skill-banner" class="codo-active-skill-banner" style="display:none;">
+          <span>🎯 المهارة النشطة: </span>
+          <strong id="codo-active-skill-name">اسم المهارة</strong>
+          <button type="button" class="codo-skill-clear-btn" onclick="clearSelectedCodoSkill()" title="إلغاء تحديد المهارة">✕</button>
+        </div>
+
+        <div class="ghost-input-container">
+          <!-- إدخال ملفات وصور يدعم ملفات PDF والصور والوثائق والكود -->
+          <input type="file" id="codo-file-input" style="display:none;" onchange="handleCodoFileSelected(event)" accept="application/pdf,.pdf,image/*,.txt,.md,.json,.js,.ts,.py,.html,.css,.csv,.log,.doc,.docx" />
+          
+          <!-- زر إرفاق صورة أو ملف PDF -->
+          <button id="codo-attach-file-btn" class="codo-action-icon-btn" type="button" onclick="triggerCodoFileUpload()" title="إرفاق ملف PDF، صورة، لقطة شاشة، أو مستند قواعد (PDF, Images, Docs, Code)">📎</button>
+          
+          <!-- زر تبديل بحث الويب الموحد الواضح -->
+          <button id="codo-websearch-toggle-btn" class="codo-websearch-pill-btn" type="button" onclick="toggleWebSearch()" title="تفعيل/تعطيل البحث الحي في مصادر الويب">
+            <span class="codo-search-icon">🌐</span>
+            <span class="codo-search-text">بحث الويب</span>
+            <span id="codo-search-badge" class="codo-search-badge-off">OFF</span>
+          </button>
+
+          <!-- زر اختيار مهارة سريع -->
+          <button id="codo-inline-skills-btn" class="codo-action-icon-btn" type="button" onclick="openCodoSkillsModal()" title="معمل المهارات والأدوات المعتمدة">🧠</button>
+
+          <!-- حقل كتابة ذكي ومرن يدعم لصق الصور مباشرة (Ctrl+V) ورفع ملفات PDF -->
+          <textarea id="phantom-chat-input" class="ghost-input-field codo-textarea-field" placeholder="اسأل CODO، أو ارفع ملف PDF للقواعد والإرشادات، أو الصق صورة (Ctrl+V)..." rows="1" autocomplete="off"></textarea>
+          
+          <!-- زر التحدث الصوتي -->
+          <button id="ghost-voice-input-btn" class="codo-action-icon-btn" type="button" title="تحدث صوتياً (Voice Input)">🎙️</button>
+          
+          <!-- زر إيقاف الرد -->
+          <button id="codo-stop-btn" class="codo-stop-btn" type="button" style="display:none;" onclick="stopCodoGeneration()" title="إيقاف الرد">⏹️ إيقاف</button>
+          
+          <!-- زر الإرسال -->
+          <button id="phantom-chat-send" class="ghost-send-btn" type="button" title="إرسال (Enter)">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+            </svg>
+          </button>
+        </div>
+        
+        <div class="codo-input-footnote">
+          <span id="codo-mode-footnote-text">⚡ CODO AI — قراءة وتحليل ملفات PDF • فحص الصور • بحث حي في الويب • أدوات تكتيكية</span>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- 🧠 نافذة معمل إدارة واختبار المهارات (Skills Management Modal) -->
+<div id="codo-skills-modal" class="codo-skills-modal" style="display:none;">
+  <div class="codo-skills-modal-backdrop" onclick="closeCodoSkillsModal()"></div>
+  <div class="codo-skills-dialog">
+    <div class="codo-skills-header">
+      <div class="codo-skills-title">
+        <span class="codo-skills-title-icon">🧠</span>
+        <div>
+          <h3>معمل مهارات <span>CODO AI</span></h3>
+          <small>اكتشاف، تشغيل، واختبار المهارات والأدوات التكتيكية والبرمجية المعتمدة</small>
+        </div>
+      </div>
+      <button class="codo-skills-close-btn" type="button" onclick="closeCodoSkillsModal()">✕</button>
+    </div>
+
+    <!-- تبويبات المعمل -->
+    <div class="codo-skills-nav-tabs">
+      <button id="tab-btn-active-skills" class="codo-tab-btn active" type="button" onclick="switchSkillsTab('active')">
+        📋 المهارات المعتمدة (<span id="codo-skills-tab-count">5</span>)
+      </button>
+      <button id="tab-btn-add-skill" class="codo-tab-btn" type="button" onclick="switchSkillsTab('add')">
+        ➕ إضافة وتحليل مهارة جديدة
+      </button>
+    </div>
+
+    <!-- المحتوى: قائمة المهارات النشطة -->
+    <div id="skills-view-active" class="codo-skills-view">
+      <div class="codo-skills-toolbar">
+        <input type="text" id="codo-skill-search" class="codo-skill-search-input" placeholder="بحث في المهارات المتاحة..." oninput="filterSkillsList()" />
+        <button class="codo-skill-reload-btn" type="button" onclick="loadSkillsFromBackend()" title="تحديث قائمة المهارات">🔄 تحديث</button>
+      </div>
+      <div id="codo-skills-list-container" class="codo-skills-grid">
+        <!-- تضاف كروت المهارات هنا ديناميكياً -->
+      </div>
+    </div>
+
+    <!-- المحتوى: إضافة وتحليل مهارة جديدة -->
+    <div id="skills-view-add" class="codo-skills-view" style="display:none;">
+      <form id="codo-new-skill-form" onsubmit="handleAnalyzeNewSkill(event)">
+        <div class="codo-form-grid">
+          <div class="codo-form-group">
+            <label>اسم المهارة <span class="req">*</span></label>
+            <input type="text" id="skill-input-name" required placeholder="مثال: فاحص خطط الهبوط وتكتيك الزون" />
+          </div>
+          <div class="codo-form-group">
+            <label>الهدف الرئيسي <span class="req">*</span></label>
+            <input type="text" id="skill-input-goal" required placeholder="مثال: تحديد نقطة الهبوط المثلى وحساب زمن وصول الزون" />
+          </div>
+        </div>
+
+        <div class="codo-form-group">
+          <label>الوصف المختصر</label>
+          <input type="text" id="skill-input-desc" placeholder="شرح مبسط لما تقدمه المهارة للمستخدم" />
+        </div>
+
+        <div class="codo-form-group">
+          <label>التعليمات الإلزامية للموديل (Instructions) <span class="req">*</span></label>
+          <textarea id="skill-input-instructions" rows="3" required placeholder="اكتب التعليمات الدقيقة لخطوات التفكير، معايير التحليل، والشروط التي يجب اتباعها..."></textarea>
+        </div>
+
+        <div class="codo-form-grid">
+          <div class="codo-form-group">
+            <label>نوع المدخلات (مفصولة بفواصل)</label>
+            <input type="text" id="skill-input-types" value="text, clan_data" placeholder="text, code, file, clan_data" />
+          </div>
+          <div class="codo-form-group">
+            <label>شكل المخرجات المتوقع</label>
+            <input type="text" id="skill-output-format" value="تقرير تكتيكي منظم بنقاط وعناوين" placeholder="جدول مقارنة، تقرير منظم، كود مصحح" />
+          </div>
+        </div>
+
+        <div class="codo-form-grid">
+          <div class="codo-form-group">
+            <label>الأدوات المطلوبة</label>
+            <input type="text" id="skill-input-tools" value="tactics_engine, rules_db" placeholder="tactics_engine, search, code_analyzer" />
+          </div>
+          <div class="codo-form-group">
+            <label>القيود وحالات الفشل المتوقعة</label>
+            <input type="text" id="skill-input-limits" placeholder="بيانات غير كافية، عدم توافر الخريطة" />
+          </div>
+        </div>
+
+        <div class="codo-form-actions">
+          <button type="submit" id="codo-analyze-skill-btn" class="codo-primary-btn">
+            🔬 تحليل واختبار المهارة الآن (6 مراحل)
+          </button>
+        </div>
+      </form>
+
+      <!-- مراحل التحليل الست التفاعلية -->
+      <div id="codo-skill-analysis-box" class="codo-skill-analysis-box" style="display:none;">
+        <h4 class="codo-stepper-title">مراحل التحليل والتحقق الأمني والوظيفي:</h4>
+        <div class="codo-stepper-container" id="codo-analysis-stepper">
+          <!-- تضاف خطوات التحليل 1 إلى 6 هنا مع علامات الصح والأنيميشن -->
+        </div>
+
+        <div id="codo-skill-test-output-box" class="codo-skill-test-output-box" style="display:none;">
+          <div class="codo-test-header">
+            <span>🧪 نتيجة الاختبار التجريبي الأوتوماتيكي:</span>
+          </div>
+          <pre id="codo-test-output-text"></pre>
+        </div>
+
+        <div id="codo-save-skill-actions" style="display:none; margin-top:14px; text-align:left;">
+          <button type="button" id="codo-confirm-save-skill-btn" class="codo-success-btn" onclick="saveVerifiedSkill()">
+            ✅ اعتماد وتفعيل المهارة رسمياً في CODO
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1871,12 +2468,15 @@
         <button onclick="closeGoogleMeetModal()" style="background:transparent; border:none; color:var(--muted); font-size:1.3rem; cursor:pointer; padding:4px;">✕</button>
     </div>
 
-    <!-- أزرار التبديل بين المكالمة داخل التطبيق ومكالمة Google Meet -->
-    <div style="display:flex; gap:8px; margin-bottom:14px; background:rgba(255,255,255,0.05); padding:4px; border-radius:10px;">
-        <button id="call-tab-inapp" onclick="switchCallTab('inapp')" style="flex:1; padding:8px; border:none; border-radius:8px; background:var(--cyan); color:#000; font-weight:800; font-size:0.85rem; cursor:pointer; transition:0.2s;">
-            📱 داخل التطبيق
+    <!-- أزرار التبديل بين المكالمة داخل التطبيق وغرفة Agora ومكالمة Google Meet -->
+    <div style="display:flex; gap:6px; margin-bottom:14px; background:rgba(255,255,255,0.05); padding:4px; border-radius:10px;">
+        <button id="call-tab-inapp" onclick="switchCallTab('inapp')" style="flex:1; padding:8px 4px; border:none; border-radius:8px; background:var(--cyan); color:#000; font-weight:800; font-size:0.8rem; cursor:pointer; transition:0.2s;">
+            📱 اتصال مباشر
         </button>
-        <button id="call-tab-meet" onclick="switchCallTab('meet')" style="flex:1; padding:8px; border:none; border-radius:8px; background:transparent; color:#9ca3af; font-weight:700; font-size:0.85rem; cursor:pointer; transition:0.2s;">
+        <button id="call-tab-agora" onclick="switchCallTab('agora')" style="flex:1; padding:8px 4px; border:none; border-radius:8px; background:transparent; color:#9ca3af; font-weight:700; font-size:0.8rem; cursor:pointer; transition:0.2s;">
+            🎙️ غرفة Agora
+        </button>
+        <button id="call-tab-meet" onclick="switchCallTab('meet')" style="flex:1; padding:8px 4px; border:none; border-radius:8px; background:transparent; color:#9ca3af; font-weight:700; font-size:0.8rem; cursor:pointer; transition:0.2s;">
             🌐 Google Meet
         </button>
     </div>
@@ -1923,7 +2523,50 @@
         </div>
     </div>
 
-    <!-- 2️⃣ قسم مكالمة Google Meet الرسمية -->
+    <!-- 2️⃣ قسم مكالمة غرفة Agora التكتيكية عالية الجودة -->
+    <div id="agora-call-section" style="display:none;">
+        <div style="background:#05080f; border-radius:12px; padding:16px; border:1px solid rgba(0,242,254,0.3); margin-bottom:12px; text-align:center;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                <span style="font-size:0.8rem; color:#94a3b8; font-weight:700;">📡 القناة الصوتية:</span>
+                <span style="color:#00f2fe; font-family:monospace; font-weight:800; font-size:0.85rem; background:rgba(0,242,254,0.1); padding:2px 8px; border-radius:6px;">PHANTOM-OPS</span>
+            </div>
+            
+            <div id="agora-avatar-visualizer" style="width:75px; height:75px; margin:10px auto; border-radius:50%; background:radial-gradient(circle, rgba(0,242,254,0.2), #0b121e); border:2px solid #00f2fe; display:flex; align-items:center; justify-content:center; font-size:2rem; box-shadow:0 0 20px rgba(0,242,254,0.3); transition:0.3s;">
+                🎙️
+            </div>
+            
+            <div id="agora-status-text" style="color:#e2e8f0; font-size:0.9rem; font-weight:800; margin-bottom:4px;">غرفة Agora الصوتية عالية النقاء</div>
+            <div id="agora-ping-indicator" style="font-size:0.75rem; color:#64748b; margin-bottom:8px;">خوادم منخفضة الكمون مخصصة للرومات والبطولات</div>
+
+            <div id="agora-members-badge" style="display:none; background:rgba(0,255,136,0.1); border:1px solid #00ff88; color:#00ff88; border-radius:20px; padding:4px 12px; font-size:0.78rem; font-weight:800; margin-bottom:8px;">
+                🟢 متصل الآن بالروم الصوتي
+            </div>
+            <div id="agora-users-list" style="display:none; font-size:0.78rem; color:#cbd5e1; margin-top:6px; max-height:80px; overflow-y:auto;"></div>
+        </div>
+
+        <!-- أزرار التحكم في مكالمة Agora -->
+        <div id="agora-controls-bar" style="display:none; gap:8px; justify-content:center; margin-bottom:12px;">
+            <button id="agora-mic-btn" onclick="toggleAgoraMic()" title="كتم/تشغيل المايك" style="flex:1; padding:10px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:#fff; border-radius:8px; font-weight:700; font-size:0.85rem; cursor:pointer;">
+                🎙️ المايك: شغال
+            </button>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:8px;">
+            <button id="agora-join-btn" onclick="joinAgoraRoom()" style="width:100%; padding:12px; background:linear-gradient(135deg, #00f2fe, #3b82f6); color:#000; border:none; border-radius:8px; font-weight:900; font-size:0.95rem; cursor:pointer; box-shadow:0 0 15px rgba(0,242,254,0.4);">
+                🚀 دخول غرفة Agora الصوتية
+            </button>
+
+            <button id="agora-share-chat-btn" onclick="shareAgoraCallInClanChat()" style="display:none; width:100%; padding:10px; background:rgba(0,242,254,0.15); color:var(--cyan); border:1px solid var(--cyan); border-radius:8px; font-weight:800; cursor:pointer;">
+                💬 دعوة الكلان لغرفة Agora في الشات
+            </button>
+
+            <button id="agora-leave-btn" onclick="leaveAgoraRoom()" style="display:none; width:100%; padding:9px; background:rgba(239,68,68,0.2); color:#ef4444; border:1px solid #ef4444; border-radius:8px; font-weight:800; cursor:pointer;">
+                🔴 مغادرة الغرفة الصوتية
+            </button>
+        </div>
+    </div>
+
+    <!-- 3️⃣ قسم مكالمة Google Meet الرسمية -->
     <div id="meet-call-section" style="display:none;">
         <div style="background:rgba(0,242,254,0.05); border:1px dashed rgba(0,242,254,0.3); border-radius:10px; padding:10px; margin-bottom:12px; font-size:0.8rem; color:#94a3b8; line-height:1.5;">
             💡 <strong>ملاحظة أمان Google:</strong> تمنع Google تضمين Meet داخل التطبيقات لحماية الخصوصية، لذا تفتح المكالمة في نافذة Google Meet الرسمية بنقرة واحدة.
