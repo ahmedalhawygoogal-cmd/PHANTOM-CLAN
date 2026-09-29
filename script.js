@@ -10064,9 +10064,11 @@ function renderCodoMessageDOM(text, sender, time, metadata = {}) {
         const currentTag = modelNames[codoCurrentModel] || 'CODO AI';
         const formatted = formatCodoText(text);
 
-        // شارة المهارة المستخدمة
-        const skillBadge = metadata.usedSkill ? `
-            <span class="codo-skill-tag-pill">🧠 مهارة: ${escapeHTML(metadata.usedSkill.name || metadata.usedSkill)}</span>
+        // شارة المهارة المستخدمة - تظهر فقط عند اكتمال التشغيل الفعلي للمهارة
+        const skillBadge = (metadata.usedSkill && metadata.usedSkill.name) ? `
+            <span class="codo-skill-tag-pill ${metadata.usedSkill.status === 'error' ? 'error' : 'completed'}">
+                ${metadata.usedSkill.status === 'error' ? '⚠️' : '✓'} مهارة: ${escapeHTML(metadata.usedSkill.name)} (${metadata.usedSkill.status === 'error' ? 'حدث خطأ' : 'اكتملت'})
+            </span>
         ` : '';
 
         // صندوق المصادر والمراجع الحقيقية
@@ -10172,7 +10174,15 @@ function addMessage(text, sender, saveToStorage = true, metadata = {}) {
     renderCodoMessageDOM(text, sender, time, metadata);
 
     const body = document.getElementById('phantom-chat-body');
-    if (body) body.scrollTop = body.scrollHeight;
+    if (body) {
+        requestAnimationFrame(() => {
+            body.scrollTop = body.scrollHeight;
+            const lastChild = body.lastElementChild;
+            if (lastChild && typeof lastChild.scrollIntoView === 'function') {
+                lastChild.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            }
+        });
+    }
 
     if (saveToStorage) {
         const session = getActiveGhostSession();
@@ -10593,20 +10603,41 @@ function selectSkillForUse(skillId) {
     const skill = codoSkillsCache.find(s => s.id === skillId);
     if (!skill) return;
 
-    codoActiveSkillId = skillId;
-    codoActiveSkillObj = skill;
+    // 1. قراءة تعليمات المهارة وتحليل الأدوات المطلوبة قبل الاستخدام
+    const availableTools = ['clan_rules_db', 'tactics_engine', 'code_analyzer', 'file_reader', 'presence_api', 'battles_api'];
+    const missingTools = (skill.requiredTools || []).filter(t => !availableTools.includes(t));
 
     const banner = document.getElementById('codo-active-skill-banner');
     const nameEl = document.getElementById('codo-active-skill-name');
-    if (banner && nameEl) {
+    const statusEl = document.getElementById('codo-active-skill-status');
+
+    if (missingTools.length > 0) {
+        codoActiveSkillId = null;
+        codoActiveSkillObj = null;
+        if (banner) banner.style.display = 'none';
+        showToast(`⚠️ مهارة "${skill.name}" تتطلب أدوات غير متاحة في النظام (${missingTools.join(', ')})`, "error");
+        return;
+    }
+
+    // 2. قراءة وتحليل التعليمات وتعيين الحالة إلى (جاهزة)
+    codoActiveSkillId = skillId;
+    codoActiveSkillObj = skill;
+
+    if (banner && nameEl && statusEl) {
         nameEl.textContent = skill.name;
+        statusEl.textContent = 'جاهزة';
+        statusEl.className = 'codo-skill-status-tag active';
         banner.style.display = 'flex';
     }
 
     closeCodoSkillsModal();
-    showToast(`🎯 تم تفعيل مهارة "${skill.name}" للطلب القادم`, "info");
+    showToast(`📖 تم قراءة تعليمات مهارة "${skill.name}" وتحليلها: المهارة جاهزة للتنفيذ`, "info");
+    
     const input = document.getElementById('phantom-chat-input');
-    if (input) input.focus();
+    if (input) {
+        input.placeholder = `اسأل بما يناسب مهارة (${skill.name})، مثال: ${skill.examples?.[0] || '...'}`;
+        input.focus();
+    }
 }
 window.selectSkillForUse = selectSkillForUse;
 
@@ -10615,6 +10646,10 @@ function clearSelectedCodoSkill() {
     codoActiveSkillObj = null;
     const banner = document.getElementById('codo-active-skill-banner');
     if (banner) banner.style.display = 'none';
+    const input = document.getElementById('phantom-chat-input');
+    if (input) {
+        input.placeholder = "اسأل CODO، أو ارفع ملف PDF للقواعد، أو الصق صورة...";
+    }
 }
 window.clearSelectedCodoSkill = clearSelectedCodoSkill;
 
@@ -10638,7 +10673,9 @@ async function toggleSkillActiveState(skillId, currentStatus) {
 window.toggleSkillActiveState = toggleSkillActiveState;
 
 async function testSkillDirectly(skillId) {
-    showToast("🧪 جاري تشغيل اختبار المهارة...", "info");
+    const skill = codoSkillsCache.find(s => s.id === skillId);
+    const skillName = skill ? skill.name : 'المهارة';
+    showToast(`🧪 جاري تشغيل اختبار حقيقي لمهارة "${skillName}"...`, "info");
     try {
         const res = await fetch('/api/codo/skills/test', {
             method: 'POST',
@@ -10647,13 +10684,17 @@ async function testSkillDirectly(skillId) {
         });
         const data = await res.json();
         if (data.success) {
-            alert(`[نتيجة اختبار مهارة: ${data.skillName}]\n\n${data.output}`);
+            closeCodoSkillsModal();
+            showToast(`✓ اكتمل اختبار مهارة "${data.skillName}" بنجاح`, "success");
+            addMessage(`🧪 **[نتيجة اختبار تشغيل مهارة: ${data.skillName}]**\n> **المدخل التجريبي:** "${data.testInput || 'طلب اختبار'}"\n\n${data.output}`, 'bot', true, {
+                usedSkill: { id: skillId, name: data.skillName, status: 'completed' }
+            });
             loadSkillsFromBackend();
         } else {
-            showToast("تعذر الاختبار: " + (data.error || 'خطأ غير متوقع'), "error");
+            showToast("⚠️ تعذر الاختبار: " + (data.error || 'خطأ غير متوقع'), "error");
         }
     } catch (e) {
-        showToast("تعذر الاتصال بخادم المهارات", "error");
+        showToast("⚠️ تعذر الاتصال بخادم اختبار المهارات", "error");
     }
 }
 window.testSkillDirectly = testSkillDirectly;
@@ -10952,6 +10993,12 @@ async function sendMessage() {
     removeAttachedCodoFile(); // مسح شريط المعاينة
     playCodoSound('send');
 
+    const activeSkillStatusEl = document.getElementById('codo-active-skill-status');
+    if (skillBackup && activeSkillStatusEl) {
+        activeSkillStatusEl.textContent = 'قيد التشغيل';
+        activeSkillStatusEl.className = 'codo-skill-status-tag running';
+    }
+
     const body = document.getElementById('phantom-chat-body');
     const typingIndicator = showDynamicTyping(
         codoWebSearchEnabled || codoDeepResearchEnabled,
@@ -11001,6 +11048,19 @@ async function sendMessage() {
         const data = await response.json();
         const aiResponse = data.response || data.reply || "أهلاً بك يا بطل! أنا CODO في خدمتك دائماً.";
 
+        if (skillBackup && activeSkillStatusEl) {
+            if (data.usedSkill) {
+                activeSkillStatusEl.textContent = 'اكتملت';
+                activeSkillStatusEl.className = 'codo-skill-status-tag completed';
+            } else if (data.skillStatus === 'error') {
+                activeSkillStatusEl.textContent = 'حدث خطأ';
+                activeSkillStatusEl.className = 'codo-skill-status-tag error';
+            } else {
+                activeSkillStatusEl.textContent = 'جاهزة';
+                activeSkillStatusEl.className = 'codo-skill-status-tag active';
+            }
+        }
+
         session.aiHistory.push({ role: 'user', text: text || (attachedFileBackup?.isPdf ? `تحليل مستند PDF: ${attachedFileBackup?.name}` : (attachedFileBackup?.isImage ? `تحليل صورة ${attachedFileBackup?.name}` : `تحليل ملف ${attachedFileBackup?.name}`)) });
         session.aiHistory.push({ role: 'model', text: aiResponse });
         if (session.aiHistory.length > 20) session.aiHistory = session.aiHistory.slice(-20);
@@ -11017,6 +11077,11 @@ async function sendMessage() {
         if (typingIndicator && typingIndicator.parentNode) typingIndicator.remove();
         if (stopBtn) stopBtn.style.display = 'none';
         if (sendBtn) sendBtn.disabled = false;
+
+        if (skillBackup && activeSkillStatusEl) {
+            activeSkillStatusEl.textContent = 'حدث خطأ';
+            activeSkillStatusEl.className = 'codo-skill-status-tag error';
+        }
 
         if (e.name === 'AbortError') {
             console.log("Chat generation stopped by user.");
@@ -11051,6 +11116,43 @@ window.stopCodoGeneration = function() {
     showToast("⏹️ تم إيقاف المعالجة", "info");
 };
 
+// متتبع مساحة العرض الخاصة بالهواتف لمنع إخفاء لوحة المفاتيح لحقل الكتابة
+let codoViewportListener = null;
+
+function setupCodoMobileViewport() {
+    if (window.visualViewport) {
+        if (codoViewportListener) {
+            window.visualViewport.removeEventListener('resize', codoViewportListener);
+            window.visualViewport.removeEventListener('scroll', codoViewportListener);
+        }
+        codoViewportListener = () => {
+            const overlay = document.getElementById('phantom-chat-overlay');
+            if (overlay && overlay.classList.contains('open')) {
+                overlay.style.height = `${window.visualViewport.height}px`;
+                const body = document.getElementById('phantom-chat-body');
+                if (body) {
+                    body.scrollTop = body.scrollHeight;
+                }
+            }
+        };
+        window.visualViewport.addEventListener('resize', codoViewportListener);
+        window.visualViewport.addEventListener('scroll', codoViewportListener);
+        codoViewportListener();
+    }
+}
+
+function cleanupCodoMobileViewport() {
+    if (window.visualViewport && codoViewportListener) {
+        window.visualViewport.removeEventListener('resize', codoViewportListener);
+        window.visualViewport.removeEventListener('scroll', codoViewportListener);
+        codoViewportListener = null;
+    }
+    const overlay = document.getElementById('phantom-chat-overlay');
+    if (overlay) {
+        overlay.style.height = '';
+    }
+}
+
 // فتح وإغلاق الشات
 function openCodoChat() {
     const overlay = document.getElementById('phantom-chat-overlay');
@@ -11059,6 +11161,8 @@ function openCodoChat() {
     overlay.style.display = 'flex';
     overlay.classList.add('open');
     document.body.style.overflow = 'hidden';
+
+    setupCodoMobileViewport();
 
     loadGhostSessionsFromStorage();
     renderGhostSessionsList();
@@ -11090,17 +11194,28 @@ function openCodoChat() {
         };
         input.oninput = () => {
             input.style.height = 'auto';
-            input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+            input.style.height = Math.min(input.scrollHeight, 100) + 'px';
         };
-        setTimeout(() => input.focus(), 250);
+        input.onfocus = () => {
+            setTimeout(() => {
+                const body = document.getElementById('phantom-chat-body');
+                if (body) body.scrollTop = body.scrollHeight;
+            }, 300);
+        };
+        setTimeout(() => {
+            const body = document.getElementById('phantom-chat-body');
+            if (body) body.scrollTop = body.scrollHeight;
+        }, 150);
     }
 }
 
 function closeCodoChat() {
+    cleanupCodoMobileViewport();
     const overlay = document.getElementById('phantom-chat-overlay');
     if (overlay) {
         overlay.classList.remove('open');
         overlay.style.display = 'none';
+        overlay.style.height = '';
     }
     document.body.style.overflow = '';
 }
@@ -11743,8 +11858,13 @@ function handleSuggestion(id, action) {
     renderSuggestions();
     renderBroadcastMessages();
 }
-// ✅ تحديث حالة أزرار // ✅ تحديث حالة أزرار الإعدادات (تلون الزر المختار)
+// ✅ تحديث حالة أزرار الإعدادات (تلون الزر المختار)
 function updateSettingsUI() {
+    const layoutMode = localStorage.getItem('phantom_device_layout_mode') || 'auto';
+    document.querySelectorAll('.settings-btn[onclick*="applyDeviceLayoutMode"]').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('onclick').includes(`'${layoutMode}'`));
+    });
+
     const fontSize = localStorage.getItem('phantom_font_size') || 'medium';
     document.querySelectorAll('.settings-btn[onclick*="applyFontSize"]').forEach(btn => {
         btn.classList.toggle('active', btn.getAttribute('onclick').includes(`'${fontSize}'`));
@@ -11777,21 +11897,61 @@ function updateSettingsUI() {
     });
 }
 
-// ✅ تغيير حجم الخط (فوري بدون ريفريش)
+// 🖥️ أوضاع عرض الموقع الحقيقية (الهاتف، التابلت، الكمبيوتر، تلقائي)
+function applyDeviceLayoutMode(mode) {
+    const validModes = ['auto', 'mobile', 'tablet', 'desktop'];
+    if (!validModes.includes(mode)) mode = 'auto';
+
+    document.documentElement.classList.remove('layout-mode-auto', 'layout-mode-mobile', 'layout-mode-tablet', 'layout-mode-desktop');
+    document.documentElement.classList.add('layout-mode-' + mode);
+    localStorage.setItem('phantom_device_layout_mode', mode);
+
+    // تنظيف أي zoom أو scale كان قد وضع سابقاً لمنع تشوه التخطيط
+    if (document.body) {
+        document.body.style.zoom = '';
+        document.body.style.transform = '';
+    }
+
+    const modeLabels = {
+        'auto': 'التلقائي حسب حجم الشاشة',
+        'mobile': 'وضع الهاتف',
+        'tablet': 'وضع التابلت / iPad',
+        'desktop': 'وضع الكمبيوتر / Desktop'
+    };
+    showToast(`🖥️ تم تفعيل ${modeLabels[mode] || mode}`, "info");
+    updateSettingsUI();
+}
+window.applyDeviceLayoutMode = applyDeviceLayoutMode;
+
+// ✅ تغيير حجم الخط والنصوص (متوافق مع المقاييس القياسية دون zoom)
 function applyFontSize(size) {
+    const validSizes = ['small', 'medium', 'large'];
+    if (!validSizes.includes(size)) size = 'medium';
+
     document.documentElement.classList.remove('font-small', 'font-medium', 'font-large');
     document.documentElement.classList.add('font-' + size);
     localStorage.setItem('phantom_font_size', size);
+    
+    const sizeLabels = { 'small': 'صغير', 'medium': 'متوسط', 'large': 'كبير' };
+    showToast(`🔤 تم ضبط حجم الخط: ${sizeLabels[size] || size}`, "info");
     updateSettingsUI();
 }
+window.applyFontSize = applyFontSize;
 
 // ✅ تغيير حجم فقاعات الشات (فوري بدون ريفريش)
 function applyChatBubbleSize(size) {
+    const validSizes = ['small', 'medium', 'large'];
+    if (!validSizes.includes(size)) size = 'medium';
+
     document.documentElement.classList.remove('chat-small', 'chat-medium', 'chat-large');
     document.documentElement.classList.add('chat-' + size);
     localStorage.setItem('phantom_chat_size', size);
+
+    const bubbleLabels = { 'small': 'صغير', 'medium': 'متوسط', 'large': 'كبير' };
+    showToast(`💬 تم ضبط حجم فقاعات الشات: ${bubbleLabels[size] || size}`, "info");
     updateSettingsUI();
 }
+window.applyChatBubbleSize = applyChatBubbleSize;
 
 // ✅ تشغيل / إيقاف الأنيميشن
 function applyAnimations(state) {
@@ -11972,6 +12132,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // ✅ تطبيق الإعدادات المحفوظة عند تحميل الصفحة (بدون ريفريش)
 document.addEventListener('DOMContentLoaded', function() {
+    // 0. وضع عرض الموقع المحفوظ
+    const savedLayout = localStorage.getItem('phantom_device_layout_mode') || 'auto';
+    document.documentElement.classList.remove('layout-mode-auto', 'layout-mode-mobile', 'layout-mode-tablet', 'layout-mode-desktop');
+    document.documentElement.classList.add('layout-mode-' + savedLayout);
+
     // 1. الثيم المحفوظ
     const savedTheme = localStorage.getItem('phantom_theme') || 'cyan';
     document.body.classList.remove('theme-cyan', 'theme-gold', 'theme-purple');
@@ -12076,43 +12241,61 @@ function logoutUser() {
 }
 
 // =========================================================
-// 🗚 نظام التحكم في حجم واجهة وخطوط الموقع (UI Scale System)
+// 🗚 نظام التحكم في حجم النص والعناصر (UI Font & Elements Scale)
 // =========================================================
-function getSavedUiScale() {
+const ALLOWED_UI_SCALES = [0.90, 1.00, 1.10, 1.25];
+
+function getSavedFontScale() {
     try {
         const saved = parseFloat(localStorage.getItem('phantom_ui_scale'));
-        if (!isNaN(saved) && saved >= 0.75 && saved <= 1.40) {
+        if (!isNaN(saved) && ALLOWED_UI_SCALES.some(s => Math.abs(s - saved) < 0.04)) {
             return saved;
         }
     } catch (e) {}
-    return 1.0;
+    return 1.00;
 }
 
-function applyUiScale(scale, save = true) {
-    scale = Math.min(1.35, Math.max(0.80, parseFloat(scale) || 1.0));
-    scale = Math.round(scale * 100) / 100;
+function setFontScale(targetScale, save = true) {
+    let scale = parseFloat(targetScale);
+    if (isNaN(scale)) scale = 1.00;
 
+    // أقرب مقياس معتمد
+    let closest = 1.00;
+    let minDiff = 999;
+    for (const allowed of ALLOWED_UI_SCALES) {
+        const diff = Math.abs(allowed - scale);
+        if (diff < minDiff) {
+            minDiff = diff;
+            closest = allowed;
+        }
+    }
+    scale = closest;
+
+    // تطبيق المتغيرات البرمجية فقط دون أي zoom أو transform على الصفحة
+    document.documentElement.style.setProperty('--ui-scale', scale);
     document.documentElement.style.setProperty('--app-scale', scale);
+
+    // تنظيف أي zoom قديم كان يؤثر سلباً على شاشات الهاتف
     if (document.body) {
-        document.body.style.zoom = scale;
+        document.body.style.zoom = '';
+        document.body.style.transform = '';
     }
 
+    // تحديث الشارة الرقمية
     const label = document.getElementById('ui-scale-current-label');
     if (label) {
         label.textContent = Math.round(scale * 100) + '%';
     }
 
-    const slider = document.getElementById('ui-scale-slider');
-    if (slider) {
-        slider.value = scale;
-    }
-
+    // تحديث الأزرار المسبقة
     document.querySelectorAll('.scale-preset-btn').forEach(btn => {
         const btnScale = parseFloat(btn.dataset.scale);
-        if (Math.abs(btnScale - scale) < 0.03) {
+        if (Math.abs(btnScale - scale) < 0.04) {
             btn.classList.add('active');
+            btn.setAttribute('aria-pressed', 'true');
         } else {
             btn.classList.remove('active');
+            btn.setAttribute('aria-pressed', 'false');
         }
     });
 
@@ -12120,42 +12303,70 @@ function applyUiScale(scale, save = true) {
         try {
             localStorage.setItem('phantom_ui_scale', scale);
         } catch (e) {}
-        showToast(`🗚 تم ضبط حجم الواجهة على ${Math.round(scale * 100)}%`, "info");
+        showToast(`🗚 تم ضبط حجم النص والعناصر: ${Math.round(scale * 100)}%`, "info");
     }
 }
-window.applyUiScale = applyUiScale;
+
+function stepFontScale(direction) {
+    const cur = getSavedFontScale();
+    let idx = ALLOWED_UI_SCALES.findIndex(s => Math.abs(s - cur) < 0.04);
+    if (idx === -1) idx = 1; // default index for 1.00
+
+    if (direction > 0 && idx < ALLOWED_UI_SCALES.length - 1) {
+        setFontScale(ALLOWED_UI_SCALES[idx + 1]);
+    } else if (direction < 0 && idx > 0) {
+        setFontScale(ALLOWED_UI_SCALES[idx - 1]);
+    } else if (direction === 0) {
+        setFontScale(1.00);
+    }
+}
+
+function resetFontScale() {
+    setFontScale(1.00);
+    showToast("🗚 تم استعادة الحجم الافتراضي (100%)", "info");
+}
 
 function toggleUiScaleMenu() {
     const menu = document.getElementById('ui-scale-menu');
     if (!menu) return;
     const isShowing = menu.style.display === 'block';
     menu.style.display = isShowing ? 'none' : 'block';
+    if (!isShowing) {
+        const firstBtn = menu.querySelector('button');
+        if (firstBtn) firstBtn.focus();
+    }
 }
+
+// تصدير الدوال مع الحفاظ على التوافقية
+window.setFontScale = setFontScale;
+window.stepFontScale = stepFontScale;
+window.resetFontScale = resetFontScale;
+window.setUiScale = setFontScale;
+window.stepUiScale = stepFontScale;
+window.resetUiScale = resetFontScale;
+window.applyUiScale = setFontScale;
+window.getSavedUiScale = getSavedFontScale;
 window.toggleUiScaleMenu = toggleUiScaleMenu;
-
-function stepUiScale(delta) {
-    const cur = getSavedUiScale();
-    applyUiScale(cur + delta);
-}
-window.stepUiScale = stepUiScale;
-
-function setUiScale(val) {
-    applyUiScale(val);
-}
-window.setUiScale = setUiScale;
-
-function onUiScaleSliderChange(val) {
-    applyUiScale(val);
-}
-window.onUiScaleSliderChange = onUiScaleSliderChange;
 
 // تطبيق الحجم المحفوظ فور تحميل الصفحة
 document.addEventListener('DOMContentLoaded', () => {
-    applyUiScale(getSavedUiScale(), false);
+    setFontScale(getSavedFontScale(), false);
 });
 if (document.readyState === 'interactive' || document.readyState === 'complete') {
-    applyUiScale(getSavedUiScale(), false);
+    setFontScale(getSavedFontScale(), false);
 }
+
+// إغلاق قائمة الحجم بزر Escape
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        const menu = document.getElementById('ui-scale-menu');
+        if (menu && menu.style.display === 'block') {
+            menu.style.display = 'none';
+            const trigger = document.getElementById('ui-scale-trigger-btn');
+            if (trigger) trigger.focus();
+        }
+    }
+});
 
 // إغلاق قوائم الـ Dropdown عند النقر خارجها
 document.addEventListener('click', (e) => {

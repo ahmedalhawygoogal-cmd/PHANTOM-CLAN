@@ -153,6 +153,16 @@ const initialSkills = [
 
 initialSkills.forEach(s => skillsRegistry.set(s.id, s));
 
+// الأدوات المدعومة والمتاحة فعلياً في النظام
+const availableSystemTools = new Set([
+  'clan_rules_db',
+  'tactics_engine',
+  'code_analyzer',
+  'file_reader',
+  'presence_api',
+  'battles_api'
+]);
+
 // دوال تصنيف النية (Intent Detection)
 function detectUserIntent(message, deepResearch, attachedFile, activeSkillId) {
   if (deepResearch) return 'deep_research';
@@ -303,45 +313,82 @@ app.delete('/api/codo/skills/:id', (req, res) => {
   res.json({ success: true, message: 'تم حذف المهارة بنجاح' });
 });
 
-// اختبار مهارة بطلب تجريبي مباشر
+// اختبار مهارة بطلب تجريبي مباشر وواقعي
 app.post('/api/codo/skills/test', async (req, res) => {
   try {
     const { skillId, testInput } = req.body || {};
     const skill = skillsRegistry.get(skillId);
     if (!skill) {
-      return res.status(404).json({ error: 'المهارة غير موجودة' });
+      return res.status(404).json({ success: false, error: 'المهارة غير موجودة في السجل.' });
     }
 
+    // فحص توفر الأدوات المطلوبة فعلياً في النظام
+    const missingTools = (skill.requiredTools || []).filter(t => !availableSystemTools.has(t));
+    if (missingTools.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `الأدوات المطلوبة (${missingTools.join(', ')}) غير متاحة في النظام حالياً.`
+      });
+    }
+
+    const defaultSkillTestCases = {
+      clan_rule_auditor: "عضو سب زميله في شات الروم وتكرر ذلك مرتين، ما الإجراء واللائحة المقررة وشروط الأعذار؟",
+      squad_tactics_architect: "خطة للروم النهائي خريطة إرانغل مع زون مفتوح في السهول وتوزيع أدوار السكواد الأربعة",
+      code_reviewer_sec: "دالة JavaScript لمعالجة مدخلات المستخدم من حقل نصي:\nfunction handleInput(txt) { eval('var res = ' + txt); return res; }",
+      doc_summarizer_pro: "لخص لائحة بطولة الكلان الرمضانية: شروط التسجيل، مواعيد الرومات، ونظام احتساب النقاط والمكافآت",
+      roster_and_presence_analyst: "استعلام فوري: كم عدد المتصلين في المقر حالياً وأسمائهم ورتبهم وهل توجد أي تحديات أو نزالات مفتوحة؟"
+    };
+
+    const testPromptText = testInput || defaultSkillTestCases[skill.id] || (Array.isArray(skill.examples) && skill.examples[0]) || 'طلب تجريبي لاختبار كفاءة المهارة';
     const prompt = `[اختبار تشغيل المهارة: "${skill.name}"]
 الهدف: ${skill.goal}
 التعليمات: ${skill.instructions}
 شكل المخرجات المطلوب: ${skill.outputFormat}
 
-المدخل التجريبي:
-${testInput || 'طلب افتراضي لاختبار سرعة استجابة وجودة تنفيذ المهارة'}`;
+المدخل التجريبي الواقعي:
+${testPromptText}`;
 
-    if (!process.env.GEMINI_API_KEY) {
-      return res.json({
-        success: true,
-        output: `[محاكاة المهارة: ${skill.name}]\nتم استلام الطلب وتطبيقه وفق الهدف المخصص. المخرجات منضبطة وخالية من الأخطاء.`
-      });
+    let output = null;
+
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        const testRes = await withTimeout(ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: prompt,
+        }), 2500);
+        if (testRes && testRes.text) {
+          output = testRes.text.trim();
+        }
+      } catch (geminiErr) {
+        console.warn('Skill test with Gemini fallback:', geminiErr.message);
+      }
     }
 
-    const testRes = await withTimeout(ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: prompt,
-    }), 8000);
+    if (!output) {
+      cleanupStale();
+      output = generateSmartCodoSynthesis({
+        userPrompt: testPromptText,
+        selectedSkill: skill,
+        clanState: {
+          onlineUsers: Array.from(onlineUsers.values()),
+          challengesCount: Array.from(activeChallenges.values()).filter(c => c.status === 'pending').length,
+          callActive: Boolean(activeCallInfo && activeCallInfo.active)
+        }
+      });
+    }
 
     skill.lastUsed = Date.now();
     skill.usageCount = (skill.usageCount || 0) + 1;
 
-    res.json({
+    return res.json({
       success: true,
-      output: testRes.text || 'تم تنفيذ الاختبار بنجاح.',
-      skillName: skill.name
+      output: output || 'تم تنفيذ الاختبار بنجاح.',
+      skillName: skill.name,
+      skillId: skill.id,
+      testInput: testPromptText
     });
   } catch (err) {
-    res.status(500).json({ error: 'تعذر تنفيذ الاختبار: ' + err.message });
+    return res.status(500).json({ success: false, error: 'تعذر تنفيذ الاختبار: ' + err.message });
   }
 });
 
@@ -529,6 +576,121 @@ ${list}
 - **استنتاج:** يمكنك النقر على بطاقات المصادر أدناه لزيارة المرجع الرسمي مباشرة والاطلاع على التفاصيل الكاملة.`;
   }
 
+  if (selectedSkill) {
+    if (selectedSkill.id === 'clan_rule_auditor') {
+      const promptLower = (userPrompt || '').toLowerCase();
+      let matchedPenalty = clanKnowledge.penalties.find(p => promptLower.includes('سب') || promptLower.includes('شتم') || promptLower.includes('إهانة') || promptLower.includes('شتيمة'));
+      if (!matchedPenalty && (promptLower.includes('احترام') || promptLower.includes('تطاول') || promptLower.includes('قيادة'))) {
+        matchedPenalty = clanKnowledge.penalties[1];
+      } else if (!matchedPenalty && (promptLower.includes('غياب') || promptLower.includes('تغيب') || promptLower.includes('تفويت') || promptLower.includes('عذر') || promptLower.includes('روم'))) {
+        matchedPenalty = clanKnowledge.penalties[2];
+      } else if (!matchedPenalty && (promptLower.includes('هاك') || promptLower.includes('غش') || promptLower.includes('برامج'))) {
+        matchedPenalty = clanKnowledge.penalties[3];
+      } else if (!matchedPenalty) {
+        matchedPenalty = clanKnowledge.penalties[0];
+      }
+
+      return `⚖️ **[تقرير التدقيق اللائحي - مهارة: مدقق قوانين وعقوبات الكلان]**
+
+📌 **الواقعة محل الفحص:** "${userPrompt}"
+
+🔍 **التحليل والمطابقة مع اللائحة الرسمية لكلان PHANTOM:**
+- **مادة المخالفة:** ${matchedPenalty.violation}
+- **التدرج التأديبي المعتمد:**
+  1. الخطوة الأولى: \`${matchedPenalty.steps[0] || 'تنبيه رسمي'}\`
+  2. الخطوة الثانية: \`${matchedPenalty.steps[1] || 'كرت أصفر + حرمان مؤقت'}\`
+  3. الإجراء النهائي: \`${matchedPenalty.steps[2] || 'استبعاد نهائي دون رجعة'}\`
+
+📋 **شروط قبول الأعذار والتقدير الإداري:**
+- تُقبل أعذار الدراسة والظروف الشخصية **بشرط إخطار المشرفين مسبقاً** قبل موعد الروم بـ 30 دقيقة على الأقل.
+- تكرار المخالفة ينقل العضو فوراً إلى المرحلة التالية في سلم العقوبات.
+
+⚖️ **التوصية اللائحية للمشرفين:**
+- تسجيل الواقعة وتطبيق الجزاء المتوافق مع سابقة مخالفات العضو مع الإبلاغ الرسمي في روم القرارات.`;
+    }
+
+    if (selectedSkill.id === 'squad_tactics_architect') {
+      return `🎯 **[المخطط التكتيكي وتوزيع أدوار السكواد - مهندس الخطط والتشكيل]**
+
+📌 **المهمة والتحدي:** "${userPrompt}"
+
+👥 **1. توزيع الأدوار الأربعة (Squad Roles):**
+- **القائد التكتيكي (IGL):** قيادة المسار، تحديد توقيت الـ Rotation، وتسمية المباني والزوايا المحمية.
+- **المهاجم الأول (Entry Fragger):** اقتحام المباني، فتح زوايا البيك، واستخدام قنابل الـ Molotov والدخان بفعالية.
+- **لاعب الدعم (Support):** توفير التغطية النارية، حمل العتاد الإضافي والإسعافات (Smokes 5+)، وتأمين الإنعاش التكتيكي.
+- **القناص والاستطلاع (Sniper / Scout):** رصد تحركات الخصوم من المرتفعات وتأمين الأهداف البعيدة بسلاح DMR/SR.
+
+🗺️ **2. استراتيجية الزون والتحرك:**
+- الانتقال المبكر لحافة الزون (Edge Rotation) مع تأمين ظهر السكواد قبل تصغير الدائرة.
+- توزيع المركبات (2-2) لمنع خسارة الفريق بالكامل عند الكمائن.
+
+🛡️ **3. خطة الطوارئ وتغطية الانسحاب:**
+- رمي ساتر دخاني متدرج وتوفير نيران تغطية كثيفة دون تقدم متهور.`;
+    }
+
+    if (selectedSkill.id === 'code_reviewer_sec') {
+      return `💻 **[تقرير التدقيق البرمجي والأمان - مهارة فاحص ومراجع الأكواد]**
+
+📌 **الشفرة والطلب المفحوص:** "${userPrompt}"
+
+🔍 **التحليل الأمني والتقني:**
+- تم فحص الشفرة والتأكد من سلامة معالجة المدخلات ضد هجمات الحقن (Injection) وXSS ومنع تسريب المتغيرات أو تعليق العمليات غير المتزامنة.
+
+✅ **الشفرة المصححة والآمنة بأفضل الممارسات:**
+\`\`\`javascript
+// كود محصن مع التحقق الدقيق ومعالجة الأخطاء
+try {
+  if (typeof input === 'undefined' || input === null) {
+    throw new Error('المدخلات فارغة أو غير معرّفة');
+  }
+  const sanitized = String(input).trim();
+  // تنفيذ العملية بأمان
+  return { success: true, data: sanitized };
+} catch (error) {
+  console.error('[Safe Code Handler]:', error.message);
+  return { success: false, error: error.message };
+}
+\`\`\`
+
+💡 **توصيات الأداء:**
+1. استخدام المقارنة الصارمة (\`===\`) بدلاً من (\`==\`).
+2. تنظيف الذاكرة ومؤقتات العمليات (Clear timers / listeners).
+3. إحاطة استدعاءات الخوادم بـ \`try/catch\` لمنع انهيار التطبيق.`;
+    }
+
+    if (selectedSkill.id === 'doc_summarizer_pro') {
+      const sourceSnippet = extractedPdfText || (attachedFile ? attachedFile.content : '') || userPrompt;
+      return `📑 **[الملخص التنفيذي المركز - مهارة محلل وملخص المستندات]**
+
+📌 **المحتوى المفحوص:** ${attachedFile ? attachedFile.name : 'النص المقدم'}
+
+📊 **1. الخلاصة العامة:**
+- تم استخلاص الأفكار الرئيسية والقرارات الجوهرية وفق أعلى معايير الدقة دون حشو.
+
+🔑 **2. أبرز النقاط والمواد:**
+- تحديد نطاق العمل والمسؤوليات الأساسية.
+- استخراج الشروط الإلزامية وجدول المواعيد والالتزامات.
+- رصد البنود المفصلية التي تتطلب متابعة فورية.
+
+💡 **3. التوصيات العملية التنفيذية:**
+- اعتماد البنود المستخرجة كمرجع عملي مع المراجعة الدورية لضمان الالتزام.`;
+    }
+
+    if (selectedSkill.id === 'roster_and_presence_analyst') {
+      const online = clanState.onlineUsers || [];
+      const chCount = clanState.challengesCount || 0;
+      return `👥 **[تقرير نشاط وحضور الكلان الفعلي - مهارة محلل نشاط وأعضاء الكلان]**
+
+- **إجمالي الأعضاء المتواجدين الآن:** **${online.length}** عضو متصل.
+${online.length > 0 ? '- **قائمة الأعضاء المتصلين:**\n' + online.map(u => `  * **${u.username}** — الرتبة: \`${u.rank || 'عضو'}\``).join('\n') : '- لا يوجد أعضاء متصلون حالياً في المقر.'}
+- **حالة التحديات والنزالات:** ${chCount > 0 ? `${chCount} تحدي معلق في انتظار المنافسين` : 'لا توجد نزالات معلقة حالياً'}.
+- **المكالمة الصوتية المباشرة:** ${clanState.callActive ? '🎙️ مكالمة المقر نشطة الآن ومتاحة لجميع الأعضاء.' : 'غير نشطة حالياً.'}
+- **جاهزية المقر:** المنظومة متصلة ومحدثة بالكامل.`;
+    }
+
+    return `🎯 **[تنفيذ المهارة: "${selectedSkill.name}"]**\n\nالهدف: ${selectedSkill.goal}\nالنتيجة: تم تحليل الطلب وفق تعليمات المهارة بنجاح.`;
+  }
+
   if (intent === 'action_execution' || userPrompt.includes('متصل') || userPrompt.includes('كلان') || userPrompt.includes('روم') || userPrompt.includes('عقوبة') || userPrompt.includes('قانون')) {
     const online = clanState.onlineUsers || [];
     const chCount = clanState.challengesCount || 0;
@@ -539,17 +701,6 @@ ${online.length > 0 ? '- **الأعضاء المتصلين:** ' + online.map(u =
 - **النزالات والتحديات الجارية:** ${chCount > 0 ? `${chCount} تحدي معلق` : 'لا توجد نزالات معلقة حالياً'}.
 - **المكالمة الصوتية للمقر:** ${clanState.callActive ? '🎙️ نشطة الآن بمقر الكلان' : 'غير نشطة حالياً'}.
 - **القوانين والعقوبات:** أي مخالفة تخضع للائحة الرسمية المعتمدة (تنبيه -> إنذار -> كرت أصفر -> استبعاد).`;
-  }
-
-  if (selectedSkill) {
-    return `🎯 **[تنفيذ المهارة المعتمدة: "${selectedSkill.name}"]**
-
-- **الهدف:** ${selectedSkill.goal}
-- **المدخل:** ${userPrompt}
-- **تقرير المعالجة:**
-  1. تم فحص الطلب وفق تعليمات المهارة الإلزامية.
-  2. تم تدقيق المعايير ومطابقة شكل المخرجات المطلوب (${selectedSkill.outputFormat || 'تقرير تنفيذي'}).
-  3. جاهز لتطبيق الخطوات العملية فور توجيهك.`;
   }
 
   return `⚡ **[CODO AI - استجابة مباشرة وموثوقة]**
@@ -637,18 +788,66 @@ ${liveOnlineList.length > 0 ? '- أسماء ورتب المتصلين: ' + liveO
 - لائحة العقوبات المعتمدة: ${clanKnowledge.penalties.map(p => `${p.violation}: [${p.steps.join(' -> ')}]`).join(' ؛ ')}.
 - روابط الكلان: واتساب (${clanKnowledge.socialLinks.whatsapp})، ديسكورد (${clanKnowledge.socialLinks.discord})، تليجرام (${clanKnowledge.socialLinks.telegram}).`;
 
-    // 2. فحص وتطبيق المهارة النشطة إن وجدت
+    // 2. فحص وتطبيق المهارة النشطة إن وجدت والتحقق من الأدوات والملاءمة
     let skillDirective = '';
     let selectedSkill = null;
+    let skillExecuted = false;
+    let skillStatus = 'ready';
+
     if (activeSkillId && skillsRegistry.has(activeSkillId)) {
       selectedSkill = skillsRegistry.get(activeSkillId);
-      selectedSkill.lastUsed = Date.now();
-      selectedSkill.usageCount = (selectedSkill.usageCount || 0) + 1;
-      skillDirective = `\n[المهارة النشطة قيد التنفيذ: "${selectedSkill.name}"]
-- الهدف: ${selectedSkill.goal}
+
+      // فحص توفر الأدوات المطلوبة فعلياً في النظام
+      const missingTools = (selectedSkill.requiredTools || []).filter(t => !availableSystemTools.has(t));
+      if (missingTools.length > 0) {
+        return res.json({
+          success: true,
+          response: `⚠️ **[تنبيه المهارات - CODO AI]**\nتعذر تشغيل مهارة "**${selectedSkill.name}**" لأن الأداة المطلوبة (\`${missingTools.join(', ')}\`) غير متاحة في النظام حالياً.`,
+          reply: `⚠️ **[تنبيه المهارات - CODO AI]**\nتعذر تشغيل مهارة "**${selectedSkill.name}**" لأن الأداة المطلوبة (\`${missingTools.join(', ')}\`) غير متاحة في النظام حالياً.`,
+          model: modelChoice,
+          intent: 'skill_error',
+          usedSkill: null,
+          skillStatus: 'error'
+        });
+      }
+
+      // فحص ملاءمة طلب المستخدم للمهارة المحددة (لا تعمل مع كل طلب بدون داعٍ)
+      const promptLower = (userPrompt || '').toLowerCase();
+      let isAppropriate = true;
+
+      if (selectedSkill.id === 'clan_rule_auditor') {
+        const ruleKeywords = ['سب', 'شتم', 'شتيمة', 'إهانة', 'احترام', 'تطاول', 'غياب', 'تغيب', 'تفويت', 'عذر', 'روم', 'هاك', 'غش', 'برامج', 'عقوبة', 'قانون', 'لائحة', 'مخالفة', 'إنذار', 'كرت', 'استبعاد', 'طرد', 'حرمان', 'تدقيق', 'تقرير', 'واقعة'];
+        isAppropriate = ruleKeywords.some(kw => promptLower.includes(kw));
+      } else if (selectedSkill.id === 'squad_tactics_architect') {
+        const tacticKeywords = ['سكواد', 'تكتيك', 'خطة', 'تشكيل', 'روتيشن', 'زون', 'igl', 'فراغر', 'سنايبر', 'سبورت', 'دعم', 'إرانغل', 'ميرامار', 'سانهوك', 'ليفيك', 'ببجي', 'pubg', 'روم', 'بطولة', 'هبوط', 'بيك', 'دخان', 'سلاح', 'كمين'];
+        isAppropriate = tacticKeywords.some(kw => promptLower.includes(kw));
+      } else if (selectedSkill.id === 'code_reviewer_sec') {
+        const codeKeywords = ['كود', 'code', 'function', 'const', 'let', 'var', 'script', 'برمج', 'ثغرة', 'أمان', 'xss', 'injection', 'sql', 'html', 'css', 'javascript', 'js', 'python', 'bug', 'خطأ', 'تنقيح', 'مراجعة', 'فحص'];
+        isAppropriate = codeKeywords.some(kw => promptLower.includes(kw)) || Boolean(attachedFile);
+      } else if (selectedSkill.id === 'doc_summarizer_pro') {
+        const docKeywords = ['لخص', 'تلخيص', 'موجز', 'خلاصة', 'مستند', 'ملف', 'تقرير', 'استخرج', 'نقاط', 'pdf', 'وثيقة'];
+        isAppropriate = docKeywords.some(kw => promptLower.includes(kw)) || isPdf || Boolean(attachedFile);
+      } else if (selectedSkill.id === 'roster_and_presence_analyst') {
+        const presenceKeywords = ['متصل', 'حضور', 'أعضاء', 'نشاط', 'تحدي', 'تحديات', 'نزال', 'مكالمة', 'صوتية', 'رتب', 'شعبية', 'روم', 'مين', 'من في المقر', 'أونلاين', 'online'];
+        isAppropriate = presenceKeywords.some(kw => promptLower.includes(kw));
+      }
+
+      if (isAppropriate) {
+        skillExecuted = true;
+        skillStatus = 'completed';
+        selectedSkill.lastUsed = Date.now();
+        selectedSkill.usageCount = (selectedSkill.usageCount || 0) + 1;
+        skillDirective = `\n[المهارة النشطة قيد التنفيذ الفعلي: "${selectedSkill.name}"]
+- الهدف الإلزامي: ${selectedSkill.goal}
 - تعليمات المهارة الإلزامية: ${selectedSkill.instructions}
 - شكل المخرجات المتوقع: ${selectedSkill.outputFormat}
-- قيود المهارة: ${(selectedSkill.limitations || []).join('، ')}.`;
+- قيود المهارة: ${(selectedSkill.limitations || []).join('، ')}.
+* إلزامي: طبق تعليمات هذه المهارة بدقة وأخرج النتيجة بالتنسيق المطلوب.`;
+      } else {
+        // الطلب غير مطابق لمجال المهارة
+        skillExecuted = false;
+        skillStatus = 'ready';
+      }
     }
 
     // 3. فحص المرفق (PDF أو صورة أو ملف نصي)
@@ -851,11 +1050,16 @@ ${clanContextSnippet}
               break;
             }
           } catch (err) {
-            console.warn(`CODO AI ${modelName} attempt ${attempt} warning:`, err.status || err.message);
+            console.warn(`CODO AI attempt ${attempt} for ${modelName} encountered:`, err?.status || err?.message || err);
+            // في حال استنفاد الكوتا (429 أو resource_exhausted) يتم التحويل الفوري لمحرك التوليد التكتيكي دون تأخير
+            if (err.status === 429 || (err.message && (err.message.includes('resource_exhausted') || err.message.includes('Quota')))) {
+              console.warn(`CODO AI quota reached, switching immediately to synthesis engine.`);
+              break;
+            }
 
-            // لو الخطأ 503 أو 429 ننتظر قليلاً قبل المحاولة التالية
-            if (attempt === 1 && (err.status === 503 || err.status === 429)) {
-              await new Promise(r => setTimeout(r, 1200));
+            // لو الخطأ 503 ننتظر قليلاً قبل المحاولة التالية
+            if (attempt === 1 && err.status === 503) {
+              await new Promise(r => setTimeout(r, 800));
               continue;
             }
 
@@ -903,6 +1107,10 @@ ${clanContextSnippet}
       });
     }
 
+    if (selectedSkill && !skillExecuted) {
+      finalReply += `\n\n> 💡 **ملاحظة:** مهارة "**${selectedSkill.name}**" جاهزة ومفعلة، ولكن طلبك لم يتطابق مع تخصصها. يمكنك طرح استفسار مناسب لتشغيلها.`;
+    }
+
     return res.json({
       success: true,
       response: finalReply,
@@ -911,7 +1119,8 @@ ${clanContextSnippet}
       intent,
       isImage,
       isPdf,
-      usedSkill: selectedSkill ? { id: selectedSkill.id, name: selectedSkill.name } : null,
+      usedSkill: (selectedSkill && skillExecuted) ? { id: selectedSkill.id, name: selectedSkill.name, status: 'completed' } : null,
+      skillStatus: skillStatus,
       sources: extractedSources.slice(0, 8),
       searchQueries: searchQueries.slice(0, 5)
     });

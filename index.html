@@ -126,31 +126,6 @@
             </div>
         </div>
         <div class="header-actions">
-            <!-- أداة التحكم في حجم النص والعناصر (UI Font & Elements Scale) -->
-            <div class="ui-scale-controller-wrapper" id="ui-scale-controller-wrapper">
-                <button id="ui-scale-trigger-btn" class="ui-scale-trigger-btn" type="button" onclick="toggleUiScaleMenu()" title="حجم النص والعناصر" aria-label="التحكم في حجم النص والعناصر">
-                    <span class="ui-scale-icon">🗚</span>
-                    <span id="ui-scale-current-label" class="ui-scale-val">100%</span>
-                </button>
-                <div id="ui-scale-menu" class="ui-scale-menu" style="display:none;" role="dialog" aria-label="قائمة حجم النص والعناصر">
-                    <div class="ui-scale-menu-header">
-                        <span>حجم النص والعناصر</span>
-                        <button type="button" class="ui-scale-reset-btn" onclick="resetFontScale()" title="استعادة الحجم الافتراضي">إعادة ضبط الحجم</button>
-                    </div>
-                    <div class="ui-scale-quick-actions">
-                        <button type="button" class="scale-step-btn" onclick="stepFontScale(-1)" title="تصغير النص (A-)" aria-label="تصغير النص">A-</button>
-                        <button type="button" class="scale-step-btn" onclick="setFontScale(1.0)" title="الحجم الافتراضي (A)" aria-label="الحجم الافتراضي">A</button>
-                        <button type="button" class="scale-step-btn" onclick="stepFontScale(1)" title="تكبير النص (A+)" aria-label="تكبير النص">A+</button>
-                    </div>
-                    <div class="ui-scale-presets">
-                        <button type="button" class="scale-preset-btn" data-scale="0.90" onclick="setFontScale(0.90)">صغير 90%</button>
-                        <button type="button" class="scale-preset-btn active" data-scale="1.0" onclick="setFontScale(1.0)">افتراضي 100%</button>
-                        <button type="button" class="scale-preset-btn" data-scale="1.10" onclick="setFontScale(1.10)">كبير 110%</button>
-                        <button type="button" class="scale-preset-btn" data-scale="1.25" onclick="setFontScale(1.25)">كبير جداً 125%</button>
-                    </div>
-                </div>
-            </div>
-
             <button id="phantom-ghost-trigger" onclick="toggleGhostMenu()" style="background:transparent; border:none; cursor:pointer; padding:5px; line-height:0; position:relative; z-index:999999;">
                 <svg viewBox="0 0 100 100" width="32" height="32" fill="none" stroke="#00f2fe" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M20 80 V50 C20 25 35 10 50 10 C65 10 80 25 80 50 V80 L70 70 L60 80 L50 70 L40 80 L30 70 Z"></path>
@@ -2191,9 +2166,10 @@
         </div>
 
         <!-- شريط المهارة المحددة إن وجدت -->
-        <div id="codo-active-skill-banner" class="codo-active-skill-banner" style="display:none;">
+        <div id="codo-active-skill-banner" class="codo-active-skill-banner" style="display:none; align-items:center;">
           <span>🎯 المهارة النشطة: </span>
           <strong id="codo-active-skill-name">اسم المهارة</strong>
+          <span id="codo-active-skill-status" class="codo-skill-status-tag active" style="margin:0 8px; padding:2px 8px; font-size:0.7rem; border-radius:12px; background:rgba(0,242,254,0.15); border:1px solid #00f2fe; color:#00f2fe;">جاهزة</span>
           <button type="button" class="codo-skill-clear-btn" onclick="clearSelectedCodoSkill()" title="إلغاء تحديد المهارة">✕</button>
         </div>
 
@@ -2208,11 +2184,6 @@
           <button id="codo-inline-skills-btn" class="codo-tool-chip-btn" type="button" onclick="openCodoSkillsModal()" title="معمل المهارات والأدوات المعتمدة">
             <span>🧠</span>
             <span class="codo-chip-label">المهارات</span>
-          </button>
-
-          <button class="codo-tool-chip-btn" type="button" onclick="toggleUiScaleMenu()" title="التحكم في حجم النص والعناصر">
-            <span>🗚</span>
-            <span class="codo-chip-label">حجم النص</span>
           </button>
         </div>
 
@@ -2649,7 +2620,17 @@
             </div>
 
             <div class="settings-group">
-                <h3>📏 حجم الخط</h3>
+                <h3>🖥️ وضع عرض الموقع</h3>
+                <div class="settings-row" style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <button class="settings-btn" onclick="applyDeviceLayoutMode('auto')">🔄 تلقائي</button>
+                    <button class="settings-btn" onclick="applyDeviceLayoutMode('mobile')">📱 وضع الهاتف</button>
+                    <button class="settings-btn" onclick="applyDeviceLayoutMode('tablet')">📟 وضع التابلت / iPad</button>
+                    <button class="settings-btn" onclick="applyDeviceLayoutMode('desktop')">💻 وضع الكمبيوتر / Desktop</button>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>🔤 حجم الخط</h3>
                 <div class="settings-row">
                     <button class="settings-btn" onclick="applyFontSize('small')">صغير</button>
                     <button class="settings-btn" onclick="applyFontSize('medium')">متوسط</button>

@@ -36,13 +36,14 @@
     --shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
     --transition: 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 
-    /* 🗚 متغيرات حجم النص والعناصر المستقلة عن عرض الشاشة */
+    /* 🗚 متغيرات نظام حجم النص والعناصر (UI Font & Elements Scale) */
     --ui-scale: 1;
-    --base-font-size: 16px;
-    --codo-text-size: calc(0.94rem * var(--ui-scale));
-    --codo-title-size: calc(1rem * var(--ui-scale));
+    --base-font-size: 15px;
+    --ui-font-size: calc(var(--base-font-size) * var(--ui-scale));
+    --codo-text-size: calc(0.92rem * var(--ui-scale));
+    --codo-title-size: calc(0.98rem * var(--ui-scale));
     --codo-btn-size: calc(0.8rem * var(--ui-scale));
-    --codo-input-size: calc(0.95rem * var(--ui-scale));
+    --codo-input-size: calc(0.92rem * var(--ui-scale));
     --codo-subtext-size: calc(0.72rem * var(--ui-scale));
 }
 
@@ -74,6 +75,8 @@ html {
     width: 100%;
     max-width: 100%;
     overflow-x: hidden;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
 }
 
 body {
@@ -88,8 +91,10 @@ body {
     color: var(--text);
     direction: rtl;
     line-height: 1.6;
-    overflow-x: hidden;
+    overflow-x: hidden !important;
     position: relative;
+    margin: 0;
+    padding: 0;
 }
 
 /* =========================
@@ -743,7 +748,70 @@ input:focus, select:focus, textarea:focus {
 /* =========================
    21. CHAT (شكل واتساب - تم إصلاحه)
    ========================= */
-.chat-wrapper-card { height: 480px; display: flex; flex-direction: column; background: #0b141a; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; padding: 0; }
+.whatsapp-chat-container {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    margin: 0 auto 20px;
+    overflow-x: hidden;
+}
+
+.whatsapp-chat-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: #1f2c34;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+}
+
+.wa-avatar {
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, rgba(0, 242, 254, 0.2), rgba(0, 168, 132, 0.4));
+    border: 1px solid var(--cyan);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 900;
+    color: var(--cyan);
+    flex-shrink: 0;
+}
+
+.wa-header-info {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+}
+
+.wa-header-info h3 {
+    font-size: 0.95rem;
+    color: var(--white);
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.wa-status-text {
+    font-size: 0.72rem;
+    color: #25d366;
+    font-weight: 700;
+}
+
+.chat-wrapper-card { height: 480px; display: flex; flex-direction: column; background: #0b141a; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; padding: 0; width: 100%; max-width: 100%; box-sizing: border-box; }
+.whatsapp-style-card { border-radius: 0 0 var(--radius-md) var(--radius-md); }
 .chat-bubbles-area {
     flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
     padding: 15px; direction: rtl; text-align: right;
@@ -3479,15 +3547,204 @@ input:focus, select:focus, textarea:focus {
 
 
 /* ==================================================
-   ✅ 1. تنسيقات حجم الخط
+   ✅ 1. أوضاع عرض الموقع الحقيقية (Device Layout Modes)
    ================================================== */
-html.font-small, body.font-small { font-size: 14px; }
-html.font-medium, body.font-medium { font-size: 16px; }
-html.font-large, body.font-large { font-size: 18px; }
+html.layout-mode-auto {
+    /* الوضع التلقائي القياسي يعتمد على التجاوب الطبيعي دون قيود إضافية */
+}
 
-html.chat-small .chat-bubble, body.chat-small .chat-bubble { font-size: 0.8rem !important; }
-html.chat-medium .chat-bubble, body.chat-medium .chat-bubble { font-size: 0.9rem !important; }
-html.chat-large .chat-bubble, body.chat-large .chat-bubble { font-size: 1.1rem !important; }
+/* 📱 وضع الهاتف (Mobile Mode) */
+html.layout-mode-mobile .app-container {
+    max-width: 480px !important;
+    padding: 14px 10px 85px !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+html.layout-mode-mobile .main-header {
+    padding: 8px 12px !important;
+    max-width: 480px !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+html.layout-mode-mobile .season-pill {
+    display: none !important;
+}
+html.layout-mode-mobile .dock-nav {
+    max-width: 480px !important;
+    width: 100% !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+}
+html.layout-mode-mobile .ghost-fullpage-layout {
+    max-width: 480px !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+}
+html.layout-mode-mobile .codo-floating-input-wrapper {
+    max-width: 480px !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+}
+
+/* 📟 وضع التابلت (Tablet / iPad Mode) */
+html.layout-mode-tablet .app-container {
+    max-width: 768px !important;
+    padding: 18px 14px 90px !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+html.layout-mode-tablet .main-header {
+    max-width: 768px !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+html.layout-mode-tablet .dock-nav {
+    max-width: 768px !important;
+    width: 100% !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+}
+html.layout-mode-tablet .ghost-fullpage-layout {
+    max-width: 768px !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+}
+html.layout-mode-tablet .codo-floating-input-wrapper {
+    max-width: 768px !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+}
+
+/* 💻 وضع الكمبيوتر (Desktop Mode) */
+html.layout-mode-desktop .app-container {
+    max-width: 1240px !important;
+    padding: 24px 20px 95px !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+html.layout-mode-desktop .main-header {
+    max-width: 1240px !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+html.layout-mode-desktop .dock-nav {
+    max-width: 650px !important;
+    width: 100% !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+}
+html.layout-mode-desktop .ghost-fullpage-layout {
+    max-width: 1100px !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+}
+html.layout-mode-desktop .codo-floating-input-wrapper {
+    max-width: 900px !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+}
+
+/* ==================================================
+   ✅ 2. تنسيقات حجم الخط الحقيقية (Font Size)
+   ================================================== */
+html.font-small, body.font-small { font-size: 13.5px !important; --base-font-size: 13.5px; }
+html.font-medium, body.font-medium { font-size: 16px !important; --base-font-size: 16px; }
+html.font-large, body.font-large { font-size: 18.5px !important; --base-font-size: 18.5px; }
+
+/* ==================================================
+   ✅ 3. تنسيقات حجم فقاعات الشات الحقيقية (Chat Bubble Size)
+   ================================================== */
+html.chat-small .chat-bubble, body.chat-small .chat-bubble,
+html.chat-small .codo-user-bubble, body.chat-small .codo-user-bubble,
+html.chat-small .codo-bot-card, body.chat-small .codo-bot-card,
+html.chat-small .ghost-message-bubble, body.chat-small .ghost-message-bubble {
+    font-size: 0.82rem !important;
+    padding: 6px 10px !important;
+}
+
+html.chat-medium .chat-bubble, body.chat-medium .chat-bubble,
+html.chat-medium .codo-user-bubble, body.chat-medium .codo-user-bubble,
+html.chat-medium .codo-bot-card, body.chat-medium .codo-bot-card,
+html.chat-medium .ghost-message-bubble, body.chat-medium .ghost-message-bubble {
+    font-size: 0.95rem !important;
+    padding: 9px 14px !important;
+}
+
+html.chat-large .chat-bubble, body.chat-large .chat-bubble,
+html.chat-large .codo-user-bubble, body.chat-large .codo-user-bubble,
+html.chat-large .codo-bot-card, body.chat-large .codo-bot-card,
+html.chat-large .ghost-message-bubble, body.chat-large .ghost-message-bubble {
+    font-size: 1.15rem !important;
+    padding: 13px 18px !important;
+}
+
+/* شارات حالات المهارات الأربعة: جاهزة - قيد التشغيل - اكتملت - حدث خطأ */
+.codo-skill-status-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    border-radius: 12px;
+    transition: all 0.2s ease;
+}
+.codo-skill-status-tag.active {
+    background: rgba(0, 242, 254, 0.15);
+    border: 1px solid #00f2fe;
+    color: #00f2fe;
+}
+.codo-skill-status-tag.running {
+    background: rgba(250, 204, 21, 0.15);
+    border: 1px solid #facc15;
+    color: #facc15;
+    animation: pulse 1.2s infinite;
+}
+.codo-skill-status-tag.completed {
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid #10b981;
+    color: #10b981;
+}
+.codo-skill-status-tag.error {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid #ef4444;
+    color: #ef4444;
+}
+
+.codo-skill-tag-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    border-radius: 12px;
+    background: rgba(0, 242, 254, 0.12);
+    border: 1px solid rgba(0, 242, 254, 0.35);
+    color: #00f2fe;
+}
+.codo-skill-tag-pill.completed {
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    color: #10b981;
+}
+.codo-skill-tag-pill.error {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: #ef4444;
+}
 
 /* ==================================================
    ✅ 2. تنسيقات الثيمات (سماوي، ذهبي، بنفسجي)
@@ -7163,159 +7420,6 @@ body.disable-animations *::after {
 }
 
 /* =========================================================
-   10. أداة التحكم في حجم الواجهة والخط (UI Scale Controller)
-   ========================================================= */
-.ui-scale-controller-wrapper {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-}
-
-.ui-scale-trigger-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    background: rgba(11, 16, 26, 0.85);
-    border: 1px solid rgba(0, 242, 254, 0.25);
-    color: #e2e8f0;
-    border-radius: 12px;
-    padding: 6px 10px;
-    font-size: 0.8rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    backdrop-filter: blur(8px);
-}
-
-.ui-scale-trigger-btn:hover {
-    border-color: #00f2fe;
-    color: #00f2fe;
-    box-shadow: 0 0 14px rgba(0, 242, 254, 0.3);
-    transform: translateY(-1px);
-}
-
-.ui-scale-icon {
-    font-size: 1rem;
-    line-height: 1;
-}
-
-.ui-scale-val {
-    font-size: 0.72rem;
-    background: rgba(0, 242, 254, 0.12);
-    color: #00f2fe;
-    padding: 1px 6px;
-    border-radius: 6px;
-    font-weight: 800;
-}
-
-.ui-scale-menu {
-    position: absolute;
-    top: calc(100% + 8px);
-    left: 0;
-    width: 250px;
-    background: rgba(11, 16, 26, 0.98);
-    border: 1px solid rgba(0, 242, 254, 0.35);
-    border-radius: 14px;
-    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.85), 0 0 25px rgba(0, 242, 254, 0.18);
-    backdrop-filter: blur(16px);
-    padding: 14px;
-    z-index: 100020;
-    animation: fadeIn 0.18s ease;
-    text-align: right;
-}
-
-.ui-scale-menu-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-    font-size: 0.82rem;
-    font-weight: 800;
-    color: #f1f5f9;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    padding-bottom: 8px;
-}
-
-.ui-scale-reset-btn {
-    background: transparent;
-    border: none;
-    color: #64748b;
-    font-size: 0.72rem;
-    cursor: pointer;
-    transition: color 0.15s ease;
-    padding: 2px 4px;
-}
-
-.ui-scale-reset-btn:hover {
-    color: #00f2fe;
-}
-
-.ui-scale-quick-actions {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 12px;
-}
-
-.scale-step-btn {
-    flex: 1;
-    height: 36px;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    color: #e2e8f0;
-    font-weight: 800;
-    font-size: 0.9rem;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s ease;
-    touch-action: manipulation;
-}
-
-.scale-step-btn:hover {
-    background: rgba(0, 242, 254, 0.15);
-    border-color: #00f2fe;
-    color: #00f2fe;
-}
-
-.ui-scale-presets {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-}
-
-.scale-preset-btn {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
-    padding: 8px 6px;
-    color: #94a3b8;
-    font-size: 0.76rem;
-    font-weight: 700;
-    cursor: pointer;
-    text-align: center;
-    transition: all 0.15s ease;
-    touch-action: manipulation;
-}
-
-.scale-preset-btn:hover {
-    border-color: rgba(0, 242, 254, 0.4);
-    color: #f1f5f9;
-    background: rgba(0, 242, 254, 0.06);
-}
-
-.scale-preset-btn.active {
-    background: rgba(0, 242, 254, 0.18);
-    border-color: #00f2fe;
-    color: #00f2fe;
-    font-weight: 800;
-    box-shadow: 0 0 10px rgba(0, 242, 254, 0.2);
-}
-
-/* =========================================================
    11. بطاقة ومرفقات مستندات الـ PDF والجداول المتجاوبة
    ========================================================= */
 .codo-table-responsive {
@@ -7426,16 +7530,21 @@ body.disable-animations *::after {
 }
 
 /* =========================================================
-   12. تحسينات الموبايل الشاملة (Responsive & Mobile-First)
+   12. تحسينات الموبايل الشاملة (Mobile-First & Adaptive Layout)
    ========================================================= */
+
+/* قواعد التجاوب العامة للشاشات المتوسطة والصغيرة (Tablet & Mobile <= 768px) */
 @media (max-width: 768px) {
+    /* شريط الموقع العلوي */
     .main-header {
         padding: 8px 10px;
-        min-height: 56px;
+        min-height: 54px;
+        width: 100% !important;
+        box-sizing: border-box;
     }
 
     .header-actions {
-        gap: 4px;
+        gap: 5px;
     }
 
     .ui-scale-val {
@@ -7446,83 +7555,270 @@ body.disable-animations *::after {
         left: auto;
         right: 0;
         width: 250px;
-        max-width: calc(100vw - 20px);
+        max-width: calc(100vw - 16px);
     }
 
-    /* شات Codo يملأ الشاشة بالكامل بدون أي تصغير أو مساحات فارغة */
+    .app-container {
+        width: 100% !important;
+        max-width: 100% !important;
+        padding: 14px 10px 85px !important;
+        box-sizing: border-box;
+    }
+
+    .whatsapp-chat-container {
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box;
+        overflow-x: hidden;
+    }
+
+    /* ⚡ شات CODO يأخذ عرض الشاشة بالكامل وبدون أي فراغات جانبية */
     .ghost-fullpage-overlay {
+        position: fixed !important;
+        inset: 0 !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
         width: 100% !important;
         max-width: 100% !important;
         height: 100% !important;
         height: 100dvh !important;
         height: -webkit-fill-available !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #080c14 !important;
+        z-index: 1000000;
+        overflow: hidden !important;
+        box-sizing: border-box;
     }
 
     .ghost-fullpage-layout {
         width: 100% !important;
         max-width: 100% !important;
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        position: relative;
+        overflow: hidden;
+        margin: 0;
+        padding: 0;
     }
 
     .ghost-main-chat {
         width: 100% !important;
         max-width: 100% !important;
         min-width: 0 !important;
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        position: relative;
+        margin: 0;
+        padding: 0;
     }
 
-    .ghost-messages-viewport {
-        padding: 10px 8px 12px;
-        width: 100% !important;
-        max-width: 100% !important;
-        gap: 10px;
-    }
-
-    .codo-msg-wrapper {
-        width: 100% !important;
-        max-width: 100% !important;
-    }
-
-    .codo-user-bubble {
-        max-width: 92% !important;
-        padding: 9px 12px;
-    }
-
-    .codo-bot-card {
-        max-width: 98% !important;
-        width: 98% !important;
-        padding: 10px 12px;
-    }
-
+    /* شريط رأس الشات على الهاتف */
     .ghost-fullpage-header {
         padding: max(6px, env(safe-area-inset-top, 6px)) 8px 6px;
+        min-height: 48px;
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box;
+        gap: 6px;
     }
 
     .ghost-fullpage-brand {
         gap: 6px;
+        min-width: 0;
+        flex: 1 1 auto;
+        overflow: hidden;
+    }
+
+    .ghost-avatar-glow {
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        font-size: 1rem;
+    }
+
+    .ghost-fullpage-title h3 {
+        font-size: 0.88rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .codo-model-trigger-btn {
-        max-width: 115px;
+        max-width: 110px;
         padding: 4px 6px;
         font-size: 0.72rem;
-        gap: 4px;
+        gap: 3px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    #codo-active-model-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
     .codo-model-menu-popup {
-        width: 230px;
-        max-width: calc(100vw - 20px);
+        width: 240px;
+        max-width: calc(100vw - 16px);
         right: 0;
     }
 
+    .codo-options-menu-popup {
+        width: 220px;
+        max-width: calc(100vw - 16px);
+        left: 0;
+    }
+
+    .ghost-fullpage-actions {
+        gap: 5px;
+        flex-shrink: 0;
+    }
+
+    .ghost-header-btn {
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+        min-height: 36px;
+        padding: 0;
+        border-radius: 8px;
+        font-size: 0.88rem;
+    }
+
+    /* منطقة الرسائل القابلة للتمرير */
+    .ghost-messages-viewport {
+        padding: 8px 8px 12px;
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        gap: 8px;
+        box-sizing: border-box;
+        overscroll-behavior-y: contain;
+    }
+
+    /* بنية الرسائل والفقاعات بعرض الهاتف الكامل */
+    .codo-msg-wrapper {
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box;
+        margin-bottom: 6px;
+    }
+
+    .codo-user-bubble {
+        max-width: 90% !important;
+        padding: 8px 12px;
+        font-size: var(--codo-text-size);
+        line-height: 1.55;
+        overflow-wrap: anywhere !important;
+        word-break: break-word !important;
+        box-sizing: border-box;
+    }
+
+    .codo-bot-card {
+        max-width: 100% !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        padding: 9px 11px;
+        border-radius: 14px 14px 14px 4px;
+        font-size: var(--codo-text-size);
+        line-height: 1.65;
+        overflow-wrap: anywhere !important;
+        word-break: break-word !important;
+        box-sizing: border-box;
+    }
+
+    .codo-bot-content {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        overflow-wrap: anywhere !important;
+        word-break: break-word !important;
+        box-sizing: border-box;
+        font-size: var(--codo-text-size);
+    }
+
+    .codo-bot-content a,
+    .codo-user-bubble a {
+        color: #00f2fe;
+        text-decoration: underline;
+        overflow-wrap: anywhere !important;
+        word-break: break-all !important;
+    }
+
+    .codo-code-wrapper {
+        max-width: 100% !important;
+        width: 100% !important;
+        box-sizing: border-box;
+        overflow: hidden;
+    }
+
+    .codo-code-wrapper pre {
+        max-width: 100% !important;
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch;
+        font-size: 0.8rem;
+        padding: 8px;
+    }
+
+    .codo-bot-content table {
+        display: block;
+        width: 100% !important;
+        max-width: 100% !important;
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch;
+        border-collapse: collapse;
+        margin: 6px 0;
+    }
+
+    .codo-sources-box {
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box;
+    }
+
+    .codo-source-chip {
+        max-width: 100% !important;
+        box-sizing: border-box;
+    }
+
+    /* شريط الإدخال الثابت أسفل الشاشة */
     .codo-floating-input-wrapper {
         padding: 4px 6px calc(6px + env(safe-area-inset-bottom, 0px));
         width: 100% !important;
         max-width: 100% !important;
+        box-sizing: border-box;
     }
 
-    .ghost-input-container {
-        padding: 3px 4px 3px 8px;
-        gap: 4px;
+    .codo-quick-toolbar {
         width: 100% !important;
+        max-width: 100% !important;
+        gap: 5px;
+        padding: 2px 2px 4px;
+        box-sizing: border-box;
+    }
+
+    .codo-tool-chip-btn {
+        padding: 3px 8px;
+        font-size: var(--codo-btn-size);
+        min-height: 28px;
+        touch-action: manipulation;
+    }
+
+    .codo-floating-input-wrapper .ghost-input-container {
+        width: 100% !important;
+        max-width: 100% !important;
+        padding: 3px 4px 3px 6px;
+        gap: 4px;
+        border-radius: 24px;
+        box-sizing: border-box;
     }
 
     .codo-action-icon-btn {
@@ -7531,20 +7827,43 @@ body.disable-animations *::after {
         min-width: 36px;
         min-height: 36px;
         font-size: 1.05rem;
+        touch-action: manipulation;
+    }
+
+    .ghost-input-field.codo-textarea-field {
+        font-size: var(--codo-input-size);
+        padding: 6px 8px;
+        min-height: 24px;
+        max-height: 90px;
+        line-height: 1.45;
     }
 
     .ghost-send-btn {
-        width: 38px;
-        height: 38px;
-        min-width: 38px;
-        min-height: 38px;
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+        min-height: 36px;
+        border-radius: 50%;
+        touch-action: manipulation;
     }
 
     .codo-input-footnote {
-        font-size: 0.62rem;
-        padding-top: 2px;
+        font-size: var(--codo-subtext-size);
+        padding-top: 1px;
     }
 
+    .codo-file-preview-bar,
+    .codo-active-skill-banner {
+        width: 100% !important;
+        max-width: 100% !important;
+        padding: 4px 8px;
+        font-size: 0.75rem;
+        border-radius: 10px;
+        margin-bottom: 4px;
+        box-sizing: border-box;
+    }
+
+    /* نافذة المهارات والتفكير على الهاتف */
     .codo-form-grid,
     .codo-skills-grid {
         grid-template-columns: 1fr;
@@ -7552,80 +7871,186 @@ body.disable-animations *::after {
 
     .codo-thinking-box {
         padding: 12px 14px;
-        width: 94%;
+        width: 95%;
         max-width: 340px;
     }
 }
 
+/* شاشات الهواتف الذكية الشائعة (iPhone, Samsung Galaxy, Pixel <= 480px) */
 @media (max-width: 480px) {
+    html,
+    body {
+        width: 100% !important;
+        max-width: 100% !important;
+        overflow-x: hidden !important;
+    }
+
+    /* 📱 جعل كافة الحاويات تستخدم العرض الكامل 100% بدون أي تجاوز أفقي */
+    .whatsapp-chat-container,
+    .ghost-fullpage-layout,
+    .chat-wrapper-card,
+    .whatsapp-style-card,
+    .app-container,
+    .page-view,
+    .page-header-box,
+    .hero-summary-card,
+    .presence-widget-card,
+    .quick-roster-card,
+    .wide-roster-container,
+    .poll-wrapper-box,
+    .schedule-cards-grid,
+    .leaderboard-container,
+    .rules-block-card,
+    .ghost-fullpage-overlay,
+    .ghost-main-chat,
+    .ghost-messages-viewport,
+    .codo-floating-input-wrapper,
+    .codo-quick-toolbar,
+    .fullscreen-container {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        box-sizing: border-box !important;
+        overflow-x: hidden !important;
+    }
+
+    /* ضبط حاوية شات الواتساب لتملأ الشاشة بالكامل */
+    .whatsapp-chat-container {
+        margin: 0 0 16px 0 !important;
+        padding: 0 !important;
+        border-radius: 0 !important;
+    }
+
+    .whatsapp-chat-header {
+        padding: 8px 10px !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+        border-radius: 12px 12px 0 0 !important;
+    }
+
+    .chat-wrapper-card.whatsapp-style-card {
+        border-radius: 0 0 12px 12px !important;
+        height: min(460px, calc(100dvh - 220px)) !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+    }
+
+    /* تخطيط شات CODO لكامل الشاشة */
+    .ghost-fullpage-layout {
+        display: flex !important;
+        flex-direction: row !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        flex: 1 1 auto !important;
+        height: 100% !important;
+        overflow: hidden !important;
+        overflow-x: hidden !important;
+    }
+
     .brand-titles h1 {
-        font-size: 0.95rem;
+        font-size: 0.92rem;
     }
 
     .season-pill {
         display: none;
     }
 
-    .ghost-fullpage-title h3 {
-        font-size: 0.88rem;
-    }
-
     .ghost-fullpage-title small {
         display: none;
+    }
+
+    .ghost-fullpage-title h3 {
+        font-size: 0.84rem;
+    }
+
+    .codo-model-trigger-btn {
+        max-width: 95px;
+        padding: 3px 5px;
+        font-size: 0.68rem;
     }
 
     .codo-pdf-card-title {
         max-width: calc(100vw - 110px);
     }
 
+    /* بطاقات شاشة الترحيب */
     .codo-welcome-hero {
-        padding: 12px 6px;
+        padding: 10px 4px;
+        width: 100% !important;
+        max-width: 100% !important;
     }
 
     .codo-hero-avatar {
-        width: 46px;
-        height: 46px;
-        font-size: 1.5rem;
+        width: 42px;
+        height: 42px;
+        font-size: 1.4rem;
+        margin-bottom: 6px;
     }
 
     .codo-hero-title {
-        font-size: 1.2rem;
+        font-size: 1.15rem;
+        margin-bottom: 2px;
     }
 
     .codo-hero-desc {
-        font-size: 0.8rem;
-        margin-bottom: 10px;
+        font-size: 0.78rem;
+        margin-bottom: 8px;
+        line-height: 1.4;
     }
 
     .codo-prompt-grid {
         grid-template-columns: 1fr;
         gap: 6px;
+        width: 100% !important;
     }
 
     .codo-prompt-card {
-        padding: 8px 10px;
+        padding: 7px 9px;
+        border-radius: 10px;
+    }
+
+    .codo-prompt-heading {
+        font-size: 0.8rem;
+    }
+
+    .codo-prompt-sub {
+        font-size: 0.68rem;
+        line-height: 1.3;
+    }
+
+    .codo-action-btn {
+        padding: 3px 7px;
+        font-size: 0.72rem;
     }
 }
 
-/* شاشات الهواتف الصغيرة جداً (320px - 360px) */
-@media (max-width: 360px) {
-    .codo-model-trigger-btn {
-        max-width: 90px;
-        font-size: 0.68rem;
-        padding: 3px 5px;
+/* شاشات الهواتف القياسية والمدمجة (360px - 390px) */
+@media (max-width: 390px) {
+    .ghost-avatar-glow {
+        width: 28px;
+        height: 28px;
+        min-width: 28px;
+        font-size: 0.9rem;
     }
 
-    #codo-active-model-name {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        max-width: 50px;
+    .ghost-fullpage-title h3 {
+        font-size: 0.8rem;
+    }
+
+    .codo-model-trigger-btn {
+        max-width: 85px;
+        font-size: 0.65rem;
+        padding: 2px 4px;
     }
 
     .ghost-header-btn {
-        min-width: 34px;
+        width: 34px;
         height: 34px;
-        padding: 0 4px;
+        min-width: 34px;
+        min-height: 34px;
         font-size: 0.8rem;
     }
 
@@ -7637,11 +8062,11 @@ body.disable-animations *::after {
     }
 
     .codo-action-icon-btn {
-        width: 32px;
-        height: 32px;
-        min-width: 32px;
-        min-height: 32px;
-        font-size: 0.95rem;
+        width: 34px;
+        height: 34px;
+        min-width: 34px;
+        min-height: 34px;
+        font-size: 1rem;
     }
 
     .codo-quick-toolbar {
@@ -7649,7 +8074,130 @@ body.disable-animations *::after {
     }
 
     .codo-tool-chip-btn {
+        padding: 2px 7px;
+        font-size: 0.68rem;
+    }
+
+    .codo-user-bubble {
+        max-width: 92% !important;
+        padding: 7px 10px;
+    }
+
+    .codo-bot-card {
+        padding: 8px 10px;
+    }
+}
+
+/* شاشات الهواتف الصغيرة جداً (320px - 360px) */
+@media (max-width: 360px) {
+    .main-header {
+        padding: 6px 8px;
+    }
+
+    .brand-titles h1 {
+        font-size: 0.88rem;
+    }
+
+    .user-chip {
+        display: none;
+    }
+
+    .header-actions {
+        gap: 3px;
+    }
+
+    #open-bobert-chat-btn {
         padding: 3px 8px;
-        font-size: 0.7rem;
+        font-size: 0.75rem;
+        height: 32px;
+    }
+
+    .codo-model-trigger-btn {
+        max-width: 75px;
+        font-size: 0.62rem;
+        padding: 2px 3px;
+    }
+
+    #codo-active-model-name {
+        max-width: 42px;
+    }
+
+    .ghost-header-btn {
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        min-height: 32px;
+        font-size: 0.75rem;
+    }
+
+    .ghost-send-btn {
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        min-height: 32px;
+    }
+
+    .codo-action-icon-btn {
+        width: 30px;
+        height: 30px;
+        min-width: 30px;
+        min-height: 30px;
+        font-size: 0.9rem;
+    }
+
+    .ghost-input-field.codo-textarea-field {
+        padding: 4px 6px;
+        font-size: 0.85rem;
+    }
+
+    .codo-input-footnote {
+        display: none;
+    }
+}
+
+/* الشاشات الكبيرة (Tablet & Desktop >= 769px) للتوسع المنظم */
+@media (min-width: 769px) {
+    :root {
+        --base-font-size: 16px;
+    }
+
+    .codo-welcome-hero {
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 20px 10px;
+    }
+
+    .codo-prompt-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+
+    .codo-user-bubble {
+        max-width: 75% !important;
+    }
+
+    .codo-bot-card {
+        max-width: 90% !important;
+        width: 90% !important;
+    }
+
+    .ghost-messages-viewport {
+        padding: 16px 24px;
+    }
+
+    .codo-floating-input-wrapper .ghost-input-container {
+        max-width: 820px;
+        margin: 0 auto;
+    }
+
+    .codo-quick-toolbar {
+        max-width: 820px;
+        margin: 0 auto;
+    }
+
+    .codo-file-preview-bar,
+    .codo-active-skill-banner {
+        max-width: 820px;
+        margin: 0 auto 6px;
     }
 }
