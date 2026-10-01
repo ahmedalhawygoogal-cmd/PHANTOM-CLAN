@@ -121,11 +121,16 @@
                 <h1>PHANTOM 『PH』</h1>
                 <div style="display:flex; align-items:center; gap:5px;">
                     <button id="season-display-badge" class="season-pill" type="button">الموسم الأول</button>
-                    <button id="settings-trigger" class="season-pill" type="button" style="cursor:pointer;">『PH』</button>
                 </div>
             </div>
         </div>
         <div class="header-actions">
+            <button id="settings-trigger" class="header-settings-btn" type="button" onclick="openSettings()" title="إعدادات التطبيق" aria-label="إعدادات التطبيق">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+            </button>
             <button id="phantom-ghost-trigger" onclick="toggleGhostMenu()" style="background:transparent; border:none; cursor:pointer; padding:5px; line-height:0; position:relative; z-index:999999;">
                 <svg viewBox="0 0 100 100" width="32" height="32" fill="none" stroke="#00f2fe" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M20 80 V50 C20 25 35 10 50 10 C65 10 80 25 80 50 V80 L70 70 L60 80 L50 70 L40 80 L30 70 Z"></path>
@@ -2369,6 +2374,11 @@
         <div class="ghost-menu-item color-purple" onclick="closeGhostMenu(); openSuggestionModal();">
             <span class="ghost-menu-icon">💡</span>
             <span class="ghost-menu-label">الاقتراحات</span>
+        </div>
+        
+        <div class="ghost-menu-item color-cyan" onclick="closeGhostMenu(); openSettings();">
+            <span class="ghost-menu-icon">⚙️</span>
+            <span class="ghost-menu-label">الإعدادات</span>
         </div>
 
     </div>

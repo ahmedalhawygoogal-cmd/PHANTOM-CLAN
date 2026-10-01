@@ -280,8 +280,8 @@ function resetSeasonPoints() {
    3. Supabase API Layer
    ======================================================== */
 
-const SUPABASE_URL = "https://dmbprvvjmgccgztrhkay.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_R9U_-JY91tV87uLBaZjCWQ_wRhVshA5";
+const SUPABASE_URL = "https://kcxwfqwrzbilcjcgkazv.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_3xakoqez79haf-KOWJbGBQ_V7bQv-DM";
 
 function safePostgrest(queryPromise) {
     return Promise.resolve(queryPromise);
@@ -593,12 +593,12 @@ let cachedAgoraToken = null;
 
 async function fetchToken(channelName, uid) {
     try {
-        const response = await fetch("https://dmbprvvjmgccgztrhkay.supabase.co/functions/v1/get-agora-token", {
+        const response = await fetch("https://kcxwfqwrzbilcjcgkazv.supabase.co/functions/v1/get-agora-token", {
             method: "POST",
             headers: { 
                 "Content-Type": "application/json",
-                "apikey": "sb_publishable_R9U_-JY91tV87uLBaZjCWQ_wRhVshA5",
-                "Authorization": "Bearer sb_publishable_R9U_-JY91tV87uLBaZjCWQ_wRhVshA5"
+                "apikey": "sb_publishable_3xakoqez79haf-KOWJbGBQ_V7bQv-DM",
+                "Authorization": "Bearer sb_publishable_3xakoqez79haf-KOWJbGBQ_V7bQv-DM"
             },
             body: JSON.stringify({ channelName: channelName, uid: uid })
         });
@@ -12017,6 +12017,8 @@ function closeSettings() {
         overlay.style.display = 'none';
     }
 }
+window.openSettings = openSettings;
+window.closeSettings = closeSettings;
 
 // ✅ ربط أزرار الإعدادات
 document.addEventListener('DOMContentLoaded', function() {

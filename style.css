@@ -212,7 +212,64 @@ body::before {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-shrink: 0;
 }
+
+/* ⚙️ زر الإعدادات المخصص للشريط العلوي */
+.header-settings-btn {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    min-height: 38px;
+    padding: 0;
+    border-radius: 10px;
+    background: rgba(0, 242, 254, 0.08);
+    border: 1px solid rgba(0, 242, 254, 0.32);
+    color: var(--cyan, #00f2fe);
+    cursor: pointer;
+    line-height: 1;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 0 10px rgba(0, 242, 254, 0.12);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 100;
+}
+
+.header-settings-btn:hover {
+    background: rgba(0, 242, 254, 0.22);
+    border-color: var(--cyan, #00f2fe);
+    color: #fff;
+    box-shadow: 0 0 16px var(--cyan-glow, rgba(0, 242, 254, 0.5));
+    transform: rotate(30deg) scale(1.05);
+}
+
+.header-settings-btn:active {
+    transform: rotate(60deg) scale(0.95);
+}
+
+.header-settings-btn svg {
+    display: block;
+    pointer-events: none;
+    transition: transform 0.3s ease;
+}
+
+/* ضمان بقاء زر الإعدادات ظاهراً في جميع أوضاع العرض */
+html.layout-mode-auto #settings-trigger,
+html.layout-mode-mobile #settings-trigger,
+html.layout-mode-tablet #settings-trigger,
+html.layout-mode-desktop #settings-trigger,
+#settings-trigger {
+    display: inline-flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
 
 .user-chip {
     padding: 5px 11px;
@@ -7956,6 +8013,22 @@ body.disable-animations *::after {
 
     .season-pill {
         display: none;
+    }
+
+    .header-actions {
+        gap: 6px !important;
+    }
+
+    .header-settings-btn {
+        width: 34px !important;
+        height: 34px !important;
+        min-width: 34px !important;
+        min-height: 34px !important;
+    }
+
+    .header-settings-btn svg {
+        width: 18px !important;
+        height: 18px !important;
     }
 
     .ghost-fullpage-title small {
