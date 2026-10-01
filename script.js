@@ -294,6 +294,50 @@ try {
     console.warn("⚠️ فشل إنشاء عميل Supabase. سيتم استخدام localStorage كنسخة احتياطية.");
 }
 
+// 🤖 مسار Supabase Edge Function الرسمي لـ CODO AI
+const CODO_EDGE_FUNCTION_URL = "https://kcxwfqwrzbilcjcgkazv.supabase.co/functions/v1/codo-chat";
+
+async function sendCodoChatRequest(payload, abortSignal = null) {
+    const headers = {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
+    };
+
+    try {
+        const edgeRes = await fetch(CODO_EDGE_FUNCTION_URL, {
+            method: "POST",
+            headers: headers,
+            signal: abortSignal,
+            body: JSON.stringify(payload)
+        });
+
+        if (edgeRes.ok) {
+            return edgeRes;
+        }
+
+        // لو الدالة لسه ماتنشرتش يدويًا في Supabase (404) نستخدم السيرفر المحلي كنسخة احتياطية آمنة
+        if (edgeRes.status === 404 || edgeRes.status >= 500) {
+            console.warn("⚠️ تحويل طلب CODO إلى /api/chat الاحتياطي لحين اكتمال نشر Edge Function في Supabase.");
+            return await fetch("/api/chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                signal: abortSignal,
+                body: JSON.stringify(payload)
+            });
+        }
+        return edgeRes;
+    } catch (err) {
+        console.warn("⚠️ تحويل طلب CODO للمسار الاحتياطي:", err);
+        return await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: abortSignal,
+            body: JSON.stringify(payload)
+        });
+    }
+}
+
 async function checkSupabaseConnection() {
     if (!supabaseClient) return false;
     try {
@@ -9620,16 +9664,10 @@ function setupAIChat() {
                 body.scrollTop = body.scrollHeight;
             }
 
-            const response = await fetch("/api/chat", {
-                method: "POST",
-                headers: { 
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({ 
-                    message: userText,
-                    history: codoChatHistory,
-                    modelChoice: codoCurrentModel
-                })
+            const response = await sendCodoChatRequest({ 
+                message: userText,
+                history: codoChatHistory,
+                modelChoice: codoCurrentModel
             });
 
             if (!response.ok) throw new Error("Server Error: " + response.status);
@@ -11022,22 +11060,15 @@ async function sendMessage() {
     currentCodoAbortController = new AbortController();
 
     try {
-        const response = await fetch("/api/chat", {
-            method: "POST",
-            headers: { 
-                "Content-Type": "application/json"
-            },
-            signal: currentCodoAbortController.signal,
-            body: JSON.stringify({ 
-                message: text,
-                history: session.aiHistory,
-                modelChoice: codoCurrentModel || 'codo-base',
-                deepResearch: codoDeepResearchEnabled,
-                webSearch: codoWebSearchEnabled,
-                activeSkillId: skillBackup,
-                attachedFile: attachedFileBackup
-            })
-        });
+        const response = await sendCodoChatRequest({ 
+            message: text,
+            history: session.aiHistory,
+            modelChoice: codoCurrentModel || 'codo-base',
+            deepResearch: codoDeepResearchEnabled,
+            webSearch: codoWebSearchEnabled,
+            activeSkillId: skillBackup,
+            attachedFile: attachedFileBackup
+        }, currentCodoAbortController ? currentCodoAbortController.signal : null);
 
         if (typingIndicator && typingIndicator.cleanup) typingIndicator.cleanup();
         if (typingIndicator && typingIndicator.parentNode) typingIndicator.remove();
