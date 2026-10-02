@@ -7,8 +7,8 @@
 importScripts("https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js");
 importScripts("https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js");
 
-// ✅ تم تحديث الإصدار إلى v7 لمسح الكاش القديم
-const CACHE_NAME = "phantom-hq-v7";
+// ✅ تم تحديث الإصدار إلى v8 لمسح الكاش القديم وتحديث السكربتات
+const CACHE_NAME = "phantom-hq-v8";
 
 /* ========================================================
    📦 CORE FILES

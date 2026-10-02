@@ -13,7 +13,7 @@
     <link rel="apple-touch-icon" href="./icons/icon-192.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=20261001_codo_clean">
     <!-- مكتبة Agora RTC للمكالمات الصوتية -->
     <script src="https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.21.1/agora-rtc-sdk-ng.min.js"></script>
 </head>
@@ -1258,10 +1258,26 @@
         }
         window.getCurrentUserRank = getCurrentUserRank;
         window.inAppCallMode = 'voice';
+
+        function closeGhostHistorySidebar() {
+            var sidebar = document.getElementById('ghost-history-sidebar');
+            if (sidebar) sidebar.classList.remove('open');
+            var backdrop = document.getElementById('ghost-history-backdrop');
+            if (backdrop) backdrop.classList.remove('open');
+        }
+        window.closeGhostHistorySidebar = closeGhostHistorySidebar;
+
+        function openGhostHistorySidebar() {
+            var sidebar = document.getElementById('ghost-history-sidebar');
+            if (sidebar) sidebar.classList.add('open');
+            var backdrop = document.getElementById('ghost-history-backdrop');
+            if (backdrop) backdrop.classList.add('open');
+        }
+        window.openGhostHistorySidebar = openGhostHistorySidebar;
     </script>
 
     <!-- تم إضافة مكتبة Agora في الـ Head، وإضافة عناصر الـ HTML الجديدة هنا -->
-    <script src="script.js?v=20260927_agora_codo_v6"></script>
+    <script src="script.js?v=20261001_codo_fix_v3"></script>
   <style>
 .toast, #phantom-toast-container, .notification-toast, .popup-msg, .custom-toast, .alert-box, .message-popup {
     z-index: 999999999 !important;
@@ -2071,12 +2087,12 @@
 
       <!-- مربع اختيار النموذج الاحترافي الصغير المنسدل -->
       <div class="codo-model-dropdown-container">
-        <button id="codo-model-selector-btn" class="codo-model-trigger-btn" type="button" onclick="toggleCodoModelMenu()" title="اختيار نموذج الذكاء الاصطناعي">
+        <button id="codo-model-selector-btn" class="codo-model-trigger-btn" type="button" onclick="toggleCodoModelMenu(event)" title="اختيار نموذج الذكاء الاصطناعي">
           <span class="codo-model-badge-icon" id="codo-active-model-icon">⚡</span>
           <span id="codo-active-model-name">CODO Base</span>
           <span class="codo-dropdown-arrow">▾</span>
         </button>
-        <div id="codo-model-menu" class="codo-model-menu-popup" style="display:none;">
+        <div id="codo-model-menu" class="codo-model-menu-popup" style="display:none;" onclick="event.stopPropagation()">
           <div class="codo-menu-item active" id="menu-opt-codo-base" onclick="setCodoModel('codo-base')">
             <div class="codo-menu-item-title">⚡ CODO Base <span class="codo-menu-badge">افتراضي</span></div>
             <div class="codo-menu-item-desc">سريع ومباشر للمهام والاستفسارات اليومية والتكتيكات</div>
@@ -2104,21 +2120,17 @@
         <span>💬</span>
       </button>
 
-      <!-- زر قائمة الخيارات الإضافية المنسدلة (مسح، صوت) -->
+      <!-- زر قائمة الخيارات الإضافية المنسدلة (مسح، تخصيص) -->
       <div class="codo-options-dropdown-container">
-        <button id="codo-more-options-btn" class="ghost-header-btn" type="button" onclick="toggleCodoOptionsMenu()" title="خيارات إضافية">
+        <button id="codo-more-options-btn" class="ghost-header-btn" type="button" onclick="toggleCodoOptionsMenu(event)" title="خيارات إضافية">
           <span>⋯</span>
         </button>
-        <div id="codo-more-options-menu" class="codo-options-menu-popup" style="display:none;">
-          <div class="codo-opt-action" onclick="toggleUiScaleMenu(); toggleCodoOptionsMenu();">
-            <span>🗚</span>
-            <span>التحكم في حجم الواجهة والخط</span>
+        <div id="codo-more-options-menu" class="codo-options-menu-popup" style="display:none;" onclick="event.stopPropagation()">
+          <div class="codo-opt-action" onclick="openCodoThinkingCustomizer(); toggleCodoOptionsMenu(event);">
+            <span>🎨</span>
+            <span>تخصيص شكل انتظار CODO</span>
           </div>
-          <div class="codo-opt-action" onclick="toggleCodoAudio(); toggleCodoOptionsMenu();">
-            <span id="codo-audio-icon">🔊</span>
-            <span id="codo-audio-label">كتم/تشغيل المؤثرات</span>
-          </div>
-          <div class="codo-opt-action danger" onclick="clearCodoChat(); toggleCodoOptionsMenu();">
+          <div class="codo-opt-action danger" onclick="clearCodoChat(); toggleCodoOptionsMenu(event);">
             <span>🧹</span>
             <span>مسح المحادثة الحالية</span>
           </div>
@@ -2126,7 +2138,7 @@
       </div>
 
       <!-- زر العودة للمقر -->
-      <button class="ghost-header-btn ghost-back-btn" type="button" onclick="closeCodoChat()" title="العودة للمقر">
+      <button id="codo-close-btn" class="ghost-header-btn ghost-back-btn" type="button" onclick="closeCodoChat(event)" title="العودة للمقر / إغلاق الشات" aria-label="إغلاق الشات">
         <span>✕</span>
       </button>
     </div>
@@ -2151,8 +2163,13 @@
 
     <!-- مساحة الشات الرئيسية الكاملة -->
     <main class="ghost-main-chat" id="codo-chat-dropzone">
-      <div id="phantom-chat-body" class="ghost-messages-viewport">
-        <!-- رسالة الترحيب والبطاقات الذكية ستظهر عند بدء المحادثة -->
+      <div class="codo-messages-area-wrapper">
+        <div id="phantom-chat-body" class="ghost-messages-viewport">
+          <!-- رسالة الترحيب والبطاقات الذكية ستظهر عند بدء المحادثة -->
+        </div>
+
+        <!-- طبقة مستقلة لمؤشر انتظار CODO متمركزة في منتصف مساحة المحادثة بدقة تامة -->
+        <div id="codo-thinking-overlay" class="codo-thinking-overlay" style="display:none;" aria-live="polite"></div>
       </div>
       
       <!-- شريط إدخال الرسائل المتجاوب المريح للهاتف والكمبيوتر -->
@@ -2221,6 +2238,72 @@
         </div>
       </div>
     </main>
+    <!-- 🎨 نافذة تخصيص شكل انتظار CODO المخصص -->
+    <div id="codo-thinking-customizer-modal" class="codo-customizer-overlay" style="display:none;" onclick="if(event.target===this)closeCodoThinkingCustomizer();">
+      <div class="codo-customizer-card" onclick="event.stopPropagation();">
+        <div class="codo-customizer-header">
+          <div class="codo-customizer-title-wrap">
+            <span class="codo-customizer-icon">🎨</span>
+            <div>
+              <h3>تخصيص شكل انتظار CODO</h3>
+              <p>أدخل كود HTML و CSS مخصص لشكل حركة الانتظار (Animation)</p>
+            </div>
+          </div>
+          <button type="button" class="codo-customizer-close-btn" onclick="closeCodoThinkingCustomizer()" title="إغلاق">✕</button>
+        </div>
+
+        <div class="codo-customizer-body">
+          <div class="codo-customizer-field-group">
+            <div class="codo-customizer-label-row">
+              <label for="codo-custom-thinking-input">كود HTML و CSS (آمن ومعزول، بدون JavaScript):</label>
+              <button type="button" class="codo-quick-sample-btn" onclick="insertThinkingSample()">✨ وضع نموذج حركة جاهز</button>
+            </div>
+            <textarea id="codo-custom-thinking-input" class="codo-code-editor-textarea" spellcheck="false" placeholder="<!-- اكتب كود HTML ووسم <style> هنا -->
+<div class='custom-pulse-spinner'>
+  <div class='glow-ring'></div>
+  <span class='pulse-icon'>⚡</span>
+</div>
+<style>
+.custom-pulse-spinner { ... }
+</style>"></textarea>
+          </div>
+
+          <!-- صندوق التنبيهات والأخطاء -->
+          <div id="codo-custom-thinking-alert" class="codo-customizer-alert" style="display:none;"></div>
+
+          <!-- منطقة المعاينة المباشرة المعزولة -->
+          <div class="codo-customizer-preview-wrapper">
+            <div class="codo-preview-label">
+              <span>👁️ المعاينة المباشرة:</span>
+              <small>تظهر الحركة هنا داخل منطقة معزولة دون التأثير على باقي الموقع</small>
+            </div>
+            <div id="codo-custom-thinking-preview-container" class="codo-thinking-preview-box">
+              <div class="codo-preview-placeholder">اضغط على زر "معاينة" لتجربة شكل الحركة هنا</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- أزرار الإجراءات -->
+        <div class="codo-customizer-footer">
+          <div class="codo-footer-actions-right">
+            <button type="button" class="btn-customizer-secondary" onclick="resetDefaultThinkingAnimation()">
+              🔄 إعادة الشكل الافتراضي
+            </button>
+          </div>
+          <div class="codo-footer-actions-left">
+            <button type="button" class="btn-customizer-ghost" onclick="closeCodoThinkingCustomizer()">
+              إلغاء
+            </button>
+            <button type="button" class="btn-customizer-preview" onclick="previewCustomThinkingAnimation()">
+              👁️ معاينة
+            </button>
+            <button type="button" class="btn-customizer-apply" onclick="applyCustomThinkingAnimation()">
+              ✅ تطبيق
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 

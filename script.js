@@ -304,6 +304,8 @@ async function sendCodoChatRequest(payload, abortSignal = null) {
         "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
     };
 
+    console.log(`[CODO API] Connecting to Edge Function: ${CODO_EDGE_FUNCTION_URL}`);
+
     try {
         const edgeRes = await fetch(CODO_EDGE_FUNCTION_URL, {
             method: "POST",
@@ -312,29 +314,38 @@ async function sendCodoChatRequest(payload, abortSignal = null) {
             body: JSON.stringify(payload)
         });
 
-        if (edgeRes.ok) {
-            return edgeRes;
-        }
-
-        // لو الدالة لسه ماتنشرتش يدويًا في Supabase (404) نستخدم السيرفر المحلي كنسخة احتياطية آمنة
-        if (edgeRes.status === 404 || edgeRes.status >= 500) {
-            console.warn("⚠️ تحويل طلب CODO إلى /api/chat الاحتياطي لحين اكتمال نشر Edge Function في Supabase.");
-            return await fetch("/api/chat", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                signal: abortSignal,
-                body: JSON.stringify(payload)
-            });
-        }
+        // تشخيص آمن لحالة الاستجابة بدون إظهار أي أسرار أو مفاتيح
+        console.log(`[CODO API] Endpoint: ${CODO_EDGE_FUNCTION_URL} | Status: ${edgeRes.status}`);
         return edgeRes;
     } catch (err) {
-        console.warn("⚠️ تحويل طلب CODO للمسار الاحتياطي:", err);
-        return await fetch("/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            signal: abortSignal,
-            body: JSON.stringify(payload)
-        });
+        if (err.name === 'AbortError') {
+            throw err;
+        }
+
+        console.warn(`[CODO Connection Error] Failed to reach ${CODO_EDGE_FUNCTION_URL}:`, err.message || err);
+
+        // نسخة احتياطية محلية فقط داخل بيئة Google AI Studio Dev Server في حال انقطاع الشبكة
+        const isAiStudioDev = window.location.hostname === 'localhost' || 
+                              window.location.hostname.includes('run.app') || 
+                              window.location.hostname.includes('127.0.0.1');
+
+        if (isAiStudioDev) {
+            try {
+                console.log("[CODO Fallback] AI Studio dev server proxy (/api/chat)...");
+                const localRes = await fetch("/api/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    signal: abortSignal,
+                    body: JSON.stringify(payload)
+                });
+                console.log(`[CODO Fallback] Status: ${localRes.status}`);
+                return localRes;
+            } catch (fallbackErr) {
+                console.warn("[CODO Fallback Error] Local dev server unreachable:", fallbackErr.message || fallbackErr);
+            }
+        }
+
+        throw err;
     }
 }
 
@@ -10253,6 +10264,13 @@ function clearCodoChat() {
     const session = getActiveGhostSession();
     if (!session) return;
 
+    if (typeof hideCodoTypingIndicator === 'function') {
+        hideCodoTypingIndicator();
+    }
+    if (typeof stopCodoGeneration === 'function' && currentCodoAbortController) {
+        stopCodoGeneration();
+    }
+
     session.messages = [
         {
             id: "msg_init_" + Date.now(),
@@ -10301,10 +10319,14 @@ window.toggleWebSearch = toggleWebSearch;
 window.toggleDeepResearch = toggleWebSearch;
 
 // ⋯ قائمة الخيارات الإضافية في الهيدر
-function toggleCodoOptionsMenu() {
+function toggleCodoOptionsMenu(e) {
+    if (e && e.stopPropagation) e.stopPropagation();
     const menu = document.getElementById('codo-more-options-menu');
     if (!menu) return;
-    menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+    const isShowing = menu.style.display === 'block';
+    const modelMenu = document.getElementById('codo-model-menu');
+    if (modelMenu) modelMenu.style.display = 'none';
+    menu.style.display = isShowing ? 'none' : 'block';
 }
 window.toggleCodoOptionsMenu = toggleCodoOptionsMenu;
 
@@ -10878,10 +10900,13 @@ async function saveVerifiedSkill() {
 window.saveVerifiedSkill = saveVerifiedSkill;
 
 // ⚡ الموديلات المنسدلة
-function toggleCodoModelMenu() {
+function toggleCodoModelMenu(e) {
+    if (e && e.stopPropagation) e.stopPropagation();
     const menu = document.getElementById('codo-model-menu');
     if (!menu) return;
     const isShowing = menu.style.display === 'block';
+    const moreMenu = document.getElementById('codo-more-options-menu');
+    if (moreMenu) moreMenu.style.display = 'none';
     menu.style.display = isShowing ? 'none' : 'block';
 }
 window.toggleCodoModelMenu = toggleCodoModelMenu;
@@ -10915,91 +10940,82 @@ window.setCodoModel = function(modelKey) {
     if (statusEl) statusEl.textContent = cur.desc;
 };
 
-// 👻 مؤشر الانتظار المتمركز والمراحل الحقيقية الصادقة
+// 👻 مؤشر الانتظار المتمركز بدون أي نصوص تحت الشكل
 function showDynamicTyping(isResearch = false, isSkill = false, isFile = false, isImage = false, isPdf = false) {
     const div = document.createElement('div');
     div.className = 'thinking-ghost-container';
 
-    let stages = [];
-    if (isPdf) {
-        stages = [
-            { title: 'أرفع ملف الـ PDF بأمان للمقر...', sub: 'حماية وتشفير المستند الرقمي' },
-            { title: 'أفحص صفحات المستند واللوائح...', sub: 'قراءة وفهرسة البنود والمواد' },
-            { title: 'أستخرج النصوص والبنود والجداول...', sub: 'استخلاص الشروط والمحظورات والعقوبات بدقة' },
-            { title: 'أحلل القواعد والإرشادات المستخرجة...', sub: 'تدقيق ومطابقة اللائحة الرسمية' },
-            { title: 'أجهز التقرير والإجابة الشاملة...', sub: 'صياغة مباشرة وموثوقة' }
-        ];
-    } else if (isImage) {
-        stages = [
-            { title: 'أرفع الصورة بأمان...', sub: 'معالجة دقة الأبعاد' },
-            { title: 'أفحص الصورة...', sub: 'استكشاف المعالم البصرية' },
-            { title: 'أقرأ التفاصيل المرئية...', sub: 'رصد العناصر والتفاصيل' },
-            { title: 'أحلل النصوص والعناصر (OCR)...', sub: 'استخراج الأرقام والشفرات والنصوص' },
-            { title: 'أجهز الإجابة...', sub: 'إخراج التحليل التكتيكي المباشر' }
-        ];
-    } else if (isResearch) {
-        stages = [
-            { title: 'أفهم السؤال وأفكك محاوره الأساسية...', sub: 'تحليل دقيق لأبعاد المسألة' },
-            { title: 'إنشاء خطة البحث في المصادر الرسمية...', sub: 'تحديد الكلمات المفتاحية وقواعد البيانات' },
-            { title: 'البحث في المصادر واستخراج النتائج...', sub: 'استعلام مباشر من محركات البحث والوثائق' },
-            { title: 'مراجعة وتقييم موثوقية المعلومات...', sub: 'استبعاد البيانات غير الموثقة وفحص التناقضات' },
-            { title: 'مقارنة النتائج والتمييز بين الحقائق والاحتمالات...', sub: 'صياغة التقرير الموثق' },
-            { title: 'أجهز التقرير النهائي بالمصادر الحقيقية...', sub: 'إخراج منظم وواضح' }
-        ];
-    } else if (isFile) {
-        stages = [
-            { title: 'قراءة وتحليل بنية الملف المرفق...', sub: 'فحص الشفرة والتنسيق' },
-            { title: 'استخراج البيانات والمعطيات الجوهرية...', sub: 'تحليل المحتوى دون افتراض ما ليس فيه' },
-            { title: 'تدقيق النتائج وتنظيم التقرير...', sub: 'إعداد الخلاصة التنفيذية' },
-            { title: 'أجهز النتيجة النهائية الدقيقة...', sub: 'اكتمال المراجعة' }
-        ];
-    } else if (isSkill) {
-        stages = [
-            { title: `أطبق المهارة النشطة: ${codoActiveSkillObj ? codoActiveSkillObj.name : 'مهارة معتمدة'}...`, sub: 'التزام كامل بقواعد المهارة' },
-            { title: 'معالجة المدخلات حسب شكل المخرجات المطلوب...', sub: 'تطبيق أدوات التحليل المقررة' },
-            { title: 'فحص القيود والتحقق من الجودة...', sub: 'منع الأخطاء والانحرافات' },
-            { title: 'أجهز المخرجات المنظمة...', sub: 'اكتمال المعالجة' }
-        ];
-    } else {
-        stages = [
-            { title: 'أفهم طلبك وسياق السؤال...', sub: 'معالجة لغوية تكتيكية' },
-            { title: 'أحلل التفاصيل واستخرج المعطيات...', sub: 'فحص بيانات المقر والقواعد' },
-            { title: 'أرتب الإجابة في نقاط وعناوين واضحة...', sub: 'صياغة مباشرة وموثوقة' },
-            { title: 'أجهز النتيجة النهائية...', sub: 'في خدمتك دائماً' }
-        ];
-    }
-
-    div.innerHTML = `
-        <div class="codo-thinking-box">
-            <svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style="animation: ghostBobShiver 2s ease-in-out infinite; filter: drop-shadow(0 0 15px rgba(0, 242, 254, 0.6));">
+    const customThinkingCode = localStorage.getItem('codo_custom_thinking_code');
+    const animationHtml = (customThinkingCode && customThinkingCode.trim())
+        ? `<div class="codo-custom-thinking-render">${customThinkingCode}</div>`
+        : `<svg width="68" height="68" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style="animation: ghostBobShiver 2s ease-in-out infinite; filter: drop-shadow(0 0 18px rgba(0, 242, 254, 0.7));">
                 <path class="ghost-outline" d="M50 15 C30 15 22 30 22 50 C22 72 20 85 28 85 C34 85 36 76 43 76 C50 76 52 85 58 85 C64 85 66 76 73 76 C80 76 82 85 88 85 C96 85 94 72 94 50 C94 30 86 15 50 15 Z" 
                       stroke="#00f2fe" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
                 <circle class="ghost-eye-left" cx="40" cy="46" r="5" />
                 <circle class="ghost-eye-right" cx="64" cy="46" r="5" />
-            </svg>
-            <div class="codo-thinking-stage-title" id="codo-dynamic-stage-title">
-                <span>⚡</span>
-                <span class="stage-text">${stages[0].title}</span>
-            </div>
-            <div class="codo-thinking-subtext" id="codo-dynamic-stage-sub">${stages[0].sub}</div>
-            <div class="codo-thinking-pulse-bar">
-                <div class="codo-thinking-pulse-fill"></div>
-            </div>
+            </svg>`;
+
+    div.innerHTML = `
+        <div class="codo-thinking-box">
+            ${animationHtml}
         </div>
     `;
 
-    let currentStageIndex = 0;
-    const intervalTimer = setInterval(() => {
-        currentStageIndex = (currentStageIndex + 1) % stages.length;
-        const titleEl = div.querySelector('.stage-text');
-        const subEl = div.querySelector('#codo-dynamic-stage-sub');
-        if (titleEl) titleEl.textContent = stages[currentStageIndex].title;
-        if (subEl) subEl.textContent = stages[currentStageIndex].sub;
-    }, 1800);
-
-    div.cleanup = () => clearInterval(intervalTimer);
+    div.cleanup = () => {};
     return div;
 }
+
+// 👻 إدارة مؤشر الانتظار المتمركز في منتصف مساحة الشات المستقلة
+let activeCodoTypingIndicator = null;
+
+function showCodoTypingIndicator(isResearch = false, isSkill = false, isFile = false, isImage = false, isPdf = false) {
+    hideCodoTypingIndicator();
+
+    const indicator = showDynamicTyping(isResearch, isSkill, isFile, isImage, isPdf);
+    activeCodoTypingIndicator = indicator;
+
+    let overlay = document.getElementById('codo-thinking-overlay');
+    if (!overlay) {
+        const stage = document.querySelector('.codo-messages-area-wrapper') || document.querySelector('.ghost-main-chat');
+        if (stage) {
+            overlay = document.createElement('div');
+            overlay.id = 'codo-thinking-overlay';
+            overlay.className = 'codo-thinking-overlay';
+            stage.appendChild(overlay);
+        }
+    }
+
+    if (overlay) {
+        overlay.innerHTML = '';
+        overlay.appendChild(indicator);
+        overlay.style.display = 'flex';
+    }
+    return indicator;
+}
+
+function hideCodoTypingIndicator() {
+    if (activeCodoTypingIndicator) {
+        if (typeof activeCodoTypingIndicator.cleanup === 'function') {
+            activeCodoTypingIndicator.cleanup();
+        }
+        if (activeCodoTypingIndicator.parentNode) {
+            activeCodoTypingIndicator.remove();
+        }
+        activeCodoTypingIndicator = null;
+    }
+    const overlay = document.getElementById('codo-thinking-overlay');
+    if (overlay) {
+        overlay.innerHTML = '';
+        overlay.style.display = 'none';
+    }
+    // تنظيف أي بقايا سابقة
+    document.querySelectorAll('.thinking-ghost-container').forEach(el => {
+        if (typeof el.cleanup === 'function') el.cleanup();
+        el.remove();
+    });
+}
+window.showCodoTypingIndicator = showCodoTypingIndicator;
+window.hideCodoTypingIndicator = hideCodoTypingIndicator;
 
 // 🚀 إرسال الرسالة إلى خادم CODO الذكي
 async function sendMessage() {
@@ -11037,19 +11053,14 @@ async function sendMessage() {
         activeSkillStatusEl.className = 'codo-skill-status-tag running';
     }
 
-    const body = document.getElementById('phantom-chat-body');
-    const typingIndicator = showDynamicTyping(
+    // إظهار مؤشر الانتظار المتمركز بدقة في منتصف مساحة الشات بدون أي صندوق أو حدود
+    showCodoTypingIndicator(
         codoWebSearchEnabled || codoDeepResearchEnabled,
         Boolean(codoActiveSkillId),
         Boolean(attachedFileBackup && !isImage && !isPdf),
         isImage,
         isPdf
     );
-
-    if (body) {
-        body.appendChild(typingIndicator);
-        body.scrollTop = body.scrollHeight;
-    }
 
     const stopBtn = document.getElementById('codo-stop-btn');
     if (stopBtn) stopBtn.style.display = 'inline-block';
@@ -11070,14 +11081,58 @@ async function sendMessage() {
             attachedFile: attachedFileBackup
         }, currentCodoAbortController ? currentCodoAbortController.signal : null);
 
-        if (typingIndicator && typingIndicator.cleanup) typingIndicator.cleanup();
-        if (typingIndicator && typingIndicator.parentNode) typingIndicator.remove();
+        // إخفاء مؤشر الانتظار فور ورود الرد
+        hideCodoTypingIndicator();
         if (stopBtn) stopBtn.style.display = 'none';
         if (sendBtn) sendBtn.disabled = false;
 
-        if (!response.ok) throw new Error("Server Error: " + response.status);
-        const data = await response.json();
-        const aiResponse = data.response || data.reply || "أهلاً بك يا بطل! أنا CODO في خدمتك دائماً.";
+        let data = null;
+        try {
+            data = await response.json();
+        } catch (jsonErr) {
+            console.warn("[CODO API] Response is not valid JSON");
+        }
+
+        // تشخيص آمن في الكونسول: مسار الـ Endpoint وحالة الاستجابة ونوع الخطأ بدون كشف أي مفاتيح
+        console.log(`[CODO API Diagnostic] Status: ${response.status} | OK: ${response.ok} | Success: ${data?.success !== false}`);
+
+        // التحقق من أخطاء الـ API سواء عبر status code أو حقل success أو وجود error
+        if (!response.ok || data?.success === false || (data && data.error && !data.response && !data.reply)) {
+            const rawError = data?.error || `HTTP ${response.status} ${response.statusText}`;
+            console.warn(`[CODO API Error] Status: ${response.status} | Type: ${rawError}`);
+
+            playCodoSound('error');
+            if (skillBackup && activeSkillStatusEl) {
+                activeSkillStatusEl.textContent = 'حدث خطأ';
+                activeSkillStatusEl.className = 'codo-skill-status-tag error';
+            }
+
+            // استعادة النص في حقل الإدخال لعدم إضاعة كتابة المستخدم
+            if (input && text) input.value = text;
+
+            // تحديد رسالة خطأ واضحة ومباشرة للمستخدم
+            let userErrorMsg = "";
+            if (rawError.includes("codo-chat") || rawError.includes("GEMINI_API_KEY") || (data?.reply && (data.reply.includes("codo-chat") || data.reply.includes("GEMINI_API_KEY")))) {
+                userErrorMsg = data.reply || "⚠️ تنبيه: يرجى التأكد من ضبط المفتاح في Supabase Secrets باسم codo-chat أو GEMINI_API_KEY لتفعيل CODO.";
+            } else if (response.status === 429 || rawError.includes("429") || rawError.includes("استنفاد") || rawError.includes("quota")) {
+                userErrorMsg = "⚠️ تم تجاوز كوتا الاستخدام المتاحة لـ Gemini حالياً. يرجى المحاولة بعد لحظات.";
+            } else if (response.status === 404) {
+                userErrorMsg = "⚠️ لم يتم العثور على دالة codo-chat في Supabase (404).";
+            } else if (data?.reply) {
+                userErrorMsg = data.reply;
+            } else {
+                userErrorMsg = `⚠️ تعذر استلام رد من خادم CODO (${response.status}): ${rawError}`;
+            }
+
+            showToast(userErrorMsg, "error");
+            addMessage(userErrorMsg, 'bot', true);
+            return;
+        }
+
+        const aiResponse = data?.response || data?.reply;
+        if (!aiResponse) {
+            throw new Error("لم يتم استلام نص في استجابة CODO.");
+        }
 
         if (skillBackup && activeSkillStatusEl) {
             if (data.usedSkill) {
@@ -11104,8 +11159,7 @@ async function sendMessage() {
 
         playCodoSound('receive');
     } catch (e) {
-        if (typingIndicator && typingIndicator.cleanup) typingIndicator.cleanup();
-        if (typingIndicator && typingIndicator.parentNode) typingIndicator.remove();
+        hideCodoTypingIndicator();
         if (stopBtn) stopBtn.style.display = 'none';
         if (sendBtn) sendBtn.disabled = false;
 
@@ -11115,18 +11169,29 @@ async function sendMessage() {
         }
 
         if (e.name === 'AbortError') {
-            console.log("Chat generation stopped by user.");
+            console.log("[CODO] Chat generation stopped by user.");
             addMessage("⏹️ تم إيقاف التوليد بناءً على طلبك.", 'bot', true);
             return;
         }
 
-        console.error("CODO AI Chat Error:", e);
+        console.error("[CODO Connection/CORS Error]:", e.message || e);
         playCodoSound('error');
 
         // استعادة النص المكتوب في حال حدوث خطأ حتى لا يضيع على المستخدم
         if (input && text) input.value = text;
-        showToast("⚠️ تعذر الاتصال بـ CODO، تم الاحتفاظ بنص رسالتك.", "error");
-        addMessage("⚠️ عذراً يا بطل، حدث تعذر مؤقت في الاتصال بـ CODO. تم الاحتفاظ برسالتك ويمكنك النقر على إرسال لإعادة المحاولة فوراً.", 'bot', true);
+
+        let displayErr = "⚠️ تعذر الاتصال بـ CODO. ";
+        if (e.message && (e.message.includes("Failed to fetch") || e.message.includes("NetworkError"))) {
+            displayErr += "فشل الاتصال بالخادم (يرجى التحقق من اتصال الإنترنت أو إعدادات CORS).";
+        } else if (e.name === 'TimeoutError' || (e.message && e.message.includes('timeout'))) {
+            displayErr += "انتهت مهلة انتظار الخادم قبل إتمام الرد.";
+        } else {
+            displayErr += (e.message || "حدث خطأ غير متوقع.");
+        }
+        displayErr += " تم الاحتفاظ بنص رسالتك.";
+
+        showToast("⚠️ تعذر الاتصال بـ CODO", "error");
+        addMessage(displayErr, 'bot', true);
     } finally {
         currentCodoAbortController = null;
     }
@@ -11139,11 +11204,7 @@ window.stopCodoGeneration = function() {
     }
     const stopBtn = document.getElementById('codo-stop-btn');
     if (stopBtn) stopBtn.style.display = 'none';
-    const typing = document.querySelector('.thinking-ghost-container');
-    if (typing) {
-        if (typing.cleanup) typing.cleanup();
-        if (typing.parentNode) typing.remove();
-    }
+    hideCodoTypingIndicator();
     showToast("⏹️ تم إيقاف المعالجة", "info");
 };
 
@@ -11189,6 +11250,10 @@ function openCodoChat() {
     const overlay = document.getElementById('phantom-chat-overlay');
     if (!overlay) return;
 
+    if (typeof hideCodoTypingIndicator === 'function') {
+        hideCodoTypingIndicator();
+    }
+
     overlay.style.display = 'flex';
     overlay.classList.add('open');
     document.body.style.overflow = 'hidden';
@@ -11205,12 +11270,26 @@ function openCodoChat() {
 
     const toggleHistoryBtn = document.getElementById('ghost-toggle-history-btn');
     const historySidebar = document.getElementById('ghost-history-sidebar');
+    const historyBackdrop = document.getElementById('ghost-history-backdrop');
     const sendBtn = document.getElementById('phantom-chat-send');
     const input = document.getElementById('phantom-chat-input');
 
+    // تأكد من بقاء السايدبار والقوائم المنسدلة مغلقة في البداية
+    if (historySidebar) historySidebar.classList.remove('open');
+    if (historyBackdrop) historyBackdrop.classList.remove('open');
+    const modelMenuInit = document.getElementById('codo-model-menu');
+    if (modelMenuInit) modelMenuInit.style.display = 'none';
+    const moreMenuInit = document.getElementById('codo-more-options-menu');
+    if (moreMenuInit) moreMenuInit.style.display = 'none';
+
     if (toggleHistoryBtn && historySidebar) {
-        toggleHistoryBtn.onclick = () => {
-            historySidebar.classList.toggle('open');
+        toggleHistoryBtn.onclick = (e) => {
+            if (e && e.stopPropagation) e.stopPropagation();
+            const isOpen = historySidebar.classList.toggle('open');
+            if (historyBackdrop) {
+                if (isOpen) historyBackdrop.classList.add('open');
+                else historyBackdrop.classList.remove('open');
+            }
         };
     }
 
@@ -11240,7 +11319,15 @@ function openCodoChat() {
     }
 }
 
-function closeCodoChat() {
+function closeCodoChat(e) {
+    if (e && e.stopPropagation) e.stopPropagation();
+    if (typeof hideCodoTypingIndicator === 'function') {
+        hideCodoTypingIndicator();
+    }
+    if (currentCodoAbortController) {
+        currentCodoAbortController.abort();
+        currentCodoAbortController = null;
+    }
     cleanupCodoMobileViewport();
     const overlay = document.getElementById('phantom-chat-overlay');
     if (overlay) {
@@ -11248,6 +11335,14 @@ function closeCodoChat() {
         overlay.style.display = 'none';
         overlay.style.height = '';
     }
+    const historySidebar = document.getElementById('ghost-history-sidebar');
+    if (historySidebar) historySidebar.classList.remove('open');
+    const historyBackdrop = document.getElementById('ghost-history-backdrop');
+    if (historyBackdrop) historyBackdrop.classList.remove('open');
+    const modelMenu = document.getElementById('codo-model-menu');
+    if (modelMenu) modelMenu.style.display = 'none';
+    const moreMenu = document.getElementById('codo-more-options-menu');
+    if (moreMenu) moreMenu.style.display = 'none';
     document.body.style.overflow = '';
 }
 
@@ -11270,7 +11365,236 @@ document.addEventListener('click', (e) => {
     }
 });
 
+// ==========================================
+// 📂 إدارة القائمة الجانبية لسجل محادثات CODO
+// ==========================================
+function closeGhostHistorySidebar() {
+    const sidebar = document.getElementById('ghost-history-sidebar');
+    if (sidebar) sidebar.classList.remove('open');
+    const backdrop = document.getElementById('ghost-history-backdrop');
+    if (backdrop) backdrop.classList.remove('open');
+}
+window.closeGhostHistorySidebar = closeGhostHistorySidebar;
+
+function openGhostHistorySidebar() {
+    const sidebar = document.getElementById('ghost-history-sidebar');
+    if (sidebar) sidebar.classList.add('open');
+    const backdrop = document.getElementById('ghost-history-backdrop');
+    if (backdrop) backdrop.classList.add('open');
+}
+window.openGhostHistorySidebar = openGhostHistorySidebar;
+
+// ==========================================
+// 🎨 نافذة تخصيص شكل انتظار CODO المخصص
+// ==========================================
+function openCodoThinkingCustomizer() {
+    const modal = document.getElementById('codo-thinking-customizer-modal');
+    if (!modal) return;
+
+    // إغلاق قائمة الخيارات الإضافية في الهيدر إذا كانت مفتوحة
+    const moreMenu = document.getElementById('codo-more-options-menu');
+    if (moreMenu) moreMenu.style.display = 'none';
+
+    modal.style.display = 'flex';
+
+    const input = document.getElementById('codo-custom-thinking-input');
+    const alertBox = document.getElementById('codo-custom-thinking-alert');
+    if (alertBox) alertBox.style.display = 'none';
+
+    const savedCode = localStorage.getItem('codo_custom_thinking_code') || '';
+    if (input) input.value = savedCode;
+
+    if (savedCode) {
+        previewCustomThinkingAnimation();
+    } else {
+        const preview = document.getElementById('codo-custom-thinking-preview-container');
+        if (preview) {
+            preview.innerHTML = '<div class="codo-preview-placeholder">اضغط على زر "معاينة" لتجربة شكل الحركة هنا</div>';
+        }
+    }
+}
+window.openCodoThinkingCustomizer = openCodoThinkingCustomizer;
+
+function closeCodoThinkingCustomizer() {
+    const modal = document.getElementById('codo-thinking-customizer-modal');
+    if (modal) modal.style.display = 'none';
+}
+window.closeCodoThinkingCustomizer = closeCodoThinkingCustomizer;
+
+function insertThinkingSample() {
+    const sample = `<div class="codo-custom-pulse">
+  <div class="pulse-ring"></div>
+  <div class="pulse-glow"></div>
+  <span class="pulse-icon">⚡</span>
+</div>
+<style>
+.codo-custom-pulse {
+  position: relative;
+  width: 70px;
+  height: 70px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+}
+.codo-custom-pulse .pulse-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid #00f2fe;
+  animation: codoPulseRing 1.5s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+.codo-custom-pulse .pulse-glow {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0,242,254,0.35) 0%, rgba(0,0,0,0) 70%);
+  animation: codoPulseGlow 1.5s ease-in-out infinite alternate;
+}
+.codo-custom-pulse .pulse-icon {
+  font-size: 1.6rem;
+  color: #00f2fe;
+  filter: drop-shadow(0 0 10px #00f2fe);
+  animation: codoIconFloat 1.5s ease-in-out infinite alternate;
+}
+@keyframes codoPulseRing {
+  0% { transform: scale(0.6); opacity: 1; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+@keyframes codoPulseGlow {
+  0% { transform: scale(0.8); opacity: 0.5; }
+  100% { transform: scale(1.2); opacity: 1; }
+}
+@keyframes codoIconFloat {
+  0% { transform: translateY(2px) scale(0.95); }
+  100% { transform: translateY(-2px) scale(1.05); }
+}
+</style>`;
+
+    const input = document.getElementById('codo-custom-thinking-input');
+    if (input) {
+        input.value = sample;
+        previewCustomThinkingAnimation();
+    }
+}
+window.insertThinkingSample = insertThinkingSample;
+
+function previewCustomThinkingAnimation() {
+    const input = document.getElementById('codo-custom-thinking-input');
+    const preview = document.getElementById('codo-custom-thinking-preview-container');
+    const alertBox = document.getElementById('codo-custom-thinking-alert');
+    if (!input || !preview) return false;
+
+    const rawCode = input.value.trim();
+    if (!rawCode) {
+        if (alertBox) {
+            alertBox.className = 'codo-customizer-alert';
+            alertBox.textContent = 'يرجى إدخال كود HTML/CSS أولاً للمعاينة';
+            alertBox.style.display = 'block';
+        }
+        preview.innerHTML = '<div class="codo-preview-placeholder">اضغط على زر "معاينة" لتجربة شكل الحركة هنا</div>';
+        return false;
+    }
+
+    // فحص الأمان ومنع أي شفرات تنفيذية ضارة
+    const dangerousPatterns = /<script\b|javascript:|onerror\s*=|onload\s*=|onclick\s*=|onmouseover\s*=|eval\s*\(|<iframe\b|<embed\b|<object\b|<form\b/i;
+    if (dangerousPatterns.test(rawCode)) {
+        if (alertBox) {
+            alertBox.className = 'codo-customizer-alert';
+            alertBox.textContent = '⚠️ تم حظر كود JavaScript أو الوسوم غير الآمنة. مسموح فقط بوسوم HTML العادية والتنسيقات <style>';
+            alertBox.style.display = 'block';
+        }
+        return false;
+    }
+
+    if (alertBox) alertBox.style.display = 'none';
+    preview.innerHTML = rawCode;
+    return true;
+}
+window.previewCustomThinkingAnimation = previewCustomThinkingAnimation;
+
+function applyCustomThinkingAnimation() {
+    const input = document.getElementById('codo-custom-thinking-input');
+    const alertBox = document.getElementById('codo-custom-thinking-alert');
+    if (!input) return;
+
+    const rawCode = input.value.trim();
+    if (!rawCode) {
+        resetDefaultThinkingAnimation();
+        return;
+    }
+
+    const isValid = previewCustomThinkingAnimation();
+    if (!isValid) return;
+
+    try {
+        localStorage.setItem('codo_custom_thinking_code', rawCode);
+        if (alertBox) {
+            alertBox.className = 'codo-customizer-alert success';
+            alertBox.textContent = '✅ تم تطبيق وحفظ شكل الانتظار الجديد بنجاح!';
+            alertBox.style.display = 'block';
+        }
+        if (typeof showToast === 'function') {
+            showToast('✅ تم تطبيق شكل انتظار CODO بنجاح', 'success');
+        }
+        setTimeout(() => {
+            closeCodoThinkingCustomizer();
+        }, 600);
+    } catch (e) {
+        if (alertBox) {
+            alertBox.className = 'codo-customizer-alert';
+            alertBox.textContent = '⚠️ تعذر حفظ الشكل في الذاكرة المحلية';
+            alertBox.style.display = 'block';
+        }
+    }
+}
+window.applyCustomThinkingAnimation = applyCustomThinkingAnimation;
+
+function resetDefaultThinkingAnimation() {
+    try {
+        localStorage.removeItem('codo_custom_thinking_code');
+    } catch (e) {}
+
+    const input = document.getElementById('codo-custom-thinking-input');
+    if (input) input.value = '';
+
+    const alertBox = document.getElementById('codo-custom-thinking-alert');
+    if (alertBox) {
+        alertBox.className = 'codo-customizer-alert success';
+        alertBox.textContent = '🔄 تمت إعادة شكل انتظار CODO الافتراضي';
+        alertBox.style.display = 'block';
+    }
+
+    const preview = document.getElementById('codo-custom-thinking-preview-container');
+    if (preview) {
+        preview.innerHTML = '<div class="codo-preview-placeholder">تمت إعادة شكل حركة الانتظار الافتراضي (شبح CODO)</div>';
+    }
+
+    if (typeof showToast === 'function') {
+        showToast('🔄 تمت استعادة شكل حركة الانتظار الافتراضي', 'info');
+    }
+    setTimeout(() => {
+        closeCodoThinkingCustomizer();
+    }, 600);
+}
+window.resetDefaultThinkingAnimation = resetDefaultThinkingAnimation;
+
 // توافقية كاملة للدوال
+function toggleGhostMenu() {
+    const menu = document.getElementById('phantom-ghost-menu');
+    if (menu) {
+        menu.style.display = (menu.style.display === 'block') ? 'none' : 'block';
+    }
+}
+window.toggleGhostMenu = toggleGhostMenu;
+
+function closeGhostMenu() {
+    const menu = document.getElementById('phantom-ghost-menu');
+    if (menu) menu.style.display = 'none';
+}
+window.closeGhostMenu = closeGhostMenu;
+
 window.openCodoChat = openCodoChat;
 window.closeCodoChat = closeCodoChat;
 window.clearCodoChat = clearCodoChat;

@@ -28,14 +28,19 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // 2. قراءة مفتاح Gemini الآمن من متغيرات البيئة
-    const apiKey = Deno.env.get("GEMINI_API_KEY");
+    // 2. قراءة مفتاح Gemini الآمن من متغيرات البيئة (دعم codo-chat و CODO_CHAT و GEMINI_API_KEY)
+    const apiKey = Deno.env.get("codo-chat") 
+      || Deno.env.get("CODO_CHAT") 
+      || Deno.env.get("codo_chat") 
+      || Deno.env.get("CODO-CHAT")
+      || Deno.env.get("GEMINI_API_KEY");
+
     if (!apiKey) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: "لم يتم العثور على GEMINI_API_KEY في Supabase Secrets. يرجى إضافته في إعدادات Edge Functions.",
-          reply: "⚠️ تنبيه: مفتاح GEMINI_API_KEY غير مضبوط في إعدادات Supabase Secrets."
+          error: "لم يتم العثور على مفتاح الذكاء الاصطناعي باسم codo-chat أو GEMINI_API_KEY في Supabase Secrets. يرجى إضافته في إعدادات Edge Functions.",
+          reply: "⚠️ تنبيه: لم يتم العثور على سر codo-chat في إعدادات Supabase Secrets."
         }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -96,6 +101,10 @@ Deno.serve(async (req: Request) => {
           data: base64Data
         }
       });
+    } else if (attachedFile && attachedFile.content) {
+      userParts.push({
+        text: `[محتوى الملف المرفق: ${attachedFile.name || 'ملف نصي'}]\n${attachedFile.content}`
+      });
     }
 
     userParts.push({
@@ -108,7 +117,7 @@ Deno.serve(async (req: Request) => {
     });
 
     // 5. استدعاء Gemini API مع المحاولة على النماذج المتاحة
-    const candidateModels = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"];
+    const candidateModels = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
     let finalReply = "";
     let usedModel = "";
     let lastError: unknown = null;
@@ -119,7 +128,7 @@ Deno.serve(async (req: Request) => {
         const geminiRes = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(22000),
+          signal: AbortSignal.timeout(25000),
           body: JSON.stringify({
             systemInstruction: {
               parts: [{ text: SYSTEM_INSTRUCTION }]
@@ -144,10 +153,11 @@ Deno.serve(async (req: Request) => {
         } else {
           const errBody = await geminiRes.text();
           console.warn(`Gemini model ${model} failed with status ${geminiRes.status}:`, errBody);
-          // إذا كان الخطأ متعلقًا بنفاذ الحصة 429
           if (geminiRes.status === 429) {
             lastError = "تم استنفاد كوتا الاستخدام المتاحة لـ Gemini.";
             break;
+          } else {
+            lastError = `خطأ ${geminiRes.status}: ${errBody.slice(0, 150)}`;
           }
         }
       } catch (err) {
@@ -157,7 +167,17 @@ Deno.serve(async (req: Request) => {
     }
 
     if (!finalReply) {
-      finalReply = "⚡ عذراً يا بطل! خادم الذكاء الاصطناعي يواجه ضغطاً لحظياً أو انتهت حصة المفتاح. يرجى المحاولة بعد لحظات.";
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: lastError ? String(lastError) : "فشل استدعاء نماذج Gemini أو تم استنفاد الحصة.",
+          reply: "⚠️ تعذر الاتصال بنماذج الذكاء الاصطناعي حالياً. يرجى التأكد من صلاحية مفتاح GEMINI_API_KEY في Supabase Secrets أو المحاولة لاحقاً."
+        }),
+        {
+          status: 502,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     }
 
     return new Response(
@@ -165,8 +185,8 @@ Deno.serve(async (req: Request) => {
         success: true,
         response: finalReply,
         reply: finalReply,
-        model: usedModel || "gemini-fallback",
-        error: lastError ? String(lastError) : null
+        model: usedModel || "gemini-2.0-flash",
+        error: null
       }),
       {
         status: 200,
