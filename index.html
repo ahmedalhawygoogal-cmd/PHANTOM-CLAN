@@ -207,7 +207,11 @@
             <div class="whatsapp-chat-header">
                 <div class="wa-avatar">『PH』</div>
                 <div class="wa-header-info"><h3>شات كلان PHANTOM</h3><div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;"><span class="wa-status-text">متصل الآن</span><span id="chat-online-counter" style="font-size:0.7rem; color:var(--silver-muted);">0 متصلين حالياً</span></div></div>
-                <button id="voice-call-btn" class="icon-btn-call" type="button" style="background:transparent; border:none; color:var(--cyan); font-size:1.2rem; cursor:pointer; margin-right:auto;">📞</button>
+                <div id="chat-call-header-group" class="chat-call-header-group" style="margin-right:auto; display:flex; align-items:center; gap:6px;">
+                    <button id="voice-call-btn" class="icon-btn-call" type="button" style="background:transparent; border:none; color:var(--cyan); font-size:1.2rem; cursor:pointer;" title="بدء مكالمة صوت وفيديو جماعية">📞</button>
+                    <button id="chat-call-join-btn" class="chat-call-join-btn-header" type="button" style="display:none;" onclick="handleChatCallJoinClick()" title="انضمام للمكالمة النشطة الآن">انضمام</button>
+                    <span id="chat-call-ended-status" class="chat-call-ended-status" style="display:none;">انتهت المكالمة</span>
+                </div>
             </div>
             <div class="chat-wrapper-card whatsapp-style-card">
                 <div id="chat-messages-container" class="chat-bubbles-area whatsapp-messages-area"></div>
@@ -2558,19 +2562,32 @@
 
     <!-- 1️⃣ قسم المكالمة المباشرة داخل التطبيق 100% -->
     <div id="inapp-call-section" style="display:block;">
-        <div style="position:relative; width:100%; height:200px; background:#05080f; border-radius:12px; overflow:hidden; border:1px solid rgba(0,242,254,0.3); margin-bottom:12px; display:flex; align-items:center; justify-content:center;">
-            <video id="inapp-clan-video" autoplay playsinline muted style="width:100%; height:100%; object-fit:cover; display:none;"></video>
-            
-            <div id="inapp-video-placeholder" style="display:flex; flex-direction:column; align-items:center; justify-content:center; color:#9ca3af; gap:8px; padding:12px;">
-                <span style="font-size:2.4rem;">🎙️📹</span>
-                <span id="inapp-status-text" style="font-size:0.9rem; color:#e2e8f0; font-weight:700;">المكالمة جاهزة للبدء داخل المقر</span>
-                <small style="color:#64748b; font-size:0.75rem;">تواصل بصوت وصورة مباشرة مع السكواد دون الخروج من التطبيق</small>
+        <div id="inapp-video-grid" class="inapp-video-grid">
+            <!-- مساحة الفيديو المحلي -->
+            <div id="local-video-tile" class="video-tile local-tile">
+                <div id="local-video-container" class="video-container" style="width:100%; height:100%;">
+                    <video id="inapp-clan-video" autoplay playsinline muted style="width:100%; height:100%; object-fit:cover; display:none;"></video>
+                </div>
+                
+                <div id="inapp-video-placeholder" style="display:flex; flex-direction:column; align-items:center; justify-content:center; color:#9ca3af; gap:8px; padding:12px; position:absolute; inset:0;">
+                    <span style="font-size:2.4rem;">🎙️📹</span>
+                    <span id="inapp-status-text" style="font-size:0.9rem; color:#e2e8f0; font-weight:700;">المكالمة جاهزة للبدء داخل المقر</span>
+                    <small style="color:#64748b; font-size:0.75rem;">تواصل بصوت وصورة مباشرة مع السكواد</small>
+                </div>
+
+                <!-- شارة الحالة الحية -->
+                <div id="inapp-live-badge" style="display:none; position:absolute; top:8px; right:8px; background:rgba(0,255,136,0.2); border:1px solid #00ff88; color:#00ff88; padding:3px 8px; border-radius:12px; font-size:0.75rem; font-weight:800; z-index:4;">
+                    🟢 مباشر الآن
+                </div>
+
+                <div class="video-tile-name-badge">
+                    <span id="local-tile-user-name">أنت</span>
+                    <span id="local-mic-status-icon">🎙️</span>
+                </div>
             </div>
 
-            <!-- شارة الحالة الحية -->
-            <div id="inapp-live-badge" style="display:none; position:absolute; top:8px; right:8px; background:rgba(0,255,136,0.2); border:1px solid #00ff88; color:#00ff88; padding:3px 8px; border-radius:12px; font-size:0.75rem; font-weight:800;">
-                🟢 مباشر الآن
-            </div>
+            <!-- حاوية فيديوهات المشاركين الآخرين المباشرة (تضاف تلقائياً عند انضمام أي عضو) -->
+            <div id="remote-video-tiles" style="display:contents;"></div>
         </div>
 
         <!-- أزرار التحكم بالمكالمة داخل التطبيق -->
