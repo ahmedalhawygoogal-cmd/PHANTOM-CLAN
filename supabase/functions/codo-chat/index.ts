@@ -11,7 +11,7 @@ const SYSTEM_INSTRUCTION = `أنت CODO، المساعد الذكي التكتي
 1. خبير في الألعاب التنافسية، تكتيكات الرومات، إدارة السكوادات، وقواعد الكلان.
 2. أسلوبك حماسي، محترم، عسكري تكتيكي، وداعم لأعضاء الكلان.
 3. تجيب باللغة العربية بأسلوب راقٍ ومنظم باستخدام نقاط وعناوين واضحة ورموز تعبيرية ملائمة.
-4. لديك قدرة على تحليل الصور والمستندات والبرمجة وحل المشكلات الفنية.
+4. لديك قدرة على تحليل المستندات والبرمجة وحل المشكلات الفنية.
 5. في حال سألك العضو عن قوانين الكلان، أكد على الالتزام بشعار 『PH』، والروح الرياضية، ومنع الغش، وطاعة القيادة.`;
 
 Deno.serve(async (req: Request) => {
@@ -22,25 +22,29 @@ Deno.serve(async (req: Request) => {
 
   if (req.method !== "POST") {
     return new Response(
-      JSON.stringify({ error: "Method not allowed. Use POST." }),
+      JSON.stringify({ 
+        success: false, 
+        error: "Method not allowed. Use POST.",
+        reply: "⚠️ طريقة الطلب غير مدعومة." 
+      }),
       { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 
   try {
-    // 2. قراءة مفتاح Gemini الآمن من متغيرات البيئة (دعم codo-chat و CODO_CHAT و GEMINI_API_KEY)
-    const apiKey = Deno.env.get("codo-chat") 
-      || Deno.env.get("CODO_CHAT") 
-      || Deno.env.get("codo_chat") 
-      || Deno.env.get("CODO-CHAT")
-      || Deno.env.get("GEMINI_API_KEY");
+    // 2. قراءة مفتاح Groq حصراً من Secret الموجود في Supabase
+    const apiKey = Deno.env.get("GROQ_API_KEY")
+      || Deno.env.get("groq_api_key")
+      || Deno.env.get("GROQ_KEY")
+      || Deno.env.get("codo-chat");
 
     if (!apiKey) {
+      console.error("[Groq Error] GROQ_API_KEY secret is missing in Supabase Secrets.");
       return new Response(
         JSON.stringify({
           success: false,
-          error: "لم يتم العثور على مفتاح الذكاء الاصطناعي باسم codo-chat أو GEMINI_API_KEY في Supabase Secrets. يرجى إضافته في إعدادات Edge Functions.",
-          reply: "⚠️ تنبيه: لم يتم العثور على سر codo-chat في إعدادات Supabase Secrets."
+          error: "لم يتم العثور على مفتاح GROQ_API_KEY في Supabase Secrets. يرجى إضافته في إعدادات Edge Functions.",
+          reply: "⚠️ تنبيه: لم يتم العثور على مفتاح GROQ_API_KEY في إعدادات Supabase Secrets."
         }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -56,136 +60,180 @@ Deno.serve(async (req: Request) => {
       return new Response(
         JSON.stringify({
           success: false,
-          error: "الرسالة أو الملف المرفق مطلوب."
+          error: "الرسالة أو الملف المرفق مطلوب.",
+          reply: "⚠️ يرجى كتابة رسالة أو إرفاق ملف للبدء."
         }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // 4. بناء هيكل المحادثة لـ Gemini API
-    const contents: Array<{ role: string; parts: Array<Record<string, unknown>> }> = [];
+    // 4. فحص نوع الملف المرفق (صور أو مستندات نصية)
+    const isImageAttachment = Boolean(
+      attachedFile && (
+        (attachedFile.type && attachedFile.type.startsWith("image/")) ||
+        (attachedFile.mimeType && attachedFile.mimeType.startsWith("image/")) ||
+        (typeof attachedFile.data === "string" && attachedFile.data.startsWith("data:image/"))
+      )
+    );
 
-    // إضافة سجل المحادثة السابق (آخر 6 رسائل لتوفير التوكنات)
+    // 5. بناء هيكل الرسائل المتوافق مع Groq Chat Completions API
+    const messages: Array<{ role: string; content: string | Array<Record<string, unknown>> }> = [
+      { role: "system", content: SYSTEM_INSTRUCTION }
+    ];
+
+    // إضافة سجل المحادثة السابق (آخر 6 رسائل لسرعة الاستجابة وتوفير التوكنات)
     const recentHistory = history.slice(-6);
     for (const h of recentHistory) {
-      const role = (h.role === "model" || h.role === "bot" || h.role === "assistant") ? "model" : "user";
-      const text = h.text || h.content || "";
+      const role = (h.role === "model" || h.role === "bot" || h.role === "assistant") ? "assistant" : "user";
+      const text = typeof h.text === "string" ? h.text : (typeof h.content === "string" ? h.content : "");
       if (text) {
-        contents.push({
-          role: role,
-          parts: [{ text: text }]
-        });
+        messages.push({ role: role, content: text });
       }
     }
 
-    // تجهيز رسالة المستخدم الحالية
-    const userParts: Array<Record<string, unknown>> = [];
-
-    // دعم المرفقات (صور أو ملفات PDF عبر Base64)
-    if (attachedFile && attachedFile.data) {
-      let base64Data = attachedFile.data as string;
-      let mimeType = attachedFile.type || attachedFile.mimeType || "image/jpeg";
-
-      if (base64Data.includes(",")) {
-        const splitted = base64Data.split(",");
-        base64Data = splitted[1];
-        const meta = splitted[0];
-        if (meta.includes(":") && meta.includes(";")) {
-          mimeType = meta.split(":")[1].split(";")[0];
-        }
-      }
-
-      userParts.push({
-        inlineData: {
-          mimeType: mimeType,
-          data: base64Data
-        }
-      });
-    } else if (attachedFile && attachedFile.content) {
-      userParts.push({
-        text: `[محتوى الملف المرفق: ${attachedFile.name || 'ملف نصي'}]\n${attachedFile.content}`
-      });
+    // إعداد محتوى رسالة المستخدم الحالية
+    let userPromptText = message;
+    if (attachedFile && attachedFile.content && typeof attachedFile.content === "string") {
+      userPromptText += `\n\n[محتوى الملف المرفق: ${attachedFile.name || 'ملف نصي'}]\n${attachedFile.content}`;
     }
 
-    userParts.push({
-      text: message || (attachedFile ? "يرجى فحص وتحليل هذا الملف المرفق بالتفصيل." : "مرحبًا CODO.")
-    });
+    if (!userPromptText && !isImageAttachment) {
+      userPromptText = "مرحبًا CODO.";
+    }
 
-    contents.push({
-      role: "user",
-      parts: userParts
-    });
+    // تحديد النماذج المرشحة بناءً على وجود صورة أو نص فقط
+    // نموذج المحادثة الرئيسي السريع والدقيق في العربية: llama-3.3-70b-versatile
+    // نموذج الرؤية للصور: llama-3.2-11b-vision-preview
+    let candidateModels: string[];
+    let userMessagePayload: { role: string; content: string | Array<Record<string, unknown>> };
 
-    // 5. استدعاء Gemini API مع المحاولة على النماذج المتاحة
-    const candidateModels = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
+    if (isImageAttachment && attachedFile.data) {
+      let imageDataUrl = attachedFile.data as string;
+      if (!imageDataUrl.startsWith("data:")) {
+        const mime = attachedFile.type || attachedFile.mimeType || "image/jpeg";
+        imageDataUrl = `data:${mime};base64,${imageDataUrl}`;
+      }
+
+      candidateModels = ["llama-3.2-11b-vision-preview", "llama-3.2-90b-vision-preview"];
+      userMessagePayload = {
+        role: "user",
+        content: [
+          { type: "text", text: userPromptText || "يرجى تحليل هذه الصورة التكتيكية واستخراج التفاصيل منها بدقة." },
+          { type: "image_url", image_url: { url: imageDataUrl } }
+        ]
+      };
+    } else {
+      candidateModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+      userMessagePayload = {
+        role: "user",
+        content: userPromptText
+      };
+    }
+
+    messages.push(userMessagePayload);
+
+    // 6. استدعاء Groq Chat Completions API
+    const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
     let finalReply = "";
     let usedModel = "";
-    let lastError: unknown = null;
+    let lastError: string | null = null;
+    let lastStatusCode = 502;
 
     for (const model of candidateModels) {
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-        const geminiRes = await fetch(url, {
+        const groqRes = await fetch(GROQ_API_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+          },
           signal: AbortSignal.timeout(25000),
           body: JSON.stringify({
-            systemInstruction: {
-              parts: [{ text: SYSTEM_INSTRUCTION }]
-            },
-            contents: contents,
-            generationConfig: {
-              temperature: 0.7,
-              maxOutputTokens: 2048
-            }
+            model: model,
+            messages: messages,
+            temperature: 0.7,
+            max_tokens: 2048
           })
         });
 
-        if (geminiRes.ok) {
-          const resData = await geminiRes.json();
-          const candidate = resData.candidates?.[0];
-          const textPart = candidate?.content?.parts?.[0]?.text;
-          if (textPart && typeof textPart === "string") {
-            finalReply = textPart.trim();
+        if (groqRes.ok) {
+          const resData = await groqRes.json();
+          const choice = resData.choices?.[0];
+          const replyText = choice?.message?.content;
+          if (replyText && typeof replyText === "string") {
+            finalReply = replyText.trim();
             usedModel = model;
             break;
           }
         } else {
-          const errBody = await geminiRes.text();
-          console.warn(`Gemini model ${model} failed with status ${geminiRes.status}:`, errBody);
-          if (geminiRes.status === 429) {
-            lastError = "تم استنفاد كوتا الاستخدام المتاحة لـ Gemini.";
-            break;
+          lastStatusCode = groqRes.status;
+          const errText = await groqRes.text().catch(() => "");
+          console.error(`[Groq Error] Model ${model} returned status ${groqRes.status}:`, errText);
+
+          if (groqRes.status === 401) {
+            lastError = "مفتاح GROQ_API_KEY غير صالح أو منتهي الصلاحية.";
+            break; // لا فائدة من تجربة نماذج أخرى بنفس المفتاح غير الصالح
+          } else if (groqRes.status === 429) {
+            lastError = "تم تجاوز حد الاستخدام المتاح (Rate Limit) على منصة Groq.";
+          } else if (groqRes.status === 404) {
+            lastError = `النموذج ${model} غير متاح في الوقت الحالي.`;
           } else {
-            lastError = `خطأ ${geminiRes.status}: ${errBody.slice(0, 150)}`;
+            lastError = `خطأ ${groqRes.status} من Groq: ${errText.slice(0, 150)}`;
           }
         }
-      } catch (err) {
-        lastError = err;
-        console.warn(`Call to ${model} threw error:`, err);
+      } catch (err: any) {
+        console.error(`[Groq Network Error] Model ${model} request failed:`, err?.message || err);
+        if (err.name === "TimeoutError" || err.message?.includes("Timeout")) {
+          lastStatusCode = 504;
+          lastError = "انتهت مهلة الاتصال بخوادم Groq دون رد.";
+        } else {
+          lastError = err?.message || "فشل الاتصال بشبكة Groq.";
+        }
       }
+    }
+
+    // إذا فشل تحليل الصورة لأن النموذج غير مدعوم
+    if (!finalReply && isImageAttachment) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: lastError || "نموذج الرؤية في Groq غير متاح حالياً للصور.",
+          reply: "⚠️ عذراً، تحليل الصور غير متاح حالياً عبر نموذج Groq. يرجى إرسال استفسارك نصياً.",
+          response: null,
+          model: null
+        }),
+        {
+          status: lastStatusCode,
+          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        }
+      );
     }
 
     if (!finalReply) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: lastError ? String(lastError) : "فشل استدعاء نماذج Gemini أو تم استنفاد الحصة.",
-          reply: "⚠️ تعذر الاتصال بنماذج الذكاء الاصطناعي حالياً. يرجى التأكد من صلاحية مفتاح GEMINI_API_KEY في Supabase Secrets أو المحاولة لاحقاً."
+          error: lastError || "فشل استدعاء نماذج Groq أو لم يتم الحصول على رد صالح.",
+          reply: lastStatusCode === 401 
+            ? "⚠️ تنبيه: مفتاح GROQ_API_KEY في Supabase Secrets غير صالح." 
+            : "⚠️ تعذر الاتصال بنماذج Groq حالياً. يرجى المحاولة لاحقاً.",
+          response: null,
+          model: null
         }),
         {
-          status: 502,
+          status: lastStatusCode,
           headers: { ...corsHeaders, "Content-Type": "application/json" }
         }
       );
     }
 
+    // 7. إعادة الرد بالصيغة المعتمدة للواجهة
     return new Response(
       JSON.stringify({
         success: true,
         response: finalReply,
         reply: finalReply,
-        model: usedModel || "gemini-2.0-flash",
+        model: usedModel,
         error: null
       }),
       {
@@ -195,12 +243,14 @@ Deno.serve(async (req: Request) => {
     );
 
   } catch (globalErr: any) {
-    console.error("Critical error in codo-chat Edge Function:", globalErr);
+    console.error("[Groq Fatal Error] Critical error in codo-chat Edge Function:", globalErr);
     return new Response(
       JSON.stringify({
         success: false,
         error: globalErr?.message || "Internal Edge Function Error",
-        reply: "⚠️ حدث خطأ داخلي أثناء معالجة طلب CODO."
+        reply: "⚠️ حدث خطأ داخلي أثناء معالجة طلب CODO عبر Groq.",
+        response: null,
+        model: null
       }),
       {
         status: 500,

@@ -11236,14 +11236,14 @@ async function sendMessage() {
 
             // تحديد رسالة خطأ واضحة ومباشرة للمستخدم
             let userErrorMsg = "";
-            if (rawError.includes("codo-chat") || rawError.includes("GEMINI_API_KEY") || (data?.reply && (data.reply.includes("codo-chat") || data.reply.includes("GEMINI_API_KEY")))) {
-                userErrorMsg = data.reply || "⚠️ تنبيه: يرجى التأكد من ضبط المفتاح في Supabase Secrets باسم codo-chat أو GEMINI_API_KEY لتفعيل CODO.";
-            } else if (response.status === 429 || rawError.includes("429") || rawError.includes("استنفاد") || rawError.includes("quota")) {
-                userErrorMsg = "⚠️ تم تجاوز كوتا الاستخدام المتاحة لـ Gemini حالياً. يرجى المحاولة بعد لحظات.";
+            if (data?.reply) {
+                userErrorMsg = data.reply;
+            } else if (response.status === 401 || rawError.includes("401") || rawError.includes("GROQ_API_KEY")) {
+                userErrorMsg = "⚠️ تنبيه: يرجى التأكد من ضبط مفتاح GROQ_API_KEY في Supabase Secrets.";
+            } else if (response.status === 429 || rawError.includes("429") || rawError.includes("Rate Limit")) {
+                userErrorMsg = "⚠️ تم تجاوز حد الاستخدام المتاح على Groq حالياً. يرجى المحاولة بعد لحظات.";
             } else if (response.status === 404) {
                 userErrorMsg = "⚠️ لم يتم العثور على دالة codo-chat في Supabase (404).";
-            } else if (data?.reply) {
-                userErrorMsg = data.reply;
             } else {
                 userErrorMsg = `⚠️ تعذر استلام رد من خادم CODO (${response.status}): ${rawError}`;
             }
