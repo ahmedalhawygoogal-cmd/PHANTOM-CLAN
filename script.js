@@ -4349,6 +4349,7 @@ function setupAgoraClientEvents() {
     if (typeof window === "undefined" || !window.AgoraRTC) {
         throw new Error("مكتبة AgoraRTC غير محملة.");
     }
+    configureAgoraRtcInstance(window.AgoraRTC);
     agoraClient = window.AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
 
     // 1. الاشتراك التلقائي في فيديو وصوت كل مشارك ينشر مساره
@@ -4738,12 +4739,32 @@ async function fetchAgoraToken(channelName, uid) {
 }
 
 /**
+ * إعداد مكتبة Agora Web SDK وإيقاف الرسائل الداخلية المزعجة لمنع إطلاق أخطاء وهمية في الكونسول
+ */
+function configureAgoraRtcInstance(rtc) {
+    if (!rtc) return;
+    try {
+        if (typeof rtc.setLogLevel === "function") {
+            rtc.setLogLevel(4); // 4 = NONE (تعطيل رسائل الخطأ الداخلية للـ SDK عند عدم توفر المايك أو رفض الصلاحية)
+        }
+        if (typeof rtc.disableLogUpload === "function") {
+            rtc.disableLogUpload();
+        }
+    } catch (_) {}
+}
+
+if (typeof window !== "undefined" && window.AgoraRTC) {
+    configureAgoraRtcInstance(window.AgoraRTC);
+}
+
+/**
  * التحقق من تحميل مكتبة Agora Web SDK والتأكد من وجود window.AgoraRTC مع مهلة 10 ثوانٍ ودعم CDN احتياطي
  */
 let agoraLoadingPromise = null;
 
 async function ensureAgoraRtcLoaded(timeoutMs = 10000) {
     if (typeof window !== "undefined" && window.AgoraRTC) {
+        configureAgoraRtcInstance(window.AgoraRTC);
         return window.AgoraRTC;
     }
 
@@ -4756,6 +4777,7 @@ async function ensureAgoraRtcLoaded(timeoutMs = 10000) {
         let elapsed = 0;
 
         if (typeof window !== "undefined" && window.AgoraRTC) {
+            configureAgoraRtcInstance(window.AgoraRTC);
             resolve(window.AgoraRTC);
             return;
         }
@@ -4763,6 +4785,7 @@ async function ensureAgoraRtcLoaded(timeoutMs = 10000) {
         const timer = setInterval(() => {
             if (typeof window !== "undefined" && window.AgoraRTC) {
                 clearInterval(timer);
+                configureAgoraRtcInstance(window.AgoraRTC);
                 resolve(window.AgoraRTC);
                 return;
             }
@@ -4788,6 +4811,7 @@ async function ensureAgoraRtcLoaded(timeoutMs = 10000) {
             script.onload = () => {
                 if (typeof window !== "undefined" && window.AgoraRTC) {
                     clearInterval(timer);
+                    configureAgoraRtcInstance(window.AgoraRTC);
                     resolve(window.AgoraRTC);
                 }
             };
@@ -4802,6 +4826,7 @@ async function ensureAgoraRtcLoaded(timeoutMs = 10000) {
                 fallbackScript.onload = () => {
                     if (typeof window !== "undefined" && window.AgoraRTC) {
                         clearInterval(timer);
+                        configureAgoraRtcInstance(window.AgoraRTC);
                         resolve(window.AgoraRTC);
                     }
                 };
@@ -4909,16 +4934,39 @@ async function joinAgoraRoom() {
             throw new Error(joinMsg);
         }
 
-        // 4. إنشاء ونشر مسار المايكروفون
+        // 4. إنشاء ونشر مسار المايكروفون مع التحقق المسبق من الصلاحيات لمنع انهيار المكالمة
+        let micPermissionBlocked = false;
         try {
-            if (!agoraLocalAudioTrack) {
-                agoraLocalAudioTrack = await (window.AgoraRTC || AgoraRTC).createMicrophoneAudioTrack();
+            if (navigator.permissions && typeof navigator.permissions.query === "function") {
+                const pStatus = await navigator.permissions.query({ name: "microphone" }).catch(() => null);
+                if (pStatus && pStatus.state === "denied") {
+                    micPermissionBlocked = true;
+                }
             }
-            await agoraClient.publish([agoraLocalAudioTrack]);
-            isAgoraMicMuted = false;
-        } catch (micErr) {
-            console.warn("Microphone access denied for Agora:", micErr);
-            showToast("🎧 متصل بغرفة Agora في وضع الاستماع (المايك غير مفعل)", "info");
+        } catch (_) {}
+
+        if (micPermissionBlocked) {
+            console.warn("[Agora] Microphone permission is explicitly denied by browser.");
+            isAgoraMicMuted = true;
+            updateAgoraMicButtonUI(false, "صلاحية المايك محظورة");
+            showToast("🎧 متصل بغرفة Agora في وضع الاستماع (صلاحية المايك محظورة في المتصفح).", "info");
+        } else {
+            try {
+                if (!agoraLocalAudioTrack) {
+                    agoraLocalAudioTrack = await (window.AgoraRTC || AgoraRTC).createMicrophoneAudioTrack();
+                }
+                if (agoraLocalAudioTrack && agoraClient && isAgoraJoined) {
+                    await agoraClient.publish([agoraLocalAudioTrack]);
+                }
+                isAgoraMicMuted = false;
+                updateAgoraMicButtonUI(true);
+            } catch (micErr) {
+                console.warn("[Agora] Microphone track creation skipped/denied:", micErr);
+                isAgoraMicMuted = true;
+                const isDenied = micErr && (micErr.name === "NotAllowedError" || (micErr.message && (micErr.message.includes("Permission denied") || micErr.message.includes("NotAllowedError"))));
+                updateAgoraMicButtonUI(false, isDenied ? "صلاحية المايك مرفوضة" : "المايك مغلق");
+                showToast("🎧 متصل بغرفة Agora في وضع الاستماع (المايك غير مفعل). انقر زر المايك عند منح الصلاحية.", "info");
+            }
         }
 
         // 5. تحديث واجهة المستخدم
@@ -4960,6 +5008,22 @@ async function joinAgoraRoom() {
     }
 }
 
+function updateAgoraMicButtonUI(isActive, customLabel) {
+    const btn = document.getElementById("agora-mic-btn");
+    if (!btn) return;
+    if (isActive) {
+        btn.innerHTML = "🎙️ المايك: شغال";
+        btn.style.color = "#fff";
+        btn.style.borderColor = "rgba(0, 255, 136, 0.4)";
+        btn.style.background = "rgba(0, 255, 136, 0.12)";
+    } else {
+        btn.innerHTML = customLabel ? `🔇 ${customLabel}` : "🔇 المايك: مكتوم";
+        btn.style.color = "#ef4444";
+        btn.style.borderColor = "rgba(239, 68, 68, 0.4)";
+        btn.style.background = "rgba(239, 68, 68, 0.12)";
+    }
+}
+
 async function leaveAgoraRoom() {
     try {
         if (agoraLocalAudioTrack) {
@@ -4986,6 +5050,7 @@ async function leaveAgoraRoom() {
     const statusText = document.getElementById("agora-status-text");
     const visualizer = document.getElementById("agora-avatar-visualizer");
     const usersList = document.getElementById("agora-users-list");
+    const micBtn = document.getElementById("agora-mic-btn");
 
     if (joinBtn) {
         joinBtn.style.display = "block";
@@ -5002,25 +5067,50 @@ async function leaveAgoraRoom() {
         visualizer.style.borderColor = "#00f2fe";
         visualizer.style.boxShadow = "0 0 20px rgba(0,242,254,0.3)";
     }
+    if (micBtn) {
+        micBtn.innerHTML = "🎙️ المايك: شغال";
+        micBtn.style.color = "#fff";
+        micBtn.style.borderColor = "rgba(255,255,255,0.2)";
+        micBtn.style.background = "rgba(255,255,255,0.08)";
+    }
 
     fetch('/api/calls/end', { method: 'POST' }).catch(() => {});
     showToast("🔴 غادرت غرفة Agora الصوتية.", "info");
 }
 
-function toggleAgoraMic() {
-    if (!agoraLocalAudioTrack) {
-        showToast("⚠️ المايكروفون غير مفعل حالياً.", "info");
+async function toggleAgoraMic() {
+    if (!isAgoraJoined || !agoraClient) {
+        showToast("⚠️ يجب الانضمام لغرفة Agora الصوتية أولاً.", "info");
         return;
     }
-    isAgoraMicMuted = !isAgoraMicMuted;
-    agoraLocalAudioTrack.setEnabled(!isAgoraMicMuted);
-    const btn = document.getElementById("agora-mic-btn");
-    if (btn) {
-        btn.innerHTML = isAgoraMicMuted ? "🔇 المايك: مكتوم" : "🎙️ المايك: شغال";
-        btn.style.color = isAgoraMicMuted ? "#ef4444" : "#fff";
-        btn.style.borderColor = isAgoraMicMuted ? "#ef4444" : "rgba(255,255,255,0.2)";
+
+    if (!agoraLocalAudioTrack) {
+        showToast("⏳ جاري طلب تفعيل المايكروفون...", "info");
+        try {
+            agoraLocalAudioTrack = await (window.AgoraRTC || AgoraRTC).createMicrophoneAudioTrack();
+            if (agoraLocalAudioTrack && agoraClient && isAgoraJoined) {
+                await agoraClient.publish([agoraLocalAudioTrack]);
+            }
+            isAgoraMicMuted = false;
+            updateAgoraMicButtonUI(true);
+            showToast("🎙️ تم تشغيل المايكروفون بنجاح!", "success");
+        } catch (err) {
+            console.warn("[Agora] Failed to activate mic on request:", err);
+            const isDenied = err && (err.name === "NotAllowedError" || (err.message && (err.message.includes("Permission denied") || err.message.includes("NotAllowedError"))));
+            updateAgoraMicButtonUI(false, isDenied ? "صلاحية المايك مرفوضة" : "تعذر تشغيل المايك");
+            showToast("⚠️ تعذر تفعيل المايك: يرجى السماح للمتصفح بالوصول للمايكروفون.", "warning");
+        }
+        return;
     }
-    showToast(isAgoraMicMuted ? "🔇 تم كتم المايك" : "🎙️ تم تشغيل المايك", "info");
+
+    try {
+        isAgoraMicMuted = !isAgoraMicMuted;
+        agoraLocalAudioTrack.setEnabled(!isAgoraMicMuted);
+        updateAgoraMicButtonUI(!isAgoraMicMuted);
+        showToast(isAgoraMicMuted ? "🔇 تم كتم المايك" : "🎙️ تم تشغيل المايك", "info");
+    } catch (toggleErr) {
+        console.warn("[Agora] Failed to toggle mic:", toggleErr);
+    }
 }
 
 async function shareAgoraCallInClanChat() {
