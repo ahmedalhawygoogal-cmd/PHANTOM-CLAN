@@ -282,6 +282,7 @@ function resetSeasonPoints() {
 
 const SUPABASE_URL = "https://kcxwfqwrzbilcjcgkazv.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_3xakoqez79haf-KOWJbGBQ_V7bQv-DM";
+const SUPABASE_PUBLISHABLE_KEY = SUPABASE_ANON_KEY;
 
 function safePostgrest(queryPromise) {
     return Promise.resolve(queryPromise);
@@ -298,54 +299,26 @@ try {
 const CODO_EDGE_FUNCTION_URL = "https://kcxwfqwrzbilcjcgkazv.supabase.co/functions/v1/GROQ_API_KEY";
 
 async function sendCodoChatRequest(payload, abortSignal = null) {
+    const pubKey = typeof SUPABASE_PUBLISHABLE_KEY !== 'undefined' ? SUPABASE_PUBLISHABLE_KEY : SUPABASE_ANON_KEY;
     const headers = {
         "Content-Type": "application/json",
-        "apikey": SUPABASE_ANON_KEY,
-        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
+        "apikey": pubKey,
+        "Authorization": "Bearer " + pubKey
     };
 
-    console.log(`[CODO API] Connecting to Edge Function: ${CODO_EDGE_FUNCTION_URL}`);
+    console.log(`[CODO API] Connecting to Edge Function (POST): ${CODO_EDGE_FUNCTION_URL}`);
 
-    try {
-        const edgeRes = await fetch(CODO_EDGE_FUNCTION_URL, {
-            method: "POST",
-            headers: headers,
-            signal: abortSignal,
-            body: JSON.stringify(payload)
-        });
-
-        if (edgeRes.ok || edgeRes.status === 400 || edgeRes.status === 401 || edgeRes.status === 429 || edgeRes.status === 500 || edgeRes.status === 502) {
-            console.log(`[CODO API] Endpoint: ${CODO_EDGE_FUNCTION_URL} | Status: ${edgeRes.status}`);
-            return edgeRes;
-        }
-
-        console.warn(`[CODO API] Edge function status ${edgeRes.status}, falling back to local server...`);
-        const localRes = await fetch("/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            signal: abortSignal,
-            body: JSON.stringify(payload)
-        });
-        return localRes;
-    } catch (err) {
-        if (err.name === 'AbortError') {
-            throw err;
-        }
-
-        console.warn(`[CODO API Notice] Edge function unreachable (${err.message || err}). Trying local server fallback...`);
-        try {
-            const localRes = await fetch("/api/chat", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                signal: abortSignal,
-                body: JSON.stringify(payload)
-            });
-            return localRes;
-        } catch (fallbackErr) {
-            console.warn("[CODO API] Local fallback error:", fallbackErr.message || fallbackErr);
-            throw err;
-        }
-    }
+    // إرسال الطلب دائماً عبر POST بصيغة JSON إلى Supabase Edge Function مباشرة وبدون تحويل لأي مسار قديم
+    return await fetch(CODO_EDGE_FUNCTION_URL, {
+        method: "POST",
+        headers: headers,
+        signal: abortSignal,
+        body: JSON.stringify({
+            message: payload.message || "",
+            history: Array.isArray(payload.history) ? payload.history : [],
+            attachedFile: payload.attachedFile || null
+        })
+    });
 }
 
 async function checkSupabaseConnection() {
@@ -11242,7 +11215,7 @@ async function sendMessage() {
             } else if (response.status === 429 || rawError.includes("429") || rawError.includes("Rate Limit")) {
                 userErrorMsg = "⚠️ تم تجاوز حد الاستخدام المتاح على Groq حالياً. يرجى المحاولة بعد لحظات.";
             } else if (response.status === 404) {
-                userErrorMsg = "⚠️ لم يتم العثور على دالة codo-chat في Supabase (404).";
+                userErrorMsg = "⚠️ لم يتم العثور على دالة GROQ_API_KEY في Supabase (404).";
             } else {
                 userErrorMsg = `⚠️ تعذر استلام رد من خادم CODO (${response.status}): ${rawError}`;
             }

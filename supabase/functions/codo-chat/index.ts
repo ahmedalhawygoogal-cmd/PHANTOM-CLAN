@@ -15,6 +15,7 @@ const SYSTEM_INSTRUCTION = `أنت CODO، المساعد الذكي التكتي
 5. في حال سألك العضو عن قوانين الكلان، أكد على الالتزام بشعار 『PH』، والروح الرياضية، ومنع الغش، وطاعة القيادة.`;
 
 Deno.serve(async (req: Request) => {
+  // 1. معالجة طلبات CORS Preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -31,6 +32,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    // 2. قراءة مفتاح Groq حصراً من Secret الموجود في Supabase باسم GROQ_API_KEY
     const apiKey = Deno.env.get("GROQ_API_KEY");
 
     if (!apiKey) {
@@ -45,6 +47,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // 3. قراءة البيانات القادمة من الواجهة
     const body = await req.json().catch(() => ({}));
     const message = (body.message || "").trim();
     const history = Array.isArray(body.history) ? body.history : [];
@@ -61,6 +64,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // 4. فحص نوع الملف المرفق (صور أو مستندات نصية)
     const isImageAttachment = Boolean(
       attachedFile && (
         (attachedFile.type && attachedFile.type.startsWith("image/")) ||
@@ -69,10 +73,12 @@ Deno.serve(async (req: Request) => {
       )
     );
 
+    // 5. بناء هيكل الرسائل المتوافق مع Groq Chat Completions API
     const messages: Array<{ role: string; content: string | Array<Record<string, unknown>> }> = [
       { role: "system", content: SYSTEM_INSTRUCTION }
     ];
 
+    // إضافة سجل المحادثة السابق (آخر 6 رسائل لسرعة الاستجابة وتوفير التوكنات)
     const recentHistory = history.slice(-6);
     for (const h of recentHistory) {
       const role = (h.role === "model" || h.role === "bot" || h.role === "assistant") ? "assistant" : "user";
@@ -82,6 +88,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // إعداد محتوى رسالة المستخدم الحالية
     let userPromptText = message;
     if (attachedFile && attachedFile.content && typeof attachedFile.content === "string") {
       userPromptText += `\n\n[محتوى الملف المرفق: ${attachedFile.name || 'ملف نصي'}]\n${attachedFile.content}`;
@@ -91,6 +98,9 @@ Deno.serve(async (req: Request) => {
       userPromptText = "مرحبًا CODO.";
     }
 
+    // 6. اختيار نماذج Groq النشطة والمتاحة حالياً على المنصة:
+    // - للصور والنصوص: qwen/qwen3.8-27b (يدعم text + image مدعوم بالكامل على Groq)
+    // - للنصوص والمحادثة الفائقة: openai/gpt-oss-120b و qwen/qwen3.8-27b و openai/gpt-oss-20b
     let candidateModels: string[];
     let userMessagePayload: { role: string; content: string | Array<Record<string, unknown>> };
 
@@ -119,6 +129,7 @@ Deno.serve(async (req: Request) => {
 
     messages.push(userMessagePayload);
 
+    // 7. استدعاء Groq Chat Completions API
     const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
     let finalReply = "";
     let usedModel = "";
@@ -196,6 +207,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // 8. إعادة الرد بالصيغة المعتمدة للواجهة
     return new Response(
       JSON.stringify({
         success: true,
@@ -211,7 +223,7 @@ Deno.serve(async (req: Request) => {
     );
 
   } catch (globalErr: any) {
-    console.error("[Groq Fatal Error] Critical error in Edge Function:", globalErr);
+    console.error("[Groq Fatal Error] Critical error in GROQ_API_KEY Edge Function:", globalErr);
     return new Response(
       JSON.stringify({
         success: false,
