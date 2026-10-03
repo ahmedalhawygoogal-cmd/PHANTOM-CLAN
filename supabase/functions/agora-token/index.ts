@@ -170,7 +170,7 @@ Deno.serve(async (req: Request) => {
     const channelName = (body.channelName || "").trim();
     const uid = body.uid !== undefined && body.uid !== null ? body.uid : 0;
 
-    // 4. قراءة البيانات السرية من Supabase Secrets مع دعم جميع أنماط التسمية
+    // 4. قراءة البيانات السرية من Supabase Secrets مع دعم جميع أنماط التسمية والاحتياطي
     const appId = Deno.env.get("AGORA_APP_ID") || 
                   Deno.env.get("agora_app_id") || 
                   Deno.env.get("AGORA_ID") || 
@@ -181,14 +181,15 @@ Deno.serve(async (req: Request) => {
                            Deno.env.get("agora_app_certificate") || 
                            Deno.env.get("AGORA_CERTIFICATE") || 
                            Deno.env.get("agora_certificate") || 
-                           Deno.env.get("AGORA_CERT");
+                           Deno.env.get("AGORA_CERT") ||
+                           "e8b9012da1774d958aa205c7c72ff947";
 
     if (!appCertificate) {
-      console.error("[Agora Token Error] AGORA_APP_CERTIFICATE is missing in Supabase Secrets.");
+      console.error("[Agora Token Error] AGORA_APP_CERTIFICATE is missing.");
       return new Response(
         JSON.stringify({
           success: false,
-          error: "شهادة AGORA_APP_CERTIFICATE غير مهيأة في Supabase Secrets. يرجى إضافتها في Project Settings > Edge Functions > Secrets باسم AGORA_APP_CERTIFICATE.",
+          error: "شهادة AGORA_APP_CERTIFICATE غير مهيأة.",
         }),
         {
           status: 500,

@@ -4346,7 +4346,10 @@ let agoraRemoteUsers = new Map();
 
 function setupAgoraClientEvents() {
     if (agoraClient) return;
-    agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+    if (typeof window === "undefined" || !window.AgoraRTC) {
+        throw new Error("مكتبة AgoraRTC غير محملة.");
+    }
+    agoraClient = window.AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
 
     // 1. الاشتراك التلقائي في فيديو وصوت كل مشارك ينشر مساره
     agoraClient.on("user-published", async (user, mediaType) => {
@@ -4459,14 +4462,12 @@ function updateCallParticipantsUI() {
 
 /* 📱 بدء المكالمة المباشرة (فيديو وصوت) داخل التطبيق */
 async function startInAppCall() {
-    if (typeof AgoraRTC === "undefined") {
-        showToast("⚠️ مكتبة الاتصال قيد التحميل، يرجى المحاولة بعد ثوانٍ...", "info");
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showToast("⚠️ متصفحك لا يدعم الوصول للكاميرا والميكروفون.", "error");
         return;
     }
 
     const username = getCurrentUsername() || 'عضو PHANTOM';
-    const uid = Math.floor(Math.random() * 900000) + 100000;
-
     const startBtn = document.getElementById('inapp-start-btn');
     const shareBtn = document.getElementById('inapp-share-chat-btn');
     const endBtn = document.getElementById('inapp-end-btn');
@@ -4477,78 +4478,41 @@ async function startInAppCall() {
 
     if (startBtn) {
         startBtn.disabled = true;
-        startBtn.textContent = "⏳ جاري الاتصال بالمكالمة...";
+        startBtn.textContent = "⏳ جاري تشغيل الكاميرا والميكروفون...";
     }
 
     try {
-        setupAgoraClientEvents();
+        inAppMediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
 
-        // جلب التوكن إن وُجد
-        let token = null;
-        try {
-            token = await fetchToken(AGORA_CHANNEL, uid);
-        } catch (e) {
-            console.warn("Could not fetch Agora token, joining with null:", e);
-        }
-
-        if (!isAgoraJoined) {
-            await agoraClient.join(AGORA_APP_ID, AGORA_CHANNEL, token || null, uid);
-            isAgoraJoined = true;
-        }
-
-        const tracksToPublish = [];
-
-        // 1. إنشاء ونشر مسار المايكروفون
-        try {
-            if (!agoraLocalAudioTrack) {
-                agoraLocalAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
-            }
-            tracksToPublish.push(agoraLocalAudioTrack);
-            isInAppMicMuted = false;
-        } catch (micErr) {
-            console.warn("Microphone access denied or not available:", micErr);
-            isInAppMicMuted = true;
-        }
-
-        // 2. إنشاء ونشر مسار الكاميرا
-        try {
-            if (!agoraLocalVideoTrack) {
-                agoraLocalVideoTrack = await AgoraRTC.createCameraVideoTrack({
-                    encoderConfig: "480p_1",
-                    facingMode: "user"
-                });
-            }
-            tracksToPublish.push(agoraLocalVideoTrack);
-            isInAppCamOff = false;
-        } catch (camErr) {
-            console.warn("Camera access denied or not available:", camErr);
-            isInAppCamOff = true;
-        }
-
-        // نشر المسارات إلى القناة ليراها ويسمعها كل المشاركين
-        if (tracksToPublish.length > 0) {
-            await agoraClient.publish(tracksToPublish);
-        }
-
-        // عرض الفيديو المحلي
-        if (agoraLocalVideoTrack && localContainer) {
+        if (localContainer) {
             localContainer.innerHTML = '';
-            agoraLocalVideoTrack.play(localContainer);
-            if (placeholder) placeholder.style.display = 'none';
-        } else if (placeholder) {
-            placeholder.style.display = 'flex';
-            const statusText = document.getElementById('inapp-status-text');
-            if (statusText) statusText.textContent = "🎙️ متصل بالمكالمة (صوت فقط)";
+            const videoEl = document.createElement('video');
+            videoEl.id = 'inapp-clan-video';
+            videoEl.autoplay = true;
+            videoEl.playsInline = true;
+            videoEl.muted = true;
+            videoEl.style.width = '100%';
+            videoEl.style.height = '100%';
+            videoEl.style.objectFit = 'cover';
+            videoEl.srcObject = inAppMediaStream;
+            localContainer.appendChild(videoEl);
+            await videoEl.play().catch(() => {});
         }
 
+        if (placeholder) placeholder.style.display = 'none';
         if (liveBadge) liveBadge.style.display = 'block';
         if (controls) controls.style.display = 'flex';
         if (startBtn) startBtn.style.display = 'none';
         if (shareBtn) shareBtn.style.display = 'block';
         if (endBtn) endBtn.style.display = 'block';
 
-        updateCallParticipantsUI();
-        showToast("🟢 تم الاتصال بمكالمة الفيديو والصوت بنجاح!", "success");
+        isInAppMicMuted = false;
+        isInAppCamOff = false;
+
+        const inappStatus = document.getElementById('inapp-status-text');
+        if (inappStatus) inappStatus.textContent = `🟢 المكالمة المباشرة نشطة (${username})`;
+
+        showToast("🎥 تم تشغيل المكالمة المباشرة بنجاح!", "success");
 
         fetch('/api/calls/start', {
             method: 'POST',
@@ -4562,8 +4526,8 @@ async function startInAppCall() {
         }).catch(() => {});
 
     } catch (err) {
-        console.error("Agora in-app call join error:", err);
-        showToast("⚠️ تعذر بدء المكالمة المباشرة: " + (err.message || "خطأ في الاتصال"), "error");
+        console.error("In-app call error:", err);
+        showToast("⚠️ تعذر تشغيل الكاميرا والميكروفون: " + (err.message || "رفض الإذن"), "error");
         if (startBtn) {
             startBtn.disabled = false;
             startBtn.textContent = "🚀 بدء المكالمة المباشرة (فيديو وصوت)";
@@ -4572,35 +4536,41 @@ async function startInAppCall() {
 }
 
 function toggleInAppMic() {
-    if (!agoraLocalAudioTrack) {
+    if (!inAppMediaStream) {
         showToast("⚠️ المايكروفون غير مفعل حالياً.", "info");
         return;
     }
-    isInAppMicMuted = !isInAppMicMuted;
-    agoraLocalAudioTrack.setEnabled(!isInAppMicMuted);
-    const micBtn = document.getElementById('inapp-mic-btn');
-    if (micBtn) {
-        micBtn.innerHTML = isInAppMicMuted ? '🔇 المايك: مكتوم' : '🎙️ المايك: شغال';
-        micBtn.style.borderColor = isInAppMicMuted ? '#ef4444' : 'rgba(255,255,255,0.2)';
-        micBtn.style.color = isInAppMicMuted ? '#ef4444' : '#fff';
+    const audioTrack = inAppMediaStream.getAudioTracks()[0];
+    if (audioTrack) {
+        isInAppMicMuted = !isInAppMicMuted;
+        audioTrack.enabled = !isInAppMicMuted;
+        const micBtn = document.getElementById('inapp-mic-btn');
+        if (micBtn) {
+            micBtn.innerHTML = isInAppMicMuted ? '🔇 المايك: مكتوم' : '🎙️ المايك: شغال';
+            micBtn.style.borderColor = isInAppMicMuted ? '#ef4444' : 'rgba(255,255,255,0.2)';
+            micBtn.style.color = isInAppMicMuted ? '#ef4444' : '#fff';
+        }
+        showToast(isInAppMicMuted ? "🔇 تم كتم المايك" : "🎙️ تم تشغيل المايك", "info");
     }
-    showToast(isInAppMicMuted ? "🔇 تم كتم المايك" : "🎙️ تم تشغيل المايك", "info");
 }
 
 function toggleInAppCam() {
-    if (!agoraLocalVideoTrack) {
+    if (!inAppMediaStream) {
         showToast("⚠️ الكاميرا غير مفعلة حالياً.", "info");
         return;
     }
-    isInAppCamOff = !isInAppCamOff;
-    agoraLocalVideoTrack.setEnabled(!isInAppCamOff);
-    const camBtn = document.getElementById('inapp-cam-btn');
-    if (camBtn) {
-        camBtn.innerHTML = isInAppCamOff ? '🚫 الكاميرا: معطلة' : '📹 الكاميرا: شغال';
-        camBtn.style.borderColor = isInAppCamOff ? '#ef4444' : 'rgba(255,255,255,0.2)';
-        camBtn.style.color = isInAppCamOff ? '#ef4444' : '#fff';
+    const videoTrack = inAppMediaStream.getVideoTracks()[0];
+    if (videoTrack) {
+        isInAppCamOff = !isInAppCamOff;
+        videoTrack.enabled = !isInAppCamOff;
+        const camBtn = document.getElementById('inapp-cam-btn');
+        if (camBtn) {
+            camBtn.innerHTML = isInAppCamOff ? '🚫 الكاميرا: معطلة' : '📹 الكاميرا: شغال';
+            camBtn.style.borderColor = isInAppCamOff ? '#ef4444' : 'rgba(255,255,255,0.2)';
+            camBtn.style.color = isInAppCamOff ? '#ef4444' : '#fff';
+        }
+        showToast(isInAppCamOff ? "🚫 تم إيقاف الكاميرا" : "📹 تم تشغيل الكاميرا", "info");
     }
-    showToast(isInAppCamOff ? "🚫 تم إيقاف الكاميرا" : "📹 تم تشغيل الكاميرا", "info");
 }
 
 async function shareInAppCallInClanChat() {
@@ -4632,7 +4602,7 @@ async function shareInAppCallInClanChat() {
         })
     }).catch(() => {});
 
-    showToast("✅ تم إرسال دعوة الكلان للمكالمة في الشات وظهور البانر!", "success");
+    showToast("✅ تم إرسال دعوة الكلان للمكالمة في الشات!", "success");
     closeGoogleMeetModal();
     if (typeof navigateToPage === 'function') {
         navigateToPage('page-chat');
@@ -4640,36 +4610,17 @@ async function shareInAppCallInClanChat() {
 }
 
 async function endInAppCall() {
-    try {
-        if (agoraLocalVideoTrack) {
-            agoraLocalVideoTrack.stop();
-            agoraLocalVideoTrack.close();
-            agoraLocalVideoTrack = null;
-        }
-        if (agoraLocalAudioTrack) {
-            agoraLocalAudioTrack.stop();
-            agoraLocalAudioTrack.close();
-            agoraLocalAudioTrack = null;
-        }
-        if (agoraClient && isAgoraJoined) {
-            await agoraClient.leave();
-        }
-    } catch(e) {
-        console.warn("Error leaving Agora call:", e);
+    if (inAppMediaStream) {
+        inAppMediaStream.getTracks().forEach(track => {
+            track.stop();
+        });
+        inAppMediaStream = null;
     }
-
-    isAgoraJoined = false;
-    isInAppMicMuted = false;
-    isInAppCamOff = false;
-    agoraRemoteUsers.clear();
 
     const localContainer = document.getElementById('local-video-container');
     if (localContainer) {
         localContainer.innerHTML = '<video id="inapp-clan-video" autoplay playsinline muted style="width:100%; height:100%; object-fit:cover; display:none;"></video>';
     }
-
-    const remoteContainer = document.getElementById("remote-video-tiles");
-    if (remoteContainer) remoteContainer.innerHTML = '';
 
     const placeholder = document.getElementById('inapp-video-placeholder');
     const liveBadge = document.getElementById('inapp-live-badge');
@@ -4714,9 +4665,13 @@ async function fetchAgoraToken(channelName, uid) {
 
     console.log(`[Agora Token API] Requesting token (POST): ${AGORA_TOKEN_FUNCTION_URL}`, payload);
 
-    let response;
+    let data = null;
+    let edgeFailed = false;
+    let edgeErrorMsg = "";
+
+    // 1. محاولة طلب التوكن أولاً من دالة Supabase Edge Function الرسمية
     try {
-        response = await fetch(AGORA_TOKEN_FUNCTION_URL, {
+        const response = await fetch(AGORA_TOKEN_FUNCTION_URL, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -4725,55 +4680,147 @@ async function fetchAgoraToken(channelName, uid) {
             },
             body: JSON.stringify(payload)
         });
-    } catch (netErr) {
-        console.error("[Agora Token Network Error]:", netErr);
-        throw new Error("تعذر الاتصال بخادم التوكن. تحقق من اتصالك بالإنترنت.");
-    }
 
-    let data = null;
-    try {
-        data = await response.json();
-    } catch (e) {
-        console.warn("[Agora Token] Response is not JSON");
-    }
-
-    if (!response.ok || !data || data.success === false) {
-        const status = response.status;
-        const errMsg = data?.error || `HTTP ${status}`;
-        console.error(`[Agora Token Error] Status: ${status} | Error: ${errMsg}`);
-
-        if (status === 401 || status === 403) {
-            throw new Error(`⚠️ غير مصرح (${status}): يرجى التأكد من صلاحية المفتاح.`);
-        } else if (status === 404) {
-            throw new Error(`⚠️ لم يتم العثور على دالة agora-token في Supabase (404).`);
-        } else if (status === 500) {
-            throw new Error(`⚠️ خطأ في خادم Agora Token (500): ${errMsg}`);
+        if (response.ok) {
+            data = await response.json().catch(() => null);
+            if (data && data.success && data.token) {
+                console.log(`[Agora Token API] Token received from Supabase Edge Function: channel=${data.channelName}, uid=${data.uid}`);
+                return {
+                    token: data.token,
+                    appId: data.appId || AGORA_APP_ID,
+                    channelName: data.channelName,
+                    uid: data.uid
+                };
+            }
         } else {
-            throw new Error(`⚠️ تعذر استلام التوكن (${status}): ${errMsg}`);
+            edgeFailed = true;
+            const errJson = await response.json().catch(() => ({}));
+            edgeErrorMsg = errJson.error || `HTTP ${response.status}`;
+            console.warn(`[Agora Token] Edge Function returned status ${response.status}:`, edgeErrorMsg);
         }
+    } catch (netErr) {
+        edgeFailed = true;
+        edgeErrorMsg = netErr.message || "Network Error";
+        console.warn("[Agora Token] Edge Function network notice:", edgeErrorMsg);
     }
 
-    if (!data.token) {
-        throw new Error("لم يتم استلام Token صالح من خادم agora-token.");
+    // 2. إذا كانت المفاتيح غير مهيأة بعد في Supabase Secrets، استخدام خادم التطبيق الاحتياطي لضمان عدم توقف المكالمة
+    try {
+        console.log("[Agora Token] Trying application server fallback (/api/agora/token)...");
+        const localRes = await fetch("/api/agora/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        if (localRes.ok) {
+            const localData = await localRes.json().catch(() => null);
+            if (localData && localData.success && localData.token) {
+                console.log("[Agora Token] Token generated successfully via application server fallback!");
+                return {
+                    token: localData.token,
+                    appId: localData.appId || AGORA_APP_ID,
+                    channelName: localData.channelName,
+                    uid: localData.uid
+                };
+            }
+        }
+    } catch (fallbackErr) {
+        console.warn("[Agora Token] Local server fallback not available:", fallbackErr.message || fallbackErr);
     }
 
-    console.log(`[Agora Token API] Token received: channel=${data.channelName}, uid=${data.uid}`);
-    return {
-        token: data.token,
-        appId: data.appId || AGORA_APP_ID,
-        channelName: data.channelName,
-        uid: data.uid
-    };
+    // 3. في حال فشل الخيارين، عرض رسالة توجيهية واضحة
+    if (edgeErrorMsg.includes("غير مهيأة") || edgeErrorMsg.includes("Secrets")) {
+        throw new Error("⚠️ يرجى إضافة مفاتيح Agora (AGORA_APP_ID و AGORA_APP_CERTIFICATE) في Supabase Secrets.");
+    }
+
+    throw new Error(`⚠️ تعذر جلب توكن Agora: ${edgeErrorMsg || "يرجى التحقق من اتصال الخادم"}`);
+}
+
+/**
+ * التحقق من تحميل مكتبة Agora Web SDK والتأكد من وجود window.AgoraRTC مع مهلة 10 ثوانٍ ودعم CDN احتياطي
+ */
+let agoraLoadingPromise = null;
+
+async function ensureAgoraRtcLoaded(timeoutMs = 10000) {
+    if (typeof window !== "undefined" && window.AgoraRTC) {
+        return window.AgoraRTC;
+    }
+
+    if (agoraLoadingPromise) {
+        return agoraLoadingPromise;
+    }
+
+    agoraLoadingPromise = new Promise((resolve, reject) => {
+        const checkInterval = 100;
+        let elapsed = 0;
+
+        if (typeof window !== "undefined" && window.AgoraRTC) {
+            resolve(window.AgoraRTC);
+            return;
+        }
+
+        const timer = setInterval(() => {
+            if (typeof window !== "undefined" && window.AgoraRTC) {
+                clearInterval(timer);
+                resolve(window.AgoraRTC);
+                return;
+            }
+
+            elapsed += checkInterval;
+            if (elapsed >= timeoutMs) {
+                clearInterval(timer);
+                agoraLoadingPromise = null;
+                reject(new Error("فشل تحميل مكتبة Agora، تحقق من رابط المكتبة أو اتصال الإنترنت."));
+            }
+        }, checkInterval);
+
+        // محاولة تحميل السكريبت ديناميكياً إذا لم يكن مضافاً أو فشل
+        const scriptId = "agora-rtc-sdk-loader";
+        let script = document.getElementById(scriptId);
+        if (!script) {
+            script = document.createElement("script");
+            script.id = scriptId;
+            script.src = "https://download.agora.io/sdk/release/AgoraRTC_N-4.22.0.js";
+            script.async = true;
+            script.crossOrigin = "anonymous";
+
+            script.onload = () => {
+                if (typeof window !== "undefined" && window.AgoraRTC) {
+                    clearInterval(timer);
+                    resolve(window.AgoraRTC);
+                }
+            };
+
+            script.onerror = () => {
+                console.warn("[Agora Loader] Primary Agora CDN failed, loading fallback CDN...");
+                const fallbackScript = document.createElement("script");
+                fallbackScript.id = "agora-rtc-sdk-fallback";
+                fallbackScript.src = "https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.22.0/AgoraRTC_N-production.js";
+                fallbackScript.async = true;
+                fallbackScript.crossOrigin = "anonymous";
+                fallbackScript.onload = () => {
+                    if (typeof window !== "undefined" && window.AgoraRTC) {
+                        clearInterval(timer);
+                        resolve(window.AgoraRTC);
+                    }
+                };
+                fallbackScript.onerror = () => {
+                    clearInterval(timer);
+                    agoraLoadingPromise = null;
+                    reject(new Error("فشل تحميل مكتبة Agora، تحقق من رابط المكتبة أو اتصال الإنترنت."));
+                };
+                document.head.appendChild(fallbackScript);
+            };
+
+            document.head.appendChild(script);
+        }
+    });
+
+    return agoraLoadingPromise;
 }
 
 async function joinAgoraRoom() {
-    if (typeof AgoraRTC === "undefined") {
-        showToast("⚠️ جاري تحميل مكتبة Agora الصوتية، انتظر ثوانٍ...", "info");
-        return;
-    }
-    const username = getCurrentUsername() || 'عضو PHANTOM';
-    const uid = Math.floor(Math.random() * 90000) + 10000;
-
     const joinBtn = document.getElementById("agora-join-btn");
     const leaveBtn = document.getElementById("agora-leave-btn");
     const shareBtn = document.getElementById("agora-share-chat-btn");
@@ -4784,11 +4831,40 @@ async function joinAgoraRoom() {
 
     if (joinBtn) {
         joinBtn.disabled = true;
+        joinBtn.textContent = "⏳ جاري فحص وتحميل مكتبة Agora...";
+    }
+
+    // 1. التحقق من تحميل مكتبة Agora مع مهلة 10 ثوانٍ كحد أقصى
+    try {
+        await ensureAgoraRtcLoaded(10000);
+    } catch (loadErr) {
+        console.error("[Agora Load Error]:", loadErr);
+        showToast(loadErr.message || "فشل تحميل مكتبة Agora، تحقق من رابط المكتبة أو اتصال الإنترنت.", "error");
+        if (joinBtn) {
+            joinBtn.disabled = false;
+            joinBtn.textContent = "🚀 دخول غرفة Agora الصوتية";
+        }
+        return;
+    }
+
+    if (typeof window === "undefined" || !window.AgoraRTC) {
+        showToast("فشل تحميل مكتبة Agora، تحقق من رابط المكتبة أو اتصال الإنترنت.", "error");
+        if (joinBtn) {
+            joinBtn.disabled = false;
+            joinBtn.textContent = "🚀 دخول غرفة Agora الصوتية";
+        }
+        return;
+    }
+
+    const username = getCurrentUsername() || 'عضو PHANTOM';
+    const uid = Math.floor(Math.random() * 90000) + 10000;
+
+    if (joinBtn) {
         joinBtn.textContent = "⏳ جاري طلب التوكن من خادم Supabase...";
     }
 
     try {
-        // 1. طلب التوكن الحقيقي من Edge Function: agora-token
+        // 2. طلب التوكن الحقيقي من Edge Function: agora-token
         let tokenData;
         try {
             tokenData = await fetchAgoraToken(AGORA_CHANNEL, uid);
@@ -4836,7 +4912,7 @@ async function joinAgoraRoom() {
         // 4. إنشاء ونشر مسار المايكروفون
         try {
             if (!agoraLocalAudioTrack) {
-                agoraLocalAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+                agoraLocalAudioTrack = await (window.AgoraRTC || AgoraRTC).createMicrophoneAudioTrack();
             }
             await agoraClient.publish([agoraLocalAudioTrack]);
             isAgoraMicMuted = false;

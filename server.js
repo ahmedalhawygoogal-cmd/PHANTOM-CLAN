@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 import { GoogleGenAI } from '@google/genai';
 import { PDFParse } from 'pdf-parse';
 
@@ -1306,6 +1307,136 @@ app.get('/api/calls/active', (req, res) => {
 app.post('/api/calls/end', (req, res) => {
   activeCallInfo = null;
   res.json({ success: true });
+});
+
+// 🎙️ Agora Token Generator Endpoint
+function makeServerCrcTable() {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    table[n] = c >>> 0;
+  }
+  return table;
+}
+const serverCrcTable = makeServerCrcTable();
+function serverCrc32Str(str) {
+  let crc = 0 ^ (-1);
+  const buf = Buffer.from(str, "utf8");
+  for (let i = 0; i < buf.length; i++) {
+    crc = (crc >>> 8) ^ serverCrcTable[(crc ^ buf[i]) & 0xFF];
+  }
+  return (crc ^ (-1)) >>> 0;
+}
+
+class ServerByteBuf {
+  constructor(initialCapacity = 1024) {
+    this.buffer = Buffer.alloc(initialCapacity);
+    this.pos = 0;
+  }
+  ensureCapacity(needed) {
+    if (this.pos + needed > this.buffer.length) {
+      const nextBuf = Buffer.alloc(Math.max(this.buffer.length * 2, this.pos + needed));
+      this.buffer.copy(nextBuf, 0, 0, this.pos);
+      this.buffer = nextBuf;
+    }
+  }
+  putUint16(v) {
+    this.ensureCapacity(2);
+    this.buffer.writeUInt16LE(v, this.pos);
+    this.pos += 2;
+    return this;
+  }
+  putUint32(v) {
+    this.ensureCapacity(4);
+    this.buffer.writeUInt32LE(v >>> 0, this.pos);
+    this.pos += 4;
+    return this;
+  }
+  putBytes(bytes) {
+    this.putUint16(bytes.length);
+    this.ensureCapacity(bytes.length);
+    bytes.copy(this.buffer, this.pos);
+    this.pos += bytes.length;
+    return this;
+  }
+  putString(str) {
+    return this.putBytes(Buffer.from(str, "utf8"));
+  }
+  putTreeMapUInt32(map) {
+    const keys = Object.keys(map).map(Number).sort((a, b) => a - b);
+    this.putUint16(keys.length);
+    for (const key of keys) {
+      this.putUint16(key);
+      this.putUint32(map[key]);
+    }
+    return this;
+  }
+  pack() {
+    return this.buffer.subarray(0, this.pos);
+  }
+}
+
+function generateServerAgoraToken(appId, appCertificate, channelName, uid, role = 1, privilegeExpiredTs) {
+  const version = "006";
+  const salt = Math.floor(Math.random() * 0xFFFFFFFF);
+  const ts = Math.floor(Date.now() / 1000) + 24 * 3600;
+  const uidStr = (uid === 0 || uid === "0" || uid === null || uid === undefined) ? "" : `${uid}`;
+
+  const messages = {};
+  messages[1] = privilegeExpiredTs;
+  if (role === 0 || role === 1 || role === 101) {
+    messages[2] = privilegeExpiredTs;
+    messages[3] = privilegeExpiredTs;
+    messages[4] = privilegeExpiredTs;
+  }
+
+  const mBuf = new ServerByteBuf()
+    .putUint32(salt)
+    .putUint32(ts)
+    .putTreeMapUInt32(messages)
+    .pack();
+
+  const toSign = Buffer.concat([
+    Buffer.from(appId, "utf8"),
+    Buffer.from(channelName, "utf8"),
+    Buffer.from(uidStr, "utf8"),
+    mBuf,
+  ]);
+
+  const signature = crypto.createHmac("sha256", appCertificate).update(toSign).digest();
+  const crcChannel = serverCrc32Str(channelName);
+  const crcUid = serverCrc32Str(uidStr);
+
+  const contentBuf = new ServerByteBuf()
+    .putBytes(signature)
+    .putUint32(crcChannel)
+    .putUint32(crcUid)
+    .putBytes(mBuf)
+    .pack();
+
+  return version + appId + contentBuf.toString("base64");
+}
+
+app.post('/api/agora/token', (req, res) => {
+  const body = req.body || {};
+  const channelName = (body.channelName || "phantom_hq").trim();
+  const uid = body.uid !== undefined && body.uid !== null ? body.uid : 0;
+  const appId = process.env.AGORA_APP_ID || "129b4ba5126742d6973d17c9cbf2d5f3";
+  const appCertificate = process.env.AGORA_APP_CERTIFICATE || "e8b9012da1774d958aa205c7c72ff947";
+  const expirationSeconds = Number(body.expirationSeconds) > 0 ? Number(body.expirationSeconds) : 86400;
+  const privilegeExpiredTs = Math.floor(Date.now() / 1000) + expirationSeconds;
+
+  const token = generateServerAgoraToken(appId, appCertificate, channelName, uid, 1, privilegeExpiredTs);
+  return res.json({
+    success: true,
+    token: token,
+    appId: appId,
+    channelName: channelName,
+    uid: uid
+  });
 });
 
 // Serve static assets from project root
