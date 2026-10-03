@@ -619,22 +619,34 @@ const PHANTOM_MEMORY = {
 let cachedAgoraToken = null;
 
 async function fetchToken(channelName, uid) {
-    try {
-        const response = await fetch("https://kcxwfqwrzbilcjcgkazv.supabase.co/functions/v1/get-agora-token", {
-            method: "POST",
-            headers: { 
-                "Content-Type": "application/json",
-                "apikey": "sb_publishable_3xakoqez79haf-KOWJbGBQ_V7bQv-DM",
-                "Authorization": "Bearer sb_publishable_3xakoqez79haf-KOWJbGBQ_V7bQv-DM"
-            },
-            body: JSON.stringify({ channelName: channelName, uid: uid })
-        });
-        const data = await response.json();
-        return data.token;
-    } catch (error) {
-        console.error("❌ فشل جلب توكن أجورا:", error);
-        return null;
+    const pubKey = typeof SUPABASE_PUBLISHABLE_KEY !== 'undefined' ? SUPABASE_PUBLISHABLE_KEY : "sb_publishable_3xakoqez79haf-KOWJbGBQ_V7bQv-DM";
+    const urls = [
+        "https://kcxwfqwrzbilcjcgkazv.supabase.co/functions/v1/agora-token",
+        "https://kcxwfqwrzbilcjcgkazv.supabase.co/functions/v1/get-agora-token"
+    ];
+    for (const url of urls) {
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: { 
+                    "Content-Type": "application/json",
+                    "apikey": pubKey,
+                    "Authorization": `Bearer ${pubKey}`
+                },
+                body: JSON.stringify({ channelName: channelName, uid: uid })
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data && data.token) {
+                    console.log(`[Agora Token] Retrieved successfully from ${url}`);
+                    return data.token;
+                }
+            }
+        } catch (error) {
+            console.warn(`[Agora Token] Failed connecting to ${url}:`, error.message || error);
+        }
     }
+    return null;
 }
 
 /* ========================================================
@@ -4379,6 +4391,28 @@ function setupAgoraClientEvents() {
         updateCallParticipantsUI();
         updateAgoraUsersUI();
     });
+
+    // 4. التجديد التلقائي للتوكن قبل انتهائه
+    agoraClient.on("token-privilege-will-expire", async () => {
+        console.warn("[Agora] Token will expire soon. Renewing via agora-token function...");
+        try {
+            const currentUid = agoraClient.uid;
+            const renewed = await fetchAgoraToken(AGORA_CHANNEL, currentUid);
+            if (renewed && renewed.token) {
+                await agoraClient.renewToken(renewed.token);
+                console.log("[Agora] Token renewed successfully.");
+            }
+        } catch (e) {
+            console.error("[Agora] Failed renewing Agora token:", e);
+        }
+    });
+
+    // 5. التعامل مع انتهاء صلاحية التوكن
+    agoraClient.on("token-privilege-did-expire", () => {
+        console.error("[Agora] Token expired!");
+        showToast("⚠️ انتهت صلاحية توكن Agora، يرجى إعادة الدخول للغرفة.", "error");
+        leaveAgoraRoom();
+    });
 }
 
 function renderRemoteUserVideoTile(user) {
@@ -4664,6 +4698,74 @@ async function endInAppCall() {
 }
 
 /* 🎙️ غرفة Agora الصوتية التكتيكية */
+const AGORA_TOKEN_FUNCTION_URL = "https://kcxwfqwrzbilcjcgkazv.supabase.co/functions/v1/agora-token";
+
+/**
+ * طلب Token حقيقي لـ Agora من دالة Supabase Edge Function: agora-token
+ */
+async function fetchAgoraToken(channelName, uid) {
+    const pubKey = typeof SUPABASE_PUBLISHABLE_KEY !== 'undefined' ? SUPABASE_PUBLISHABLE_KEY : SUPABASE_ANON_KEY;
+    const payload = {
+        channelName: channelName || AGORA_CHANNEL,
+        uid: uid,
+        role: "publisher",
+        expirationSeconds: 86400
+    };
+
+    console.log(`[Agora Token API] Requesting token (POST): ${AGORA_TOKEN_FUNCTION_URL}`, payload);
+
+    let response;
+    try {
+        response = await fetch(AGORA_TOKEN_FUNCTION_URL, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "apikey": pubKey,
+                "Authorization": `Bearer ${pubKey}`
+            },
+            body: JSON.stringify(payload)
+        });
+    } catch (netErr) {
+        console.error("[Agora Token Network Error]:", netErr);
+        throw new Error("تعذر الاتصال بخادم التوكن. تحقق من اتصالك بالإنترنت.");
+    }
+
+    let data = null;
+    try {
+        data = await response.json();
+    } catch (e) {
+        console.warn("[Agora Token] Response is not JSON");
+    }
+
+    if (!response.ok || !data || data.success === false) {
+        const status = response.status;
+        const errMsg = data?.error || `HTTP ${status}`;
+        console.error(`[Agora Token Error] Status: ${status} | Error: ${errMsg}`);
+
+        if (status === 401 || status === 403) {
+            throw new Error(`⚠️ غير مصرح (${status}): يرجى التأكد من صلاحية المفتاح.`);
+        } else if (status === 404) {
+            throw new Error(`⚠️ لم يتم العثور على دالة agora-token في Supabase (404).`);
+        } else if (status === 500) {
+            throw new Error(`⚠️ خطأ في خادم Agora Token (500): ${errMsg}`);
+        } else {
+            throw new Error(`⚠️ تعذر استلام التوكن (${status}): ${errMsg}`);
+        }
+    }
+
+    if (!data.token) {
+        throw new Error("لم يتم استلام Token صالح من خادم agora-token.");
+    }
+
+    console.log(`[Agora Token API] Token received: channel=${data.channelName}, uid=${data.uid}`);
+    return {
+        token: data.token,
+        appId: data.appId || AGORA_APP_ID,
+        channelName: data.channelName,
+        uid: data.uid
+    };
+}
+
 async function joinAgoraRoom() {
     if (typeof AgoraRTC === "undefined") {
         showToast("⚠️ جاري تحميل مكتبة Agora الصوتية، انتظر ثوانٍ...", "info");
@@ -4682,35 +4784,68 @@ async function joinAgoraRoom() {
 
     if (joinBtn) {
         joinBtn.disabled = true;
-        joinBtn.textContent = "⏳ جاري الاتصال بغرفة Agora...";
+        joinBtn.textContent = "⏳ جاري طلب التوكن من خادم Supabase...";
     }
 
     try {
+        // 1. طلب التوكن الحقيقي من Edge Function: agora-token
+        let tokenData;
+        try {
+            tokenData = await fetchAgoraToken(AGORA_CHANNEL, uid);
+        } catch (tokenErr) {
+            console.error("Token fetch failed:", tokenErr);
+            showToast(tokenErr.message, "error");
+            if (joinBtn) {
+                joinBtn.disabled = false;
+                joinBtn.textContent = "🚀 دخول غرفة Agora الصوتية";
+            }
+            return;
+        }
+
+        const activeAppId = tokenData.appId || AGORA_APP_ID;
+        const activeToken = tokenData.token;
+        const activeChannel = tokenData.channelName || AGORA_CHANNEL;
+
+        if (joinBtn) {
+            joinBtn.textContent = "⏳ جاري الاتصال بغرفة Agora...";
+        }
+
+        // 2. إعداد عميل Agora RTC ومعالجات الأحداث
         setupAgoraClientEvents();
 
-        let token = null;
+        // 3. الانضمام إلى القناة باستخدام token و appId
         try {
-            token = await fetchToken(AGORA_CHANNEL, uid);
-        } catch (e) {
-            console.warn("Could not fetch Agora token from Supabase:", e);
-        }
-
-        if (!isAgoraJoined) {
-            await agoraClient.join(AGORA_APP_ID, AGORA_CHANNEL, token || null, uid);
+            await agoraClient.join(activeAppId, activeChannel, activeToken, uid);
             isAgoraJoined = true;
+            console.log(`[Agora] Joined channel ${activeChannel} as UID ${uid}`);
+        } catch (joinErr) {
+            console.error("Agora join error:", joinErr);
+            let joinMsg = "فشل دخول قناة Agora.";
+            if (joinErr.code === "CAN_NOT_GET_GATEWAY_SERVER") {
+                joinMsg = "تعذر الوصول لخوادم Agora (تحقق من اتصال الإنترنت).";
+            } else if (joinErr.code === "INVALID_TOKEN") {
+                joinMsg = "التوكن غير صالح أو الشهادة غير مطابقة في Supabase Secrets.";
+            } else if (joinErr.code === "TOKEN_EXPIRED") {
+                joinMsg = "انتهت صلاحية توكن Agora.";
+            } else if (joinErr.message) {
+                joinMsg = joinErr.message;
+            }
+            throw new Error(joinMsg);
         }
 
+        // 4. إنشاء ونشر مسار المايكروفون
         try {
             if (!agoraLocalAudioTrack) {
                 agoraLocalAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
-                await agoraClient.publish([agoraLocalAudioTrack]);
             }
+            await agoraClient.publish([agoraLocalAudioTrack]);
             isAgoraMicMuted = false;
         } catch (micErr) {
-            console.warn("Microphone access denied for Agora, connected in listen-only mode:", micErr);
+            console.warn("Microphone access denied for Agora:", micErr);
             showToast("🎧 متصل بغرفة Agora في وضع الاستماع (المايك غير مفعل)", "info");
         }
 
+        // 5. تحديث واجهة المستخدم
         if (joinBtn) joinBtn.style.display = "none";
         if (leaveBtn) leaveBtn.style.display = "block";
         if (shareBtn) shareBtn.style.display = "block";
@@ -4719,7 +4854,7 @@ async function joinAgoraRoom() {
             badge.style.display = "inline-block";
             badge.textContent = `🟢 متصل بالروم الصوتي (${username})`;
         }
-        if (statusText) statusText.textContent = "✅ متصل بغرفة عمليات Agora بنجاح!";
+        if (statusText) statusText.textContent = `✅ متصل بغرفة ${activeChannel} بجودة نقية!`;
         if (visualizer) {
             visualizer.style.borderColor = "#00ff88";
             visualizer.style.boxShadow = "0 0 30px rgba(0, 255, 136, 0.5)";
@@ -4741,7 +4876,7 @@ async function joinAgoraRoom() {
 
     } catch (err) {
         console.error("Agora join error:", err);
-        showToast("⚠️ تعذر الاتصال بغرفة Agora الصوتية.", "error");
+        showToast("⚠️ " + (err.message || "تعذر الاتصال بغرفة Agora الصوتية."), "error");
         if (joinBtn) {
             joinBtn.disabled = false;
             joinBtn.textContent = "🚀 دخول غرفة Agora الصوتية";
@@ -4750,7 +4885,22 @@ async function joinAgoraRoom() {
 }
 
 async function leaveAgoraRoom() {
-    await endInAppCall();
+    try {
+        if (agoraLocalAudioTrack) {
+            agoraLocalAudioTrack.stop();
+            agoraLocalAudioTrack.close();
+            agoraLocalAudioTrack = null;
+        }
+        if (agoraClient && isAgoraJoined) {
+            await agoraClient.leave();
+        }
+    } catch (e) {
+        console.warn("Error leaving Agora room:", e);
+    }
+
+    isAgoraJoined = false;
+    isAgoraMicMuted = false;
+    agoraRemoteUsers.clear();
 
     const joinBtn = document.getElementById("agora-join-btn");
     const leaveBtn = document.getElementById("agora-leave-btn");
@@ -4777,16 +4927,24 @@ async function leaveAgoraRoom() {
         visualizer.style.boxShadow = "0 0 20px rgba(0,242,254,0.3)";
     }
 
+    fetch('/api/calls/end', { method: 'POST' }).catch(() => {});
     showToast("🔴 غادرت غرفة Agora الصوتية.", "info");
 }
 
 function toggleAgoraMic() {
-    toggleInAppMic();
+    if (!agoraLocalAudioTrack) {
+        showToast("⚠️ المايكروفون غير مفعل حالياً.", "info");
+        return;
+    }
+    isAgoraMicMuted = !isAgoraMicMuted;
+    agoraLocalAudioTrack.setEnabled(!isAgoraMicMuted);
     const btn = document.getElementById("agora-mic-btn");
     if (btn) {
-        btn.textContent = isInAppMicMuted ? "🔇 المايك: مكتوم" : "🎙️ المايك: شغال";
-        btn.style.color = isInAppMicMuted ? "#ef4444" : "#fff";
+        btn.innerHTML = isAgoraMicMuted ? "🔇 المايك: مكتوم" : "🎙️ المايك: شغال";
+        btn.style.color = isAgoraMicMuted ? "#ef4444" : "#fff";
+        btn.style.borderColor = isAgoraMicMuted ? "#ef4444" : "rgba(255,255,255,0.2)";
     }
+    showToast(isAgoraMicMuted ? "🔇 تم كتم المايك" : "🎙️ تم تشغيل المايك", "info");
 }
 
 async function shareAgoraCallInClanChat() {
