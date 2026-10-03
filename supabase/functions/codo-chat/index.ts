@@ -32,11 +32,8 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // 2. قراءة مفتاح Groq حصراً من Secret الموجود في Supabase
-    const apiKey = Deno.env.get("GROQ_API_KEY")
-      || Deno.env.get("groq_api_key")
-      || Deno.env.get("GROQ_KEY")
-      || Deno.env.get("codo-chat");
+    // 2. قراءة مفتاح Groq حصراً ومباشرة من GROQ_API_KEY فقط
+    const apiKey = Deno.env.get("GROQ_API_KEY");
 
     if (!apiKey) {
       console.error("[Groq Error] GROQ_API_KEY secret is missing in Supabase Secrets.");

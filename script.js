@@ -314,38 +314,37 @@ async function sendCodoChatRequest(payload, abortSignal = null) {
             body: JSON.stringify(payload)
         });
 
-        // تشخيص آمن لحالة الاستجابة بدون إظهار أي أسرار أو مفاتيح
-        console.log(`[CODO API] Endpoint: ${CODO_EDGE_FUNCTION_URL} | Status: ${edgeRes.status}`);
-        return edgeRes;
+        if (edgeRes.ok || edgeRes.status === 400 || edgeRes.status === 401 || edgeRes.status === 429 || edgeRes.status === 500 || edgeRes.status === 502) {
+            console.log(`[CODO API] Endpoint: ${CODO_EDGE_FUNCTION_URL} | Status: ${edgeRes.status}`);
+            return edgeRes;
+        }
+
+        console.warn(`[CODO API] Edge function status ${edgeRes.status}, falling back to local server...`);
+        const localRes = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: abortSignal,
+            body: JSON.stringify(payload)
+        });
+        return localRes;
     } catch (err) {
         if (err.name === 'AbortError') {
             throw err;
         }
 
-        console.warn(`[CODO Connection Error] Failed to reach ${CODO_EDGE_FUNCTION_URL}:`, err.message || err);
-
-        // نسخة احتياطية محلية فقط داخل بيئة Google AI Studio Dev Server في حال انقطاع الشبكة
-        const isAiStudioDev = window.location.hostname === 'localhost' || 
-                              window.location.hostname.includes('run.app') || 
-                              window.location.hostname.includes('127.0.0.1');
-
-        if (isAiStudioDev) {
-            try {
-                console.log("[CODO Fallback] AI Studio dev server proxy (/api/chat)...");
-                const localRes = await fetch("/api/chat", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    signal: abortSignal,
-                    body: JSON.stringify(payload)
-                });
-                console.log(`[CODO Fallback] Status: ${localRes.status}`);
-                return localRes;
-            } catch (fallbackErr) {
-                console.warn("[CODO Fallback Error] Local dev server unreachable:", fallbackErr.message || fallbackErr);
-            }
+        console.warn(`[CODO API Notice] Edge function unreachable (${err.message || err}). Trying local server fallback...`);
+        try {
+            const localRes = await fetch("/api/chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                signal: abortSignal,
+                body: JSON.stringify(payload)
+            });
+            return localRes;
+        } catch (fallbackErr) {
+            console.warn("[CODO API] Local fallback error:", fallbackErr.message || fallbackErr);
+            throw err;
         }
-
-        throw err;
     }
 }
 
@@ -11298,7 +11297,7 @@ async function sendMessage() {
             return;
         }
 
-        console.error("[CODO Connection/CORS Error]:", e.message || e);
+        console.warn("[CODO Connection Notice]:", e.message || e);
         playCodoSound('error');
 
         // استعادة النص المكتوب في حال حدوث خطأ حتى لا يضيع على المستخدم
@@ -11306,13 +11305,12 @@ async function sendMessage() {
 
         let displayErr = "⚠️ تعذر الاتصال بـ CODO. ";
         if (e.message && (e.message.includes("Failed to fetch") || e.message.includes("NetworkError"))) {
-            displayErr += "فشل الاتصال بالخادم (يرجى التحقق من اتصال الإنترنت أو إعدادات CORS).";
+            displayErr = "⚠️ تعذر الاتصال بدالة codo-chat. إذا كنت قد أضفت الكود في Supabase، يرجى التأكد من الضغط على زر Deploy لتفعيل الدالة.";
         } else if (e.name === 'TimeoutError' || (e.message && e.message.includes('timeout'))) {
-            displayErr += "انتهت مهلة انتظار الخادم قبل إتمام الرد.";
+            displayErr = "⚠️ انتهت مهلة انتظار الخادم قبل إتمام الرد. يرجى المحاولة مرة أخرى.";
         } else {
-            displayErr += (e.message || "حدث خطأ غير متوقع.");
+            displayErr = "⚠️ " + (e.message || "حدث خطأ في الاتصال. يرجى المحاولة بعد قليل.");
         }
-        displayErr += " تم الاحتفاظ بنص رسالتك.";
 
         showToast("⚠️ تعذر الاتصال بـ CODO", "error");
         addMessage(displayErr, 'bot', true);
