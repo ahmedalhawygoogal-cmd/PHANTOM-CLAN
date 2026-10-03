@@ -294,8 +294,8 @@ try {
     console.warn("⚠️ فشل إنشاء عميل Supabase. سيتم استخدام localStorage كنسخة احتياطية.");
 }
 
-// 🤖 مسار Supabase Edge Function الرسمي لـ CODO AI
-const CODO_EDGE_FUNCTION_URL = "https://kcxwfqwrzbilcjcgkazv.supabase.co/functions/v1/codo-chat";
+// 🤖 مسار Supabase Edge Function الرسمي لـ CODO AI عبر Groq
+const CODO_EDGE_FUNCTION_URL = "https://kcxwfqwrzbilcjcgkazv.supabase.co/functions/v1/GROQ_API_KEY";
 
 async function sendCodoChatRequest(payload, abortSignal = null) {
     const headers = {
