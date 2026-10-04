@@ -207,10 +207,23 @@
             <div class="whatsapp-chat-header">
                 <div class="wa-avatar">『PH』</div>
                 <div class="wa-header-info"><h3>شات كلان PHANTOM</h3><div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;"><span class="wa-status-text">متصل الآن</span><span id="chat-online-counter" style="font-size:0.7rem; color:var(--silver-muted);">0 متصلين حالياً</span></div></div>
-                <div id="chat-call-header-group" class="chat-call-header-group" style="margin-right:auto; display:flex; align-items:center; gap:6px;">
-                    <button id="voice-call-btn" class="icon-btn-call" type="button" style="background:transparent; border:none; color:var(--cyan); font-size:1.2rem; cursor:pointer;" title="بدء مكالمة صوت وفيديو جماعية">📞</button>
-                    <button id="chat-call-join-btn" class="chat-call-join-btn-header" type="button" style="display:none;" onclick="handleChatCallJoinClick()" title="انضمام للمكالمة النشطة الآن">انضمام</button>
-                    <span id="chat-call-ended-status" class="chat-call-ended-status" style="display:none;">انتهت المكالمة</span>
+                <div id="chat-call-header-group" class="chat-call-header-group" style="margin-right:auto; display:flex; align-items:center; gap:6px; position:relative;">
+                    <button id="voice-call-btn" class="icon-btn-call" type="button" onclick="handleVoiceCallBtnClick()" style="background:transparent; border:none; color:var(--cyan); font-size:1.25rem; cursor:pointer; padding:6px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; transition:0.2s;" title="بدء مكالمة">📞</button>
+                    <button id="chat-call-join-btn" class="chat-call-join-btn-header" type="button" onclick="toggleActiveCallsDropdown(event)" title="لا توجد مكالمات نشطة حالياً" disabled>
+                        انضمام
+                    </button>
+                    <span id="chat-call-ended-status" class="chat-call-ended-status" style="display:none; font-size:0.75rem; color:#ef4444; font-weight:700;">انتهت المكالمة</span>
+
+                    <!-- 📜 قائمة المكالمات النشطة المنسدلة -->
+                    <div id="active-calls-dropdown" class="active-calls-dropdown" style="display:none;" onclick="event.stopPropagation()">
+                        <div class="active-calls-dropdown-header">
+                            <span class="active-calls-dropdown-title">📡 المكالمات النشطة حالياً</span>
+                            <button type="button" class="active-calls-close-btn" onclick="closeActiveCallsDropdown()" title="إغلاق">✕</button>
+                        </div>
+                        <div id="active-calls-list-container" class="active-calls-list-container">
+                            <div class="empty-calls-notice">لا توجد مكالمات نشطة حالياً</div>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="chat-wrapper-card whatsapp-style-card">
@@ -2538,176 +2551,250 @@
     <button onclick="submitSuggestion()" style="width:100%; padding:12px; background:var(--cyan); color:#000; border:none; border-radius:8px; font-weight:900; cursor:pointer;">إرسال الاقتراح</button>
     <button onclick="closeSuggestionModal()" style="width:100%; padding:8px; margin-top:8px; background:transparent; border:1px solid #888; color:#888; border-radius:8px; cursor:pointer;">إلغاء</button>
 </div>
-<!-- 📹 نافذة مكالمات الكلان (صوت وصورة داخل المقر + Google Meet) -->
-<div id="google-meet-modal" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); z-index:9999999; background:rgba(11,16,25,0.98); border:2px solid var(--cyan); border-radius:16px; box-shadow:0 25px 70px rgba(0,0,0,0.85); width:94%; max-width:440px; padding:18px; text-align:center; direction:rtl; backdrop-filter:blur(12px);">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid rgba(0,242,254,0.2); padding-bottom:10px;">
-        <h3 style="color:var(--cyan); margin:0; font-size:1.15rem; display:flex; align-items:center; gap:8px;">
-            <span>📹</span> مكالمات كلان PHANTOM
-        </h3>
-        <button onclick="closeGoogleMeetModal()" style="background:transparent; border:none; color:var(--muted); font-size:1.3rem; cursor:pointer; padding:4px;">✕</button>
-    </div>
-
-    <!-- أزرار التبديل بين المكالمة داخل التطبيق وغرفة Agora ومكالمة Google Meet -->
-    <div style="display:flex; gap:6px; margin-bottom:14px; background:rgba(255,255,255,0.05); padding:4px; border-radius:10px;">
-        <button id="call-tab-inapp" onclick="switchCallTab('inapp')" style="flex:1; padding:8px 4px; border:none; border-radius:8px; background:var(--cyan); color:#000; font-weight:800; font-size:0.8rem; cursor:pointer; transition:0.2s;">
-            📱 اتصال مباشر
+<!-- ========================================================
+     📞 FULL-PAGE CALL VIEW (صفحة المكالمة الكاملة لجميع أنواع المكالمات)
+     ======================================================== -->
+<div id="full-page-call-overlay" class="full-page-call-overlay" style="display:none;">
+    <!-- 1. الشريط العلوي -->
+    <header class="call-top-bar">
+        <button id="call-minimize-btn" class="call-btn-minimize" type="button" onclick="minimizeCallView()" title="تصغير المكالمة والرجوع للموقع">
+            <span style="font-size:1.2rem; line-height:1;">⌄</span>
+            <span>تصغير المكالمة</span>
         </button>
-        <button id="call-tab-agora" onclick="switchCallTab('agora')" style="flex:1; padding:8px 4px; border:none; border-radius:8px; background:transparent; color:#9ca3af; font-weight:700; font-size:0.8rem; cursor:pointer; transition:0.2s;">
-            🎙️ غرفة Agora
-        </button>
-        <button id="call-tab-meet" onclick="switchCallTab('meet')" style="flex:1; padding:8px 4px; border:none; border-radius:8px; background:transparent; color:#9ca3af; font-weight:700; font-size:0.8rem; cursor:pointer; transition:0.2s;">
-            🌐 Google Meet
-        </button>
-    </div>
 
-    <!-- 1️⃣ قسم المكالمة المباشرة داخل التطبيق 100% -->
-    <div id="inapp-call-section" style="display:block;">
-        <div id="inapp-video-grid" class="inapp-video-grid">
-            <!-- مساحة الفيديو المحلي -->
-            <div id="local-video-tile" class="video-tile local-tile">
-                <div id="local-video-container" class="video-container" style="width:100%; height:100%;">
-                    <video id="inapp-clan-video" autoplay playsinline muted style="width:100%; height:100%; object-fit:cover; display:none;"></video>
-                </div>
-                
-                <div id="inapp-video-placeholder" style="display:flex; flex-direction:column; align-items:center; justify-content:center; color:#9ca3af; gap:8px; padding:12px; position:absolute; inset:0;">
-                    <span style="font-size:2.4rem;">🎙️📹</span>
-                    <span id="inapp-status-text" style="font-size:0.9rem; color:#e2e8f0; font-weight:700;">المكالمة جاهزة للبدء داخل المقر</span>
-                    <small style="color:#64748b; font-size:0.75rem;">تواصل بصوت وصورة مباشرة مع السكواد</small>
-                </div>
-
-                <!-- شارة الحالة الحية -->
-                <div id="inapp-live-badge" style="display:none; position:absolute; top:8px; right:8px; background:rgba(0,255,136,0.2); border:1px solid #00ff88; color:#00ff88; padding:3px 8px; border-radius:12px; font-size:0.75rem; font-weight:800; z-index:4;">
-                    🟢 مباشر الآن
-                </div>
-
-                <div class="video-tile-name-badge">
-                    <span id="local-tile-user-name">أنت</span>
-                    <span id="local-mic-status-icon">🎙️</span>
-                </div>
+        <div class="call-header-center">
+            <h2 id="call-room-title" class="call-room-title">غرفة Agora الصوتية</h2>
+            <div class="call-header-badges">
+                <span id="call-type-badge" class="call-type-pill">🎙️ مكالمة Agora التكتيكية</span>
+                <span id="call-connection-status" class="call-status-pill status-connected">🟢 متصل</span>
+                <span id="call-timer" class="call-timer-pill">00:00</span>
             </div>
-
-            <!-- حاوية فيديوهات المشاركين الآخرين المباشرة (تضاف تلقائياً عند انضمام أي عضو) -->
-            <div id="remote-video-tiles" style="display:contents;"></div>
         </div>
 
-        <!-- أزرار التحكم بالمكالمة داخل التطبيق -->
-        <div id="inapp-controls-bar" style="display:none; gap:8px; justify-content:center; margin-bottom:12px;">
-            <button id="inapp-mic-btn" onclick="toggleInAppMic()" title="كتم/تشغيل المايك" style="flex:1; padding:10px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:#fff; border-radius:8px; font-weight:700; font-size:0.85rem; cursor:pointer;">
-                🎙️ المايك: شغال
-            </button>
-            <button id="inapp-cam-btn" onclick="toggleInAppCam()" title="تشغيل/إيقاف الكاميرا" style="flex:1; padding:10px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:#fff; border-radius:8px; font-weight:700; font-size:0.85rem; cursor:pointer;">
-                📹 الكاميرا: شغال
-            </button>
+        <div class="call-header-right">
+            <div id="call-ping-badge" class="call-ping-badge">📡 28ms</div>
         </div>
+    </header>
 
-        <div style="display:flex; flex-direction:column; gap:8px;">
-            <button id="inapp-start-btn" onclick="startInAppCall()" style="width:100%; padding:12px; background:var(--cyan); color:#000; border:none; border-radius:8px; font-weight:900; font-size:0.95rem; cursor:pointer; box-shadow:0 0 15px rgba(0,242,254,0.4);">
-                🚀 بدء المكالمة المباشرة (فيديو وصوت)
-            </button>
-
-            <button id="inapp-share-chat-btn" onclick="shareInAppCallInClanChat()" style="display:none; width:100%; padding:10px; background:rgba(0,242,254,0.15); color:var(--cyan); border:1px solid var(--cyan); border-radius:8px; font-weight:800; cursor:pointer;">
-                💬 دعوة الكلان للمكالمة في الشات
-            </button>
-
-            <button id="inapp-end-btn" onclick="endInAppCall()" style="display:none; width:100%; padding:9px; background:rgba(239,68,68,0.2); color:#ef4444; border:1px solid #ef4444; border-radius:8px; font-weight:800; cursor:pointer;">
-                🔴 إنهاء المكالمة
-            </button>
-        </div>
-    </div>
-
-    <!-- 2️⃣ قسم مكالمة غرفة Agora التكتيكية عالية الجودة -->
-    <div id="agora-call-section" style="display:none;">
-        <div style="background:#05080f; border-radius:12px; padding:16px; border:1px solid rgba(0,242,254,0.3); margin-bottom:12px; text-align:center;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                <span style="font-size:0.8rem; color:#94a3b8; font-weight:700;">📡 القناة الصوتية:</span>
-                <span style="color:#00f2fe; font-family:monospace; font-weight:800; font-size:0.85rem; background:rgba(0,242,254,0.1); padding:2px 8px; border-radius:6px;">PHANTOM-OPS</span>
+    <!-- 2. المنطقة الرئيسية -->
+    <main class="call-main-area">
+        <!-- معلومات المنشئ والغرفة -->
+        <div class="call-info-banner">
+            <div class="call-host-info">
+                <span class="label">👑 منشئ المكالمة:</span>
+                <span id="call-host-name-display" class="host-name">أحمد الحاوي</span>
             </div>
-            
-            <div id="agora-avatar-visualizer" style="width:75px; height:75px; margin:10px auto; border-radius:50%; background:radial-gradient(circle, rgba(0,242,254,0.2), #0b121e); border:2px solid #00f2fe; display:flex; align-items:center; justify-content:center; font-size:2rem; box-shadow:0 0 20px rgba(0,242,254,0.3); transition:0.3s;">
-                🎙️
+            <div class="call-topic-info">
+                <span class="label">🎯 الغرفة:</span>
+                <span id="call-topic-display" class="topic-name">PHANTOM-OPS</span>
             </div>
-            
-            <div id="agora-status-text" style="color:#e2e8f0; font-size:0.9rem; font-weight:800; margin-bottom:4px;">غرفة Agora الصوتية عالية النقاء</div>
-            <div id="agora-ping-indicator" style="font-size:0.75rem; color:#64748b; margin-bottom:8px;">خوادم منخفضة الكمون مخصصة للرومات والبطولات</div>
-
-            <div id="agora-members-badge" style="display:none; background:rgba(0,255,136,0.1); border:1px solid #00ff88; color:#00ff88; border-radius:20px; padding:4px 12px; font-size:0.78rem; font-weight:800; margin-bottom:8px;">
-                🟢 متصل الآن بالروم الصوتي
-            </div>
-            <div id="agora-users-list" style="display:none; font-size:0.78rem; color:#cbd5e1; margin-top:6px; max-height:80px; overflow-y:auto;"></div>
         </div>
 
-        <!-- أزرار التحكم في مكالمة Agora -->
-        <div id="agora-controls-bar" style="display:none; gap:8px; justify-content:center; margin-bottom:12px;">
-            <button id="agora-mic-btn" onclick="toggleAgoraMic()" title="كتم/تشغيل المايك" style="flex:1; padding:10px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:#fff; border-radius:8px; font-weight:700; font-size:0.85rem; cursor:pointer;">
-                🎙️ المايك: شغال
-            </button>
-        </div>
-
-        <div style="display:flex; flex-direction:column; gap:8px;">
-            <button id="agora-join-btn" onclick="joinAgoraRoom()" style="width:100%; padding:12px; background:linear-gradient(135deg, #00f2fe, #3b82f6); color:#000; border:none; border-radius:8px; font-weight:900; font-size:0.95rem; cursor:pointer; box-shadow:0 0 15px rgba(0,242,254,0.4);">
-                🚀 دخول غرفة Agora الصوتية
-            </button>
-
-            <button id="agora-share-chat-btn" onclick="shareAgoraCallInClanChat()" style="display:none; width:100%; padding:10px; background:rgba(0,242,254,0.15); color:var(--cyan); border:1px solid var(--cyan); border-radius:8px; font-weight:800; cursor:pointer;">
-                💬 دعوة الكلان لغرفة Agora في الشات
-            </button>
-
-            <button id="agora-leave-btn" onclick="leaveAgoraRoom()" style="display:none; width:100%; padding:9px; background:rgba(239,68,68,0.2); color:#ef4444; border:1px solid #ef4444; border-radius:8px; font-weight:800; cursor:pointer;">
-                🔴 مغادرة الغرفة الصوتية
-            </button>
-        </div>
-    </div>
-
-    <!-- 3️⃣ قسم مكالمة Google Meet الرسمية -->
-    <div id="meet-call-section" style="display:none;">
-        <div style="background:rgba(0,242,254,0.05); border:1px dashed rgba(0,242,254,0.3); border-radius:10px; padding:10px; margin-bottom:12px; font-size:0.8rem; color:#94a3b8; line-height:1.5;">
-            💡 <strong>ملاحظة أمان Google:</strong> تمنع Google تضمين Meet داخل التطبيقات لحماية الخصوصية، لذا تفتح المكالمة في نافذة Google Meet الرسمية بنقرة واحدة.
-        </div>
-
-        <!-- قسم تسجيل الدخول إذا لم يكن مسجلاً -->
-        <div id="meet-auth-section" style="display:none;">
-            <p style="color:#d1d5db; font-size:0.85rem; line-height:1.6; margin-bottom:16px;">
-                قم بتسجيل الدخول بحساب Google لإنشاء غرفة Google Meet رسمية لأعضاء الكلان:
-            </p>
-            <button id="google-meet-signin-btn" class="gsi-material-button" onclick="handleGoogleMeetSignIn()" style="margin:0 auto 12px auto;">
-                <div class="gsi-material-button-state"></div>
-                <div class="gsi-material-button-content-wrapper">
-                    <div class="gsi-material-button-icon">
-                        <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style="display: block;">
-                            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                            <path fill="none" d="M0 0h48v48H0z"></path>
-                        </svg>
+        <!-- أ. مرحلة Agora (صوتية فقط مع حلقة نابضة ومؤثرات صوتية عالية الدقة) -->
+        <div id="call-agora-mode-stage" class="call-stage agora-stage" style="display:flex;">
+            <div class="agora-stage-visualizer-container" style="text-align:center;">
+                <div id="agora-audio-avatar-ring" class="agora-avatar-glow-ring">
+                    <div class="agora-avatar-inner">
+                        <span id="agora-avatar-icon">🎙️</span>
                     </div>
-                    <span class="gsi-material-button-contents">Sign in with Google</span>
                 </div>
-            </button>
+                <div class="agora-room-channel-tag">
+                    <span>القناة الصوتية: </span>
+                    <strong id="agora-display-channel">phantom_hq</strong>
+                </div>
+                <div id="agora-live-speaking-indicator" class="agora-speaking-indicator">
+                    <span>✨ خوادم Agora الصوتية فائقة النقاء ومنخفضة الكمون</span>
+                </div>
+            </div>
         </div>
 
-        <!-- قسم المكالمة النشطة -->
-        <div id="meet-active-section" style="display:none;">
-            <div style="background:rgba(0,255,136,0.1); border:1px solid #00ff88; border-radius:10px; padding:10px; margin-bottom:12px;">
-                <div style="color:#00ff88; font-weight:900; font-size:0.9rem; margin-bottom:4px;">🟢 مكالمة Google Meet جاهزة</div>
-                <div id="meet-room-code" style="color:#e2e8f0; font-size:0.8rem; direction:ltr; font-family:monospace; margin-top:2px;"></div>
+        <!-- ب. مرحلة الاتصال المباشر (شبكة الفيديو المحلية وكاميرات المشتركين) -->
+        <div id="call-direct-mode-stage" class="call-stage direct-stage" style="display:none;">
+            <div id="direct-call-video-grid" class="direct-video-grid">
+                <!-- الكاميرا المحلية للمستخدم -->
+                <div id="direct-local-video-card" class="direct-video-card local-card">
+                    <div id="local-video-container" class="direct-video-media" style="width:100%; height:100%;">
+                        <video id="inapp-clan-video" autoplay playsinline muted style="width:100%; height:100%; object-fit:cover; display:none;"></video>
+                    </div>
+                    <div id="inapp-video-placeholder" class="direct-video-placeholder">
+                        <span class="avatar-placeholder">🎙️📹</span>
+                        <span id="inapp-status-text" style="font-size:0.9rem; color:#e2e8f0; font-weight:700;">المكالمة المباشرة جاهزة داخل المقر</span>
+                        <small style="color:#64748b; font-size:0.75rem;">تواصل بصوت وصورة مباشرة مع السكواد</small>
+                    </div>
+                    <div class="video-card-overlay-badge">
+                        <span id="local-tile-user-name">أنت</span>
+                        <span id="local-mic-status-icon">🎙️</span>
+                    </div>
+                </div>
+                <!-- حاوية كاميرات المشتركين الآخرين -->
+                <div id="remote-video-tiles" class="direct-remote-container" style="display:contents;"></div>
+            </div>
+        </div>
+
+        <!-- ج. بطاقات قائمة المشاركين الحاليين وحالتهم -->
+        <section class="call-participants-section">
+            <div class="participants-header">
+                <h3>👥 المشاركون في المكالمة (<span id="call-participants-count">1</span>)</h3>
+                <span id="call-my-mic-status-badge" class="my-mic-badge">🎙️ المايك الخاص بك: شغال</span>
+            </div>
+            <div id="call-participants-list" class="call-participants-cards">
+                <!-- ديناميكي: يتم ملؤه تلقائياً للمشاركين -->
+            </div>
+        </section>
+
+        <!-- عناصر توافقية مخفية للحفاظ على استقرار الرموز القديمة -->
+        <div style="display:none;">
+            <div id="agora-avatar-visualizer"></div>
+            <div id="agora-status-text"></div>
+            <div id="agora-members-badge"></div>
+            <div id="agora-users-list"></div>
+            <div id="agora-controls-bar"></div>
+            <button id="agora-mic-btn" onclick="toggleAgoraMic()"></button>
+            <button id="agora-join-btn" onclick="joinAgoraRoom()"></button>
+            <button id="agora-leave-btn" onclick="leaveAgoraRoom()"></button>
+            <div id="inapp-controls-bar"></div>
+            <button id="inapp-mic-btn" onclick="toggleInAppMic()"></button>
+            <button id="inapp-cam-btn" onclick="toggleInAppCam()"></button>
+            <button id="inapp-start-btn" onclick="startInAppCall()"></button>
+            <button id="inapp-end-btn" onclick="endInAppCall()"></button>
+            <div id="inapp-live-badge"></div>
+        </div>
+    </main>
+
+    <!-- 3. الشريط السفلي للتحكم (واضح وكبير بما يكفي للمس السريع على الهاتف) -->
+    <footer class="call-bottom-controls">
+        <div class="controls-inner-cluster">
+            <!-- زر كتم / تشغيل المايك -->
+            <button id="fullcall-mic-btn" class="call-ctl-btn mic-btn mic-active" type="button" onclick="handleFullCallToggleMic()" title="كتم أو تشغيل المايك">
+                <span class="ctl-icon" id="fullcall-mic-icon">🎙️</span>
+                <span class="ctl-label" id="fullcall-mic-label">المايك: شغال</span>
+            </button>
+
+            <!-- زر الكاميرا (يظهر فقط في الاتصال المباشر) -->
+            <button id="fullcall-cam-btn" class="call-ctl-btn cam-btn" type="button" onclick="handleFullCallToggleCam()" title="تشغيل أو إيقاف الكاميرا" style="display:none;">
+                <span class="ctl-icon" id="fullcall-cam-icon">📹</span>
+                <span class="ctl-label" id="fullcall-cam-label">الكاميرا: شغال</span>
+            </button>
+
+            <!-- زر التصغير والرجوع للموقع مع استمرار المكالمة -->
+            <button id="fullcall-minimize-footer-btn" class="call-ctl-btn minimize-btn" type="button" onclick="minimizeCallView()" title="متابعة تصفح المقر دون قطع الصوت">
+                <span class="ctl-icon">⛶</span>
+                <span class="ctl-label">تصغير وتصفح</span>
+            </button>
+
+            <!-- زر إنهاء المكالمة ومغادرة الغرفة -->
+            <button id="fullcall-end-btn" class="call-ctl-btn end-btn" type="button" onclick="handleFullCallEnd()" title="إنهاء المكالمة ومغادرة الغرفة">
+                <span class="ctl-icon">🔴</span>
+                <span class="ctl-label">إنهاء المكالمة</span>
+            </button>
+        </div>
+    </footer>
+</div>
+
+<!-- 📞 FLOATING ONGOING CALL BAR (يظهر عند تصغير المكالمة لاستمرار الاتصال والتنقل) -->
+<div id="floating-ongoing-call-bar" class="floating-ongoing-call-bar" style="display:none;" onclick="maximizeCallView()">
+    <div class="floating-call-left">
+        <span class="floating-pulse-dot">🟢</span>
+        <div class="floating-call-details">
+            <span id="floating-call-title" class="floating-call-title">مكالمة جارية: Agora</span>
+            <span id="floating-call-meta" class="floating-call-meta">المنشئ: عضو الكلان • 00:00</span>
+        </div>
+    </div>
+    <div class="floating-call-actions" onclick="event.stopPropagation()">
+        <button id="floating-mic-toggle-btn" class="floating-action-btn" type="button" onclick="handleFullCallToggleMic()" title="كتم/تشغيل المايك">
+            🎙️
+        </button>
+        <button class="floating-action-btn expand-btn" type="button" onclick="maximizeCallView()" title="فتح صفحة المكالمة الكاملة">
+            ⛶ تكبير
+        </button>
+        <button class="floating-action-btn end-btn" type="button" onclick="handleFullCallEnd()" title="إنهاء المكالمة">
+            🔴 إنهاء
+        </button>
+    </div>
+</div>
+
+<!-- 📞 CALL TYPE CHOOSER MODAL (نافذة اختيار نوع المكالمة عند الضغط على زر 📞) -->
+<div id="call-type-chooser-modal" class="call-type-chooser-modal" style="display:none;" onclick="if(event.target===this) closeCallTypeChooser()">
+    <div class="chooser-card">
+        <div class="chooser-header">
+            <h3>📞 بدء مكالمة جديدة</h3>
+            <button type="button" class="chooser-close" onclick="closeCallTypeChooser()">✕</button>
+        </div>
+        <p class="chooser-desc">اختر نوع المكالمة التي ترغب ببدئها في المقر التكتيكي:</p>
+        <div class="chooser-options">
+            <div class="chooser-option-card agora-opt" onclick="startCallWithMode('agora')">
+                <div class="opt-icon">🎙️</div>
+                <div class="opt-body">
+                    <h4>غرفة Agora الصوتية</h4>
+                    <p>صوت فائق النقاء، زمن وصول منخفض، مخصصة للرومات والبطولات والسوالف.</p>
+                </div>
+                <button type="button" class="opt-btn">دخول Agora 🚀</button>
+            </div>
+            <div class="chooser-option-card direct-opt" onclick="startCallWithMode('direct')">
+                <div class="opt-icon">📱</div>
+                <div class="opt-body">
+                    <h4>اتصال مباشر (صوت وفيديو)</h4>
+                    <p>مكالمة مباشرة داخل المقر مع دعم تشغيل الكاميرا والميكروفون بين الأعضاء.</p>
+                </div>
+                <button type="button" class="opt-btn">بدء الاتصال 🚀</button>
+            </div>
+            <div class="chooser-option-card meet-opt" onclick="toggleMeetCallSection(event)">
+                <div class="opt-icon">📹</div>
+                <div class="opt-body">
+                    <h4>مكالمة Google Meet الرسمية</h4>
+                    <p>مكالمة خارج الموقع عبر Google Meet لإنشاء أو فتح رابط مكالمة بحساب Google.</p>
+                </div>
+                <button type="button" class="opt-btn" style="background:#4285F4; color:#fff;">Google Meet ↗</button>
+            </div>
+        </div>
+
+        <!-- 3️⃣ قسم مكالمة Google Meet الرسمية (خارج الموقع - يعمل بالكامل بطريقته الأصلية) -->
+        <div id="meet-call-section" style="display:none; margin-top:14px; border-top:1px solid rgba(255,255,255,0.1); padding-top:14px;">
+            <div style="background:rgba(0,242,254,0.05); border:1px dashed rgba(0,242,254,0.3); border-radius:10px; padding:10px; margin-bottom:12px; font-size:0.8rem; color:#94a3b8; line-height:1.5;">
+                💡 <strong>ملاحظة أمان Google:</strong> تمنع Google تضمين Meet داخل التطبيقات لحماية الخصوصية، لذا تفتح المكالمة في نافذة Google Meet الرسمية بنقرة واحدة.
             </div>
 
-            <a id="meet-join-link-btn" href="#" target="_blank" rel="noopener noreferrer" style="display:block; width:100%; padding:12px; background:var(--cyan); color:#000; text-decoration:none; border-radius:8px; font-weight:900; font-size:0.95rem; margin-bottom:8px; transition:var(--transition); box-shadow:0 0 15px rgba(0,242,254,0.4);">
-                🚀 انضمام عبر Google Meet
-            </a>
+            <!-- قسم تسجيل الدخول إذا لم يكن مسجلاً -->
+            <div id="meet-auth-section" style="display:block;">
+                <p style="color:#d1d5db; font-size:0.85rem; line-height:1.6; margin-bottom:16px;">
+                    قم بتسجيل الدخول بحساب Google لإنشاء غرفة Google Meet رسمية لأعضاء الكلان:
+                </p>
+                <button id="google-meet-signin-btn" class="gsi-material-button" onclick="handleGoogleMeetSignIn()" style="margin:0 auto 12px auto;">
+                    <div class="gsi-material-button-state"></div>
+                    <div class="gsi-material-button-content-wrapper">
+                        <div class="gsi-material-button-icon">
+                            <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" style="display: block;">
+                                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                                <path fill="none" d="M0 0h48v48H0z"></path>
+                            </svg>
+                        </div>
+                        <span class="gsi-material-button-contents">Sign in with Google</span>
+                    </div>
+                </button>
+            </div>
 
-            <button onclick="shareMeetLinkInClanChat()" style="width:100%; padding:9px; background:rgba(0,242,254,0.15); color:var(--cyan); border:1px solid var(--cyan); border-radius:8px; font-weight:800; cursor:pointer; margin-bottom:8px; font-size:0.85rem;">
-                💬 مشاركة الرابط في شات الكلان
-            </button>
+            <!-- قسم المكالمة النشطة -->
+            <div id="meet-active-section" style="display:none;">
+                <div style="background:rgba(0,255,136,0.1); border:1px solid #00ff88; border-radius:10px; padding:10px; margin-bottom:12px;">
+                    <div style="color:#00ff88; font-weight:900; font-size:0.9rem; margin-bottom:4px;">🟢 مكالمة Google Meet جاهزة</div>
+                    <div id="meet-room-code" style="color:#e2e8f0; font-size:0.8rem; direction:ltr; font-family:monospace; margin-top:2px;"></div>
+                </div>
 
-            <button onclick="copyMeetLinkToClipboard()" style="width:100%; padding:9px; background:transparent; color:#d1d5db; border:1px solid rgba(255,255,255,0.2); border-radius:8px; font-weight:700; cursor:pointer; margin-bottom:6px; font-size:0.85rem;">
-                📋 نسخ الرابط
-            </button>
+                <a id="meet-join-link-btn" href="#" target="_blank" rel="noopener noreferrer" style="display:block; width:100%; padding:12px; background:var(--cyan); color:#000; text-decoration:none; border-radius:8px; font-weight:900; font-size:0.95rem; margin-bottom:8px; transition:var(--transition); box-shadow:0 0 15px rgba(0,242,254,0.4); text-align:center;">
+                    🚀 انضمام عبر Google Meet
+                </a>
 
-            <button onclick="handleCreateNewMeetCall()" style="width:100%; padding:6px; background:transparent; color:var(--silver-muted); border:none; font-size:0.8rem; cursor:pointer; text-decoration:underline;">
-                ➕ إنشاء رابط مكالمة جديدة
-            </button>
+                <button onclick="copyMeetLinkToClipboard()" style="width:100%; padding:10px; background:rgba(0,242,254,0.15); color:var(--cyan); border:1px solid var(--cyan); border-radius:8px; font-weight:800; cursor:pointer; margin-bottom:8px; font-size:0.85rem;">
+                    📋 نسخ رابط المكالمة
+                </button>
+
+                <button onclick="handleCreateNewMeetCall()" style="width:100%; padding:6px; background:transparent; color:var(--silver-muted); border:none; font-size:0.8rem; cursor:pointer; text-decoration:underline;">
+                    ➕ إنشاء رابط مكالمة جديدة
+                </button>
+            </div>
         </div>
     </div>
 </div>

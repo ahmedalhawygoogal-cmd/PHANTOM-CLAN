@@ -3311,44 +3311,9 @@ function renderChatMessages(messages, currentUser, titleName, nameColorEffect, c
         const isMe = normalizeName(msg.sender) === normalizeName(currentUser);
         const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString("ar-EG", { hour: '2-digit', minute: '2-digit' }) : "";
         
-        // 📞 فحص إذا كانت الرسالة دعوة مكالمة (مباشرة، Agora، أو Meet)
-        const isCallInvite = (msg.isCall || /📞|🎙️|📹|مكالمة|Agora|Google Meet/i.test(msg.text));
-        if (isCallInvite) {
-            let callType = 'inapp';
-            let callTitle = 'مكالمة المقر المباشرة (صوت وفيديو)';
-            let callIcon = '📱';
-            let tabTarget = 'inapp';
-
-            if (msg.callType === 'agora' || msg.text.includes('Agora')) {
-                callType = 'agora';
-                callTitle = 'غرفة Agora الصوتية التكتيكية';
-                callIcon = '🎙️';
-                tabTarget = 'agora';
-            } else if (msg.callType === 'meet' || /Meet|meet\.google/i.test(msg.text)) {
-                callType = 'meet';
-                callTitle = 'مكالمة Google Meet الرسمية';
-                callIcon = '🌐';
-                tabTarget = 'meet';
-            }
-
-            return `
-                <div class="chat-call-card">
-                    <div class="chat-call-header">
-                        <span class="chat-call-badge">🟢 ${callIcon} مكالمة كلان نشطة</span>
-                        <span style="font-size:0.75rem; color:#94a3b8;">${time} • من: ${escapeHTML(msg.sender)}</span>
-                    </div>
-                    <div class="chat-call-title">
-                        <span>${callIcon}</span>
-                        <span>${callTitle}</span>
-                    </div>
-                    <div class="chat-call-desc">
-                        ${escapeHTML(msg.text)}
-                    </div>
-                    <button type="button" class="chat-call-join-btn" onclick="openAndJoinCall('${tabTarget}')">
-                        <span>📞</span> انضمام للمكالمة الآن
-                    </button>
-                </div>
-            `;
+        // منع ظهور أي دعوات مكالمة داخل الشات
+        if (msg.isCall) {
+            return '';
         }
 
         let titleHtml = "";
@@ -4209,11 +4174,13 @@ let currentGoogleMeetUri = null;
 let currentGoogleMeetCode = null;
 
 // حالة المكالمة المباشرة داخل التطبيق
-let inAppLocalStream = null;
-let isInAppMicMuted = false;
-let isInAppCamOff = false;
-let inAppCallMode = 'voice';
+var inAppMediaStream = null;
+var inAppLocalStream = null;
+var isInAppMicMuted = false;
+var isInAppCamOff = false;
+var inAppCallMode = 'voice';
 if (typeof window !== "undefined") {
+    window.inAppMediaStream = inAppMediaStream;
     window.inAppCallMode = inAppCallMode;
 }
 
@@ -4243,93 +4210,612 @@ function initGoogleMeetFirebase() {
     }
 }
 
+/* ========================================================
+   📞 نظام إدارة المكالمات الموحد (الصفحة الكاملة لـ Agora والاتصال المباشر)
+   ======================================================== */
+let activeCallMode = null; // 'agora' | 'direct' | null
+let activeCallId = null;
+let activeCallHost = null;
+let activeCallTopic = null;
+let activeCallChannel = null;
+let activeCallStartTime = null;
+let activeCallTimerInterval = null;
+let activeCallHeartbeatInterval = null;
+let isCallViewMinimized = false;
+let allActiveServerCalls = []; // جميع المكالمات النشطة الحقيقية من السيرفر
+
 function setupVoiceCalls() {
     initGoogleMeetFirebase();
     const voiceCallBtn = document.getElementById("voice-call-btn");
     if (voiceCallBtn) {
-        voiceCallBtn.addEventListener("click", toggleVoiceCall);
+        voiceCallBtn.addEventListener("click", handleVoiceCallBtnClick);
     }
 }
 
+function handleVoiceCallBtnClick() {
+    if (activeCallMode) {
+        maximizeCallView();
+        return;
+    }
+    openCallTypeChooser();
+}
+window.handleVoiceCallBtnClick = handleVoiceCallBtnClick;
+
+function openCallTypeChooser() {
+    const modal = document.getElementById('call-type-chooser-modal');
+    if (modal) modal.style.display = 'flex';
+    const meetSection = document.getElementById('meet-call-section');
+    if (meetSection) meetSection.style.display = 'none';
+}
+window.openCallTypeChooser = openCallTypeChooser;
+
+function closeCallTypeChooser() {
+    const modal = document.getElementById('call-type-chooser-modal');
+    if (modal) modal.style.display = 'none';
+}
+window.closeCallTypeChooser = closeCallTypeChooser;
+
+function toggleMeetCallSection(event) {
+    if (event) event.stopPropagation();
+    const section = document.getElementById('meet-call-section');
+    if (!section) return;
+    if (section.style.display === 'none' || !section.style.display) {
+        section.style.display = 'block';
+        if (typeof cachedGoogleAccessToken !== 'undefined' && cachedGoogleAccessToken && currentGoogleMeetUri) {
+            const authSection = document.getElementById("meet-auth-section");
+            const activeSection = document.getElementById("meet-active-section");
+            if (authSection) authSection.style.display = "none";
+            if (activeSection) activeSection.style.display = "block";
+        }
+    } else {
+        section.style.display = 'none';
+    }
+}
+window.toggleMeetCallSection = toggleMeetCallSection;
+
+function startCallWithMode(mode) {
+    closeCallTypeChooser();
+    const username = (typeof getCurrentUsername === 'function' ? getCurrentUsername() : null) || 'عضو PHANTOM';
+    if (mode === 'agora') {
+        joinAgoraRoom(AGORA_CHANNEL, null, username, 'غرفة Agora الصوتية التكتيكية');
+    } else {
+        startInAppCall(null, username, 'مكالمة المقر المباشرة');
+    }
+}
+window.startCallWithMode = startCallWithMode;
+
+function openFullCallView(mode, callData = {}) {
+    activeCallMode = mode;
+    activeCallId = callData.id || activeCallId || ('call_' + mode + '_' + Date.now());
+    activeCallHost = callData.hostName || callData.challengerName || activeCallHost || (typeof getCurrentUsername === 'function' ? getCurrentUsername() : null) || 'عضو PHANTOM';
+    activeCallTopic = callData.topic || callData.roomName || activeCallTopic || (mode === 'agora' ? 'غرفة Agora الصوتية' : 'مكالمة المقر المباشرة');
+    activeCallChannel = callData.channelName || activeCallChannel || (mode === 'agora' ? AGORA_CHANNEL : 'direct_hq');
+    isCallViewMinimized = false;
+
+    // إظهار صفحة المكالمة الكاملة وإخفاء الشريط العائم
+    const overlay = document.getElementById('full-page-call-overlay');
+    const floatBar = document.getElementById('floating-ongoing-call-bar');
+    if (overlay) overlay.style.display = 'flex';
+    if (floatBar) floatBar.style.display = 'none';
+
+    // تحديث عناصر الشريط العلوي
+    const roomTitle = document.getElementById('call-room-title');
+    const typeBadge = document.getElementById('call-type-badge');
+    const statusPill = document.getElementById('call-connection-status');
+    const hostEl = document.getElementById('call-host-name-display');
+    const topicEl = document.getElementById('call-topic-display');
+    const agoraStage = document.getElementById('call-agora-mode-stage');
+    const directStage = document.getElementById('call-direct-mode-stage');
+    const camBtn = document.getElementById('fullcall-cam-btn');
+    const agoraChannelTag = document.getElementById('agora-display-channel');
+
+    if (roomTitle) roomTitle.textContent = activeCallTopic;
+    if (hostEl) hostEl.textContent = activeCallHost;
+    if (topicEl) topicEl.textContent = activeCallTopic;
+
+    if (mode === 'agora') {
+        if (typeBadge) {
+            typeBadge.textContent = '🎙️ مكالمة Agora التكتيكية';
+            typeBadge.className = 'call-type-pill';
+        }
+        if (agoraStage) agoraStage.style.display = 'flex';
+        if (directStage) directStage.style.display = 'none';
+        if (camBtn) camBtn.style.display = 'none';
+        if (agoraChannelTag) agoraChannelTag.textContent = activeCallChannel;
+    } else {
+        if (typeBadge) {
+            typeBadge.textContent = '📱 اتصال مباشر (صوت وفيديو)';
+            typeBadge.className = 'call-type-pill';
+        }
+        if (agoraStage) agoraStage.style.display = 'none';
+        if (directStage) directStage.style.display = 'flex';
+        if (camBtn) camBtn.style.display = 'inline-flex';
+    }
+
+    if (statusPill) {
+        statusPill.textContent = '🟢 متصل';
+        statusPill.className = 'call-status-pill status-connected';
+    }
+
+    // بدء عداد وقت المكالمة
+    if (!activeCallStartTime) {
+        activeCallStartTime = Date.now();
+    }
+    if (!activeCallTimerInterval) {
+        activeCallTimerInterval = setInterval(updateCallTimer, 1000);
+    }
+    updateCallTimer();
+
+    // بدء نبض استمرار المكالمة مع السيرفر كل 15 ثانية لمنع انتهاء مهلتها
+    if (activeCallHeartbeatInterval) {
+        clearInterval(activeCallHeartbeatInterval);
+        activeCallHeartbeatInterval = null;
+    }
+    activeCallHeartbeatInterval = setInterval(() => {
+        if (!activeCallId) return;
+        fetch('/api/calls/heartbeat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                callId: activeCallId,
+                username: (typeof getCurrentUsername === 'function' ? getCurrentUsername() : null) || 'عضو الكلان'
+            })
+        }).catch(() => {});
+    }, 15000);
+
+    updateFullCallButtonsUI();
+    updateFullCallParticipantsUI();
+}
+window.openFullCallView = openFullCallView;
+
+function minimizeCallView() {
+    if (!activeCallMode) return;
+    isCallViewMinimized = true;
+    const overlay = document.getElementById('full-page-call-overlay');
+    const floatBar = document.getElementById('floating-ongoing-call-bar');
+    if (overlay) overlay.style.display = 'none';
+    if (floatBar) {
+        floatBar.style.display = 'flex';
+        const titleEl = document.getElementById('floating-call-title');
+        const metaEl = document.getElementById('floating-call-meta');
+        if (titleEl) {
+            titleEl.textContent = activeCallMode === 'agora' ? `🎙️ مكالمة Agora: ${activeCallTopic || 'PHANTOM'}` : `📱 اتصال مباشر: ${activeCallTopic || 'المقر'}`;
+        }
+        if (metaEl) {
+            metaEl.textContent = `المنشئ: ${activeCallHost || 'عضو الكلان'}`;
+        }
+    }
+    showToast("⛶ تم تصغير المكالمة، الصوت مستمر أثناء التصفح.", "info");
+}
+window.minimizeCallView = minimizeCallView;
+
+function maximizeCallView() {
+    if (!activeCallMode) return;
+    isCallViewMinimized = false;
+    const overlay = document.getElementById('full-page-call-overlay');
+    const floatBar = document.getElementById('floating-ongoing-call-bar');
+    if (overlay) overlay.style.display = 'flex';
+    if (floatBar) floatBar.style.display = 'none';
+    updateFullCallButtonsUI();
+    updateFullCallParticipantsUI();
+}
+window.maximizeCallView = maximizeCallView;
+
+function updateCallTimer() {
+    if (!activeCallStartTime) return;
+    const elapsedSec = Math.floor((Date.now() - activeCallStartTime) / 1000);
+    const mins = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+    const secs = String(elapsedSec % 60).padStart(2, '0');
+    const timeStr = `${mins}:${secs}`;
+    const timerEl = document.getElementById('call-timer');
+    if (timerEl) timerEl.textContent = timeStr;
+    const metaEl = document.getElementById('floating-call-meta');
+    if (metaEl && isCallViewMinimized) {
+        metaEl.textContent = `المنشئ: ${activeCallHost || 'عضو الكلان'} • ${timeStr}`;
+    }
+}
+
+async function handleFullCallToggleMic() {
+    if (activeCallMode === 'agora') {
+        await toggleAgoraMic();
+    } else if (activeCallMode === 'direct') {
+        await toggleInAppMic();
+    }
+    updateFullCallButtonsUI();
+    updateFullCallParticipantsUI();
+}
+window.handleFullCallToggleMic = handleFullCallToggleMic;
+
+async function handleFullCallToggleCam() {
+    if (activeCallMode === 'direct') {
+        await toggleInAppCam();
+        updateFullCallButtonsUI();
+    }
+}
+window.handleFullCallToggleCam = handleFullCallToggleCam;
+
+function updateFullCallButtonsUI() {
+    const isMuted = activeCallMode === 'agora' ? isAgoraMicMuted : isInAppMicMuted;
+    const fullMicBtn = document.getElementById('fullcall-mic-btn');
+    const fullMicIcon = document.getElementById('fullcall-mic-icon');
+    const fullMicLabel = document.getElementById('fullcall-mic-label');
+    const floatMicBtn = document.getElementById('floating-mic-toggle-btn');
+    const myMicBadge = document.getElementById('call-my-mic-status-badge');
+
+    if (fullMicBtn) {
+        if (!isMuted) {
+            fullMicBtn.className = 'call-ctl-btn mic-btn mic-active';
+            if (fullMicIcon) fullMicIcon.textContent = '🎙️';
+            if (fullMicLabel) fullMicLabel.textContent = 'المايك: شغال';
+        } else {
+            fullMicBtn.className = 'call-ctl-btn mic-btn mic-muted';
+            if (fullMicIcon) fullMicIcon.textContent = '🔇';
+            if (fullMicLabel) fullMicLabel.textContent = 'المايك: مكتوم';
+        }
+    }
+
+    if (floatMicBtn) {
+        floatMicBtn.textContent = !isMuted ? '🎙️' : '🔇';
+        floatMicBtn.style.color = !isMuted ? '#00ff88' : '#ef4444';
+        floatMicBtn.style.borderColor = !isMuted ? '#00ff88' : '#ef4444';
+    }
+
+    if (myMicBadge) {
+        myMicBadge.textContent = !isMuted ? '🎙️ المايك الخاص بك: شغال' : '🔇 المايك الخاص بك: مكتوم';
+        myMicBadge.style.color = !isMuted ? '#00ff88' : '#ef4444';
+        myMicBadge.style.borderColor = !isMuted ? 'rgba(0, 255, 136, 0.3)' : 'rgba(239, 68, 68, 0.3)';
+    }
+
+    const fullCamBtn = document.getElementById('fullcall-cam-btn');
+    const fullCamIcon = document.getElementById('fullcall-cam-icon');
+    const fullCamLabel = document.getElementById('fullcall-cam-label');
+    if (fullCamBtn) {
+        if (!isInAppCamOff) {
+            if (fullCamIcon) fullCamIcon.textContent = '📹';
+            if (fullCamLabel) fullCamLabel.textContent = 'الكاميرا: شغال';
+            fullCamBtn.style.color = '#fff';
+            fullCamBtn.style.borderColor = 'rgba(0, 242, 254, 0.3)';
+        } else {
+            if (fullCamIcon) fullCamIcon.textContent = '🚫';
+            if (fullCamLabel) fullCamLabel.textContent = 'الكاميرا: معطلة';
+            fullCamBtn.style.color = '#ef4444';
+            fullCamBtn.style.borderColor = '#ef4444';
+        }
+    }
+}
+window.updateFullCallButtonsUI = updateFullCallButtonsUI;
+
+async function handleFullCallEnd() {
+    const endingMode = activeCallMode;
+    const endingCallId = activeCallId;
+    const user = (typeof getCurrentUsername === 'function' ? getCurrentUsername() : null) || 'عضو الكلان';
+
+    if (activeCallTimerInterval) {
+        clearInterval(activeCallTimerInterval);
+        activeCallTimerInterval = null;
+    }
+    if (activeCallHeartbeatInterval) {
+        clearInterval(activeCallHeartbeatInterval);
+        activeCallHeartbeatInterval = null;
+    }
+    activeCallStartTime = null;
+
+    if (endingMode === 'agora') {
+        await leaveAgoraRoom();
+    } else {
+        await endInAppCall();
+    }
+
+    activeCallMode = null;
+    activeCallId = null;
+    activeCallHost = null;
+    activeCallTopic = null;
+    isCallViewMinimized = false;
+
+    const overlay = document.getElementById('full-page-call-overlay');
+    const floatBar = document.getElementById('floating-ongoing-call-bar');
+    if (overlay) overlay.style.display = 'none';
+    if (floatBar) floatBar.style.display = 'none';
+
+    fetch('/api/calls/end', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callId: endingCallId, hostName: user })
+    }).catch(() => {});
+
+    showToast("🔴 تم إنهاء المكالمة ومغادرة الغرفة.", "info");
+    fetchAndSyncActiveCalls();
+}
+window.handleFullCallEnd = handleFullCallEnd;
+
+function updateFullCallParticipantsUI() {
+    const container = document.getElementById('call-participants-list');
+    const countEl = document.getElementById('call-participants-count');
+    if (!container) return;
+
+    const myName = (typeof getCurrentUsername === 'function' ? getCurrentUsername() : null) || 'أنت';
+    const isMuted = activeCallMode === 'agora' ? isAgoraMicMuted : isInAppMicMuted;
+    const participants = [];
+
+    // المشارك المحلي (المستخدم الحالي)
+    participants.push({
+        name: myName,
+        isHost: activeCallHost ? (typeof normalizeName === 'function' ? normalizeName(myName) === normalizeName(activeCallHost) : myName === activeCallHost) : true,
+        isMe: true,
+        isMuted: isMuted,
+        isSpeaking: !isMuted
+    });
+
+    if (activeCallMode === 'agora' && typeof agoraRemoteUsers !== 'undefined' && agoraRemoteUsers instanceof Map) {
+        agoraRemoteUsers.forEach((user, uid) => {
+            const hasAudio = user.hasAudio;
+            participants.push({
+                name: `عضو (${uid})`,
+                isHost: false,
+                isMe: false,
+                isMuted: !hasAudio,
+                isSpeaking: hasAudio
+            });
+        });
+    }
+
+    if (countEl) countEl.textContent = String(participants.length);
+
+    container.innerHTML = participants.map(p => `
+        <div class="participant-card ${p.isHost ? 'is-host' : ''} ${p.isSpeaking ? 'is-speaking' : ''}">
+            <div class="participant-name-block">
+                <div class="participant-avatar-badge">${p.isHost ? '👑' : '👤'}</div>
+                <div class="participant-user-name" title="${p.name}">
+                    ${p.name} ${p.isMe ? '<small style="color:#94a3b8;">(أنت)</small>' : ''}
+                </div>
+            </div>
+            <div class="participant-status-icons">
+                <span>${!p.isMuted ? '🎙️' : '🔇'}</span>
+                ${p.isSpeaking ? '<span style="color:#00ff88; font-size:0.75rem;">🔊</span>' : ''}
+            </div>
+        </div>
+    `).join('');
+}
+window.updateFullCallParticipantsUI = updateFullCallParticipantsUI;
+
+// 📜 دوال القائمة المنسدلة للمكالمات النشطة
+function toggleActiveCallsDropdown(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    const joinBtn = document.getElementById('chat-call-join-btn');
+    if (joinBtn && joinBtn.disabled) return;
+
+    const dropdown = document.getElementById('active-calls-dropdown');
+    if (!dropdown) return;
+
+    const isVisible = dropdown.style.display === 'block';
+    if (isVisible) {
+        closeActiveCallsDropdown();
+    } else {
+        openActiveCallsDropdown();
+    }
+}
+window.toggleActiveCallsDropdown = toggleActiveCallsDropdown;
+window.handleChatCallJoinClick = toggleActiveCallsDropdown;
+
+function openActiveCallsDropdown() {
+    const dropdown = document.getElementById('active-calls-dropdown');
+    if (!dropdown) return;
+
+    dropdown.style.display = 'block';
+    renderActiveCallsDropdown(allActiveServerCalls);
+
+    // ضبط الموقع بذكاء لضمان عدم خروج القائمة عن حدود الشاشة على الهاتف والديسكتوب
+    requestAnimationFrame(() => {
+        const rect = dropdown.getBoundingClientRect();
+        if (rect.left < 8) {
+            dropdown.style.left = '0';
+            dropdown.style.right = 'auto';
+        } else if (rect.right > window.innerWidth - 8) {
+            dropdown.style.right = '0';
+            dropdown.style.left = 'auto';
+        }
+    });
+}
+window.openActiveCallsDropdown = openActiveCallsDropdown;
+
+function closeActiveCallsDropdown() {
+    const dropdown = document.getElementById('active-calls-dropdown');
+    if (dropdown) dropdown.style.display = 'none';
+}
+window.closeActiveCallsDropdown = closeActiveCallsDropdown;
+
+function renderActiveCallsDropdown(calls) {
+    const container = document.getElementById('active-calls-list-container');
+    if (!container) return;
+
+    if (!Array.isArray(calls) || calls.length === 0) {
+        container.innerHTML = '<div class="empty-calls-notice" style="text-align:center; padding:16px 10px; color:#94a3b8; font-size:0.85rem; font-weight:700;">لا توجد مكالمات نشطة حالياً</div>';
+        return;
+    }
+
+    // ترتيب المكالمات حسب اسم منشئ الغرفة أبجدياً
+    const sorted = [...calls].sort((a, b) => {
+        const nameA = a.hostName || a.challengerName || '';
+        const nameB = b.hostName || b.challengerName || '';
+        return nameA.localeCompare(nameB, 'ar');
+    });
+
+    container.innerHTML = sorted.map(c => {
+        const host = c.hostName || c.challengerName || 'عضو الكلان';
+        const mode = (c.mode === 'agora' || (c.details && c.details.mode === 'agora')) ? 'agora' : 'direct';
+        const modeLabel = mode === 'agora' ? '🎙️ Agora (صوت)' : '📱 اتصال مباشر (صوت وفيديو)';
+        const room = c.roomName || c.topic || (c.details && c.details.topic) || (mode === 'agora' ? 'غرفة Agora الصوتية' : 'مكالمة المقر المباشرة');
+        const pCount = (Array.isArray(c.participants) && c.participants.length > 0) ? c.participants.length : 1;
+        const callId = c.id;
+
+        return `
+            <div class="active-call-item" data-call-id="${callId}" style="background:rgba(255,255,255,0.05); border:1px solid rgba(0, 242, 254, 0.25); border-radius:10px; padding:10px 12px; display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;">
+                <div class="active-call-item-info" style="flex:1; display:flex; flex-direction:column; gap:4px; overflow:hidden;">
+                    <div class="active-call-host-row" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                        <span class="active-call-host-name" style="font-size:0.9rem; font-weight:900; color:#fff;">👑 ${host}</span>
+                        <span class="active-call-type-badge ${mode === 'agora' ? 'badge-agora' : 'badge-direct'}" style="font-size:0.7rem; padding:2px 7px; border-radius:6px; font-weight:700; background:${mode === 'agora' ? 'rgba(0,242,254,0.15)' : 'rgba(16,185,129,0.15)'}; color:${mode === 'agora' ? '#00f2fe' : '#10b981'}; border:1px solid ${mode === 'agora' ? 'rgba(0,242,254,0.4)' : 'rgba(16,185,129,0.4)'};">
+                            ${modeLabel}
+                        </span>
+                    </div>
+                    <div class="active-call-sub-row" style="display:flex; align-items:center; gap:8px; font-size:0.75rem; color:#94a3b8; flex-wrap:wrap;">
+                        <span class="active-call-room-name" style="color:#cbd5e1;">📡 ${room}</span>
+                        <span class="active-call-status-badge" style="color:#00ff88; font-weight:800;">🟢 نشطة</span>
+                        <span class="active-call-participants-count" style="color:#94a3b8;">👥 ${pCount} مشارك</span>
+                    </div>
+                </div>
+                <button type="button" class="active-call-item-join-btn" onclick="joinSpecificCall('${callId}')" style="padding:7px 15px; background:linear-gradient(135deg, #00f2fe, #00ff88); border:none; color:#050a14; font-weight:900; font-size:0.82rem; border-radius:8px; cursor:pointer; white-space:nowrap; box-shadow:0 0 10px rgba(0,255,136,0.3); transition:transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                    انضمام
+                </button>
+            </div>
+        `;
+    }).join('');
+}
+window.renderActiveCallsDropdown = renderActiveCallsDropdown;
+
+async function joinSpecificCall(callId) {
+    closeActiveCallsDropdown();
+    let call = allActiveServerCalls.find(c => c.id === callId);
+    if (!call && currentActiveCallData && currentActiveCallData.id === callId) {
+        call = currentActiveCallData;
+    }
+    if (!call) {
+        showToast("⚠️ لم يتم العثور على المكالمة، ربما تكون قد انتهت.", "error");
+        fetchAndSyncActiveCalls();
+        return;
+    }
+
+    const host = call.hostName || call.challengerName || 'عضو الكلان';
+    const mode = (call.mode === 'agora' || (call.details && call.details.mode === 'agora')) ? 'agora' : 'direct';
+    const room = call.roomName || call.topic || (call.details && call.details.topic) || (mode === 'agora' ? 'غرفة Agora الصوتية' : 'مكالمة المقر المباشرة');
+    const channel = call.channelName || (call.details && call.details.channelName) || AGORA_CHANNEL;
+
+    showToast(`📞 جاري الانضمام لمكالمة ${host}...`, "info");
+
+    if (mode === 'agora') {
+        await joinAgoraRoom(channel, call.id, host, room);
+    } else {
+        await startInAppCall(call.id, host, room);
+    }
+}
+window.joinSpecificCall = joinSpecificCall;
+
+async function fetchAndSyncActiveCalls() {
+    try {
+        const res = await fetch('/api/calls/active');
+        if (!res.ok) return;
+        const data = await res.json();
+        const activeCallsList = Array.isArray(data.activeCalls) ? data.activeCalls : (data.activeCall ? [data.activeCall] : []);
+        updateActiveCallsSync(activeCallsList, data.activeCall);
+    } catch (_) {}
+}
+window.fetchAndSyncActiveCalls = fetchAndSyncActiveCalls;
+
+function updateActiveCallsSync(callsList, primaryCall) {
+    allActiveServerCalls = Array.isArray(callsList) ? callsList.filter(c => {
+        const isAct = (c.status === 'active' || c.active) && c.status !== 'ended' && c.status !== 'cancelled';
+        const mode = c.mode || (c.details && c.details.mode);
+        // استبعاد أي مكالمة خارجية مثل Google Meet أو مكالمة منتهية
+        return isAct && (mode === 'agora' || mode === 'direct' || mode === 'inapp');
+    }) : [];
+    const joinBtn = document.getElementById('chat-call-join-btn');
+    const endedStatus = document.getElementById('chat-call-ended-status');
+    const banner = document.getElementById('clan-active-call-banner');
+    const voiceBtn = document.getElementById('voice-call-btn');
+    const dropdown = document.getElementById('active-calls-dropdown');
+
+    if (banner) banner.style.display = 'none';
+
+    if (allActiveServerCalls.length === 0) {
+        // لا توجد مكالمات نشطة: زر "انضمام" معطل تماماً وبدون أي أنيميشن أو توهج
+        if (joinBtn) {
+            joinBtn.disabled = true;
+            joinBtn.style.opacity = '0.45';
+            joinBtn.style.cursor = 'not-allowed';
+            joinBtn.style.background = 'rgba(255,255,255,0.05)';
+            joinBtn.style.borderColor = 'rgba(255,255,255,0.12)';
+            joinBtn.style.color = '#64748b';
+            joinBtn.style.boxShadow = 'none';
+            joinBtn.style.animation = 'none';
+            joinBtn.style.transform = 'none';
+            joinBtn.title = 'لا توجد مكالمات نشطة حالياً';
+        }
+        const dot = document.getElementById('voice-live-dot');
+        if (dot) dot.remove();
+        currentActiveCallData = null;
+
+        // إذا كانت القائمة مفتوحة وتلاشت المكالمات، نعرض رسالة لا توجد مكالمات
+        if (dropdown && dropdown.style.display === 'block') {
+            renderActiveCallsDropdown([]);
+        }
+    } else {
+        // توجد مكالمات نشطة: زر "انضمام" متاح ومضاء بهدوء
+        const activeCall = allActiveServerCalls[allActiveServerCalls.length - 1];
+        const host = activeCall.hostName || activeCall.challengerName || 'عضو الكلان';
+        currentActiveCallData = activeCall;
+
+        if (joinBtn) {
+            joinBtn.disabled = false;
+            joinBtn.style.opacity = '1';
+            joinBtn.style.cursor = 'pointer';
+            joinBtn.style.background = 'linear-gradient(135deg, rgba(0, 242, 254, 0.2), rgba(0, 255, 136, 0.2))';
+            joinBtn.style.borderColor = '#00ff88';
+            joinBtn.style.color = '#00ff88';
+            joinBtn.style.boxShadow = '0 0 10px rgba(0, 255, 136, 0.35)';
+            joinBtn.style.animation = 'none';
+            joinBtn.title = `اضغط لعرض المكالمات النشطة (${allActiveServerCalls.length})`;
+        }
+        if (endedStatus) endedStatus.style.display = 'none';
+
+        if (voiceBtn) {
+            voiceBtn.style.position = 'relative';
+            if (!document.getElementById('voice-live-dot')) {
+                const dot = document.createElement('span');
+                dot.id = 'voice-live-dot';
+                dot.style.cssText = 'position:absolute; top:-2px; right:-2px; width:8px; height:8px; background:#00ff88; border-radius:50%; box-shadow:0 0 8px #00ff88;';
+                voiceBtn.appendChild(dot);
+            }
+        }
+
+        // إذا كانت القائمة مفتوحة، نحدث محتواها بالقائمة الجديدة
+        if (dropdown && dropdown.style.display === 'block') {
+            renderActiveCallsDropdown(allActiveServerCalls);
+        }
+    }
+}
+window.updateActiveCallsSync = updateActiveCallsSync;
+
+// إغلاق القائمة المنسدلة عند النقر في أي مكان خارجها
+document.addEventListener('click', (e) => {
+    const group = document.getElementById('chat-call-header-group');
+    const dropdown = document.getElementById('active-calls-dropdown');
+    if (dropdown && dropdown.style.display === 'block') {
+        if (group && !group.contains(e.target)) {
+            closeActiveCallsDropdown();
+        }
+    }
+});
+
 function toggleVoiceCall() {
-    showGoogleMeetModal();
+    handleVoiceCallBtnClick();
 }
 
 function switchCallTab(tab) {
-    const inappSection = document.getElementById('inapp-call-section');
-    const agoraSection = document.getElementById('agora-call-section');
-    const meetSection = document.getElementById('meet-call-section');
-    const tabInappBtn = document.getElementById('call-tab-inapp');
-    const tabAgoraBtn = document.getElementById('call-tab-agora');
-    const tabMeetBtn = document.getElementById('call-tab-meet');
-
-    // إعادة ضبط الأزرار
-    [tabInappBtn, tabAgoraBtn, tabMeetBtn].forEach(btn => {
-        if (btn) {
-            btn.style.background = 'transparent';
-            btn.style.color = '#9ca3af';
-        }
-    });
-
-    // إخفاء جميع الأقسام
-    if (inappSection) inappSection.style.display = 'none';
-    if (agoraSection) agoraSection.style.display = 'none';
-    if (meetSection) meetSection.style.display = 'none';
-
-    if (tab === 'inapp') {
-        if (inappSection) inappSection.style.display = 'block';
-        if (tabInappBtn) {
-            tabInappBtn.style.background = 'var(--cyan)';
-            tabInappBtn.style.color = '#000';
-        }
-    } else if (tab === 'agora') {
-        if (agoraSection) agoraSection.style.display = 'block';
-        if (tabAgoraBtn) {
-            tabAgoraBtn.style.background = 'linear-gradient(135deg, #00f2fe, #3b82f6)';
-            tabAgoraBtn.style.color = '#000';
-        }
-    } else if (tab === 'meet') {
-        if (meetSection) meetSection.style.display = 'block';
-        if (tabMeetBtn) {
-            tabMeetBtn.style.background = 'var(--cyan)';
-            tabMeetBtn.style.color = '#000';
-        }
-        if (!cachedGoogleAccessToken) {
-            const authSection = document.getElementById("meet-auth-section");
-            const activeSection = document.getElementById("meet-active-section");
-            if (authSection) authSection.style.display = "block";
-            if (activeSection) activeSection.style.display = "none";
-        }
+    if (tab === 'agora') {
+        openFullCallView('agora');
+    } else if (tab === 'inapp') {
+        openFullCallView('direct');
     }
 }
 
 function showGoogleMeetModal(forceAuth = false) {
-    const modal = document.getElementById("google-meet-modal");
-    if (!modal) return;
-    modal.style.display = "block";
-
-    // البداية الافتراضية على مكالمة داخل التطبيق
-    switchCallTab('inapp');
-
-    const authSection = document.getElementById("meet-auth-section");
-    const activeSection = document.getElementById("meet-active-section");
-
-    if (forceAuth || !cachedGoogleAccessToken) {
-        if (authSection) authSection.style.display = "block";
-        if (activeSection) activeSection.style.display = "none";
-    } else {
-        if (authSection) authSection.style.display = "none";
-        if (activeSection) activeSection.style.display = "block";
-        if (!currentGoogleMeetUri) {
-            handleCreateNewMeetCall();
-        }
-    }
+    handleVoiceCallBtnClick();
 }
 
 function closeGoogleMeetModal() {
-    const modal = document.getElementById("google-meet-modal");
-    if (modal) modal.style.display = "none";
-    endInAppCall();
+    handleFullCallEnd();
 }
 
 /* ========================================================
@@ -4462,15 +4948,19 @@ function updateCallParticipantsUI() {
 }
 
 /* 📱 بدء المكالمة المباشرة (فيديو وصوت) داخل التطبيق */
-async function startInAppCall() {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        showToast("⚠️ متصفحك لا يدعم الوصول للكاميرا والميكروفون.", "error");
-        return;
+async function startInAppCall(callIdOverride, hostOverride, roomNameOverride) {
+    const username = getCurrentUsername() || 'عضو PHANTOM';
+    const actualHost = hostOverride || username;
+    const actualRoom = roomNameOverride || 'مكالمة المقر المباشرة';
+    const actualCallId = callIdOverride || ('call_direct_' + Date.now());
+
+    // إيقاف أي مسارات Agora سابقة لتحرير المايكروفون والعتاد
+    if (agoraLocalAudioTrack) {
+        try { agoraLocalAudioTrack.stop(); agoraLocalAudioTrack.close(); } catch (_) {}
+        agoraLocalAudioTrack = null;
     }
 
-    const username = getCurrentUsername() || 'عضو PHANTOM';
     const startBtn = document.getElementById('inapp-start-btn');
-    const shareBtn = document.getElementById('inapp-share-chat-btn');
     const endBtn = document.getElementById('inapp-end-btn');
     const controls = document.getElementById('inapp-controls-bar');
     const liveBadge = document.getElementById('inapp-live-badge');
@@ -4482,8 +4972,73 @@ async function startInAppCall() {
         startBtn.textContent = "⏳ جاري تشغيل الكاميرا والميكروفون...";
     }
 
+    let streamObtained = false;
+    inAppMediaStream = null;
+
+    if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
+        // 1. محاولة طلب الفيديو والصوت معاً مع تفضيل الكاميرا الأمامية
+        try {
+            inAppMediaStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+                audio: { echoCancellation: true, noiseSuppression: true }
+            });
+            streamObtained = true;
+            isInAppMicMuted = false;
+            isInAppCamOff = false;
+        } catch (e1) {
+            try {
+                inAppMediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                streamObtained = true;
+                isInAppMicMuted = false;
+                isInAppCamOff = false;
+            } catch (e2) {
+                // 2. محاولة طلب الكاميرا والصوت بشكل منفصل لضمان عمل أي جهاز متاح
+                let vStream = null;
+                let aStream = null;
+                try {
+                    vStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                } catch (_) {}
+                try {
+                    aStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                } catch (_) {}
+
+                if (vStream || aStream) {
+                    inAppMediaStream = new MediaStream();
+                    if (vStream && vStream.getVideoTracks().length > 0) {
+                        vStream.getVideoTracks().forEach(t => inAppMediaStream.addTrack(t));
+                        isInAppCamOff = false;
+                    } else {
+                        isInAppCamOff = true;
+                    }
+                    if (aStream && aStream.getAudioTracks().length > 0) {
+                        aStream.getAudioTracks().forEach(t => inAppMediaStream.addTrack(t));
+                        isInAppMicMuted = false;
+                    } else {
+                        isInAppMicMuted = true;
+                    }
+                    streamObtained = true;
+                }
+            }
+        }
+    }
+
+    // 3. إذا رفض المتصفح الصلاحيات أو تعذر فتح العتاد، إنشاء مسار صامت للاستماع
+    if (!streamObtained || !inAppMediaStream) {
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const dest = ctx.createMediaStreamDestination();
+            inAppMediaStream = dest.stream;
+        } catch (_) {
+            inAppMediaStream = new MediaStream();
+        }
+        isInAppMicMuted = true;
+        isInAppCamOff = true;
+    }
+
+    window.inAppMediaStream = inAppMediaStream;
+
     try {
-        inAppMediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        const hasVideo = inAppMediaStream && inAppMediaStream.getVideoTracks().length > 0 && !isInAppCamOff;
 
         if (localContainer) {
             localContainer.innerHTML = '';
@@ -4492,43 +5047,76 @@ async function startInAppCall() {
             videoEl.autoplay = true;
             videoEl.playsInline = true;
             videoEl.muted = true;
+            videoEl.setAttribute('autoplay', '');
+            videoEl.setAttribute('playsinline', '');
+            videoEl.setAttribute('muted', '');
             videoEl.style.width = '100%';
             videoEl.style.height = '100%';
             videoEl.style.objectFit = 'cover';
             videoEl.srcObject = inAppMediaStream;
+
+            if (hasVideo) {
+                videoEl.style.display = 'block';
+                videoEl.play().catch(() => {});
+            } else {
+                videoEl.style.display = 'none';
+            }
             localContainer.appendChild(videoEl);
-            await videoEl.play().catch(() => {});
         }
 
-        if (placeholder) placeholder.style.display = 'none';
+        if (placeholder) {
+            placeholder.style.display = hasVideo ? 'none' : 'flex';
+        }
         if (liveBadge) liveBadge.style.display = 'block';
         if (controls) controls.style.display = 'flex';
         if (startBtn) startBtn.style.display = 'none';
-        if (shareBtn) shareBtn.style.display = 'block';
         if (endBtn) endBtn.style.display = 'block';
 
-        isInAppMicMuted = false;
-        isInAppCamOff = false;
-
         const inappStatus = document.getElementById('inapp-status-text');
-        if (inappStatus) inappStatus.textContent = `🟢 المكالمة المباشرة نشطة (${username})`;
+        if (inappStatus) inappStatus.textContent = `🟢 المكالمة المباشرة نشطة (${actualHost})`;
 
-        showToast("🎥 تم تشغيل المكالمة المباشرة بنجاح!", "success");
+        if (hasVideo) {
+            showToast("📹 تم تشغيل الكاميرا والمكالمة المباشرة بنجاح!", "success");
+        } else if (!isInAppMicMuted) {
+            showToast("🎙️ تم تشغيل الصوت المباشر (يمكنك تشغيل الكاميرا من زر 📹).", "info");
+        } else {
+            showToast("🎧 متصل بالمكالمة المباشرة (يرجى السماح بالكاميرا/المايك).", "info");
+        }
 
-        fetch('/api/calls/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                hostName: username,
-                hostId: getCurrentUserId(),
-                mode: 'inapp',
-                topic: 'مكالمة المقر المباشرة'
-            })
-        }).catch(() => {});
+        // 🚀 فتح صفحة المكالمة الكاملة للاتصال المباشر
+        openFullCallView('direct', {
+            id: actualCallId,
+            hostName: actualHost,
+            topic: actualRoom
+        });
+
+        if (!callIdOverride) {
+            fetch('/api/calls/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    callId: actualCallId,
+                    hostName: actualHost,
+                    hostId: getCurrentUserId(),
+                    mode: 'direct',
+                    topic: actualRoom,
+                    roomName: actualRoom
+                })
+            }).then(() => fetchAndSyncActiveCalls()).catch(() => {});
+        } else {
+            fetch('/api/calls/join', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    callId: actualCallId,
+                    username: username,
+                    userId: getCurrentUserId()
+                })
+            }).then(() => fetchAndSyncActiveCalls()).catch(() => {});
+        }
 
     } catch (err) {
-        console.error("In-app call error:", err);
-        showToast("⚠️ تعذر تشغيل الكاميرا والميكروفون: " + (err.message || "رفض الإذن"), "error");
+        console.warn("[Direct Call] Setup warning:", err);
         if (startBtn) {
             startBtn.disabled = false;
             startBtn.textContent = "🚀 بدء المكالمة المباشرة (فيديو وصوت)";
@@ -4536,78 +5124,110 @@ async function startInAppCall() {
     }
 }
 
-function toggleInAppMic() {
+async function toggleInAppMic() {
     if (!inAppMediaStream) {
-        showToast("⚠️ المايكروفون غير مفعل حالياً.", "info");
-        return;
+        inAppMediaStream = new MediaStream();
+        window.inAppMediaStream = inAppMediaStream;
     }
-    const audioTrack = inAppMediaStream.getAudioTracks()[0];
-    if (audioTrack) {
+    let audioTrack = inAppMediaStream.getAudioTracks()[0];
+
+    if (!audioTrack || audioTrack.readyState === 'ended') {
+        showToast("⏳ جاري تشغيل المايكروفون...", "info");
+        try {
+            const aStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            if (aStream && aStream.getAudioTracks().length > 0) {
+                const newTrack = aStream.getAudioTracks()[0];
+                inAppMediaStream.addTrack(newTrack);
+                audioTrack = newTrack;
+                isInAppMicMuted = false;
+            }
+        } catch (micErr) {
+            console.warn("[Direct Call] Failed to acquire mic:", micErr);
+            showToast("⚠️ تعذر تشغيل المايكروفون: تحقق من الإذن بالمتصفح.", "warning");
+            return;
+        }
+    } else {
         isInAppMicMuted = !isInAppMicMuted;
         audioTrack.enabled = !isInAppMicMuted;
-        const micBtn = document.getElementById('inapp-mic-btn');
-        if (micBtn) {
-            micBtn.innerHTML = isInAppMicMuted ? '🔇 المايك: مكتوم' : '🎙️ المايك: شغال';
-            micBtn.style.borderColor = isInAppMicMuted ? '#ef4444' : 'rgba(255,255,255,0.2)';
-            micBtn.style.color = isInAppMicMuted ? '#ef4444' : '#fff';
-        }
-        showToast(isInAppMicMuted ? "🔇 تم كتم المايك" : "🎙️ تم تشغيل المايك", "info");
     }
+
+    const micBtn = document.getElementById('inapp-mic-btn');
+    if (micBtn) {
+        micBtn.innerHTML = isInAppMicMuted ? '🔇 المايك: مكتوم' : '🎙️ المايك: شغال';
+        micBtn.style.borderColor = isInAppMicMuted ? '#ef4444' : 'rgba(255,255,255,0.2)';
+        micBtn.style.color = isInAppMicMuted ? '#ef4444' : '#fff';
+    }
+    if (typeof updateFullCallButtonsUI === 'function') {
+        updateFullCallButtonsUI();
+    }
+    showToast(isInAppMicMuted ? "🔇 تم كتم المايك" : "🎙️ تم تشغيل المايك", "info");
 }
 
-function toggleInAppCam() {
+async function toggleInAppCam() {
     if (!inAppMediaStream) {
-        showToast("⚠️ الكاميرا غير مفعلة حالياً.", "info");
-        return;
+        inAppMediaStream = new MediaStream();
+        window.inAppMediaStream = inAppMediaStream;
     }
-    const videoTrack = inAppMediaStream.getVideoTracks()[0];
-    if (videoTrack) {
+    let videoTrack = inAppMediaStream.getVideoTracks()[0];
+
+    if (!videoTrack || videoTrack.readyState === 'ended') {
+        showToast("⏳ جاري تشغيل الكاميرا...", "info");
+        let vStream = null;
+        try {
+            vStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user' }
+            });
+        } catch (_) {
+            try {
+                vStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            } catch (camErr) {
+                console.warn("[Direct Call] Failed to acquire camera:", camErr);
+                showToast("⚠️ تعذر تشغيل الكاميرا: تحقق من صلاحية الكاميرا بالمتصفح.", "warning");
+                return;
+            }
+        }
+
+        if (vStream && vStream.getVideoTracks().length > 0) {
+            const newTrack = vStream.getVideoTracks()[0];
+            inAppMediaStream.addTrack(newTrack);
+            videoTrack = newTrack;
+            isInAppCamOff = false;
+        }
+    } else {
         isInAppCamOff = !isInAppCamOff;
         videoTrack.enabled = !isInAppCamOff;
-        const camBtn = document.getElementById('inapp-cam-btn');
-        if (camBtn) {
-            camBtn.innerHTML = isInAppCamOff ? '🚫 الكاميرا: معطلة' : '📹 الكاميرا: شغال';
-            camBtn.style.borderColor = isInAppCamOff ? '#ef4444' : 'rgba(255,255,255,0.2)';
-            camBtn.style.color = isInAppCamOff ? '#ef4444' : '#fff';
-        }
-        showToast(isInAppCamOff ? "🚫 تم إيقاف الكاميرا" : "📹 تم تشغيل الكاميرا", "info");
     }
+
+    const videoEl = document.getElementById('inapp-clan-video');
+    const placeholder = document.getElementById('inapp-video-placeholder');
+
+    if (videoEl && inAppMediaStream) {
+        videoEl.srcObject = inAppMediaStream;
+        if (!isInAppCamOff && videoTrack && videoTrack.enabled) {
+            videoEl.style.display = 'block';
+            await videoEl.play().catch(() => {});
+            if (placeholder) placeholder.style.display = 'none';
+        } else {
+            videoEl.style.display = 'none';
+            if (placeholder) placeholder.style.display = 'flex';
+        }
+    }
+
+    const camBtn = document.getElementById('inapp-cam-btn');
+    if (camBtn) {
+        camBtn.innerHTML = isInAppCamOff ? '🚫 الكاميرا: معطلة' : '📹 الكاميرا: شغال';
+        camBtn.style.borderColor = isInAppCamOff ? '#ef4444' : 'rgba(255,255,255,0.2)';
+        camBtn.style.color = isInAppCamOff ? '#ef4444' : '#fff';
+    }
+
+    if (typeof updateFullCallButtonsUI === 'function') {
+        updateFullCallButtonsUI();
+    }
+    showToast(isInAppCamOff ? "🚫 تم إيقاف الكاميرا" : "📹 تم تشغيل الكاميرا بنجاح", "info");
 }
 
 async function shareInAppCallInClanChat() {
-    const user = getCurrentUsername() || 'عضو PHANTOM';
-    const msgText = `📞 دعوة مكالمة مباشرة: ${user} بدأ مكالمة صوت وفيديو داخل المقر الآن! اضغط للانضمام والمشاركة.`;
-    
-    try {
-        const message = {
-            sender: user,
-            text: msgText,
-            timestamp: Date.now(),
-            isCall: true,
-            callType: 'inapp'
-        };
-        await serverSendChat(message);
-        renderChat();
-    } catch (e) {
-        console.warn("Failed to send call invitation chat:", e);
-    }
-
-    fetch('/api/calls/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            hostName: user,
-            hostId: getCurrentUserId(),
-            mode: 'inapp',
-            topic: 'مكالمة المقر المباشرة'
-        })
-    }).catch(() => {});
-
-    showToast("✅ تم إرسال دعوة الكلان للمكالمة في الشات!", "success");
-    closeGoogleMeetModal();
-    if (typeof navigateToPage === 'function') {
-        navigateToPage('page-chat');
-    }
+    showToast("📞 المكالمة المباشرة نشطة وتظهر للأعضاء عبر زر 📞 وأيقونة الانضمام.", "info");
 }
 
 async function endInAppCall() {
@@ -4845,7 +5465,68 @@ async function ensureAgoraRtcLoaded(timeoutMs = 10000) {
     return agoraLoadingPromise;
 }
 
-async function joinAgoraRoom() {
+// 🎙️ مساعد الحصول على مسار المايكروفون لـ Agora مع دعم Fallback إلى getUserMedia القياسي
+async function obtainAgoraAudioTrack() {
+    if (agoraLocalAudioTrack) {
+        return agoraLocalAudioTrack;
+    }
+    const rtc = window.AgoraRTC || AgoraRTC;
+
+    // 1. محاولة طلب المسار عبر AgoraRTC المباشر
+    if (rtc && typeof rtc.createMicrophoneAudioTrack === 'function') {
+        try {
+            const track = await rtc.createMicrophoneAudioTrack({
+                encoderConfig: "speech_low_quality",
+                AEC: true,
+                ANS: true,
+                AGC: true
+            });
+            if (track) return track;
+        } catch (agoraErr) {
+            console.warn("[Agora] createMicrophoneAudioTrack failed, trying native getUserMedia fallback:", agoraErr);
+        }
+    }
+
+    // 2. استخدام المايكروفون عبر متصفح الويب القياسي وتغليفه كمسار مخصص في Agora
+    if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
+            }).catch(async () => {
+                return await navigator.mediaDevices.getUserMedia({ audio: true });
+            });
+
+            if (stream && stream.getAudioTracks().length > 0) {
+                const nativeTrack = stream.getAudioTracks()[0];
+                if (rtc && typeof rtc.createCustomAudioTrack === 'function') {
+                    const customTrack = rtc.createCustomAudioTrack({
+                        mediaStreamTrack: nativeTrack
+                    });
+                    if (customTrack) return customTrack;
+                }
+            }
+        } catch (nativeErr) {
+            console.warn("[Agora] Native getUserMedia audio fallback failed:", nativeErr);
+            throw nativeErr;
+        }
+    }
+
+    throw new Error("لم يتم العثور على مايكروفون متاح أو تم رفض الإذن.");
+}
+
+async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, roomNameOverride) {
+    // إيقاف مسارات الاتصال المباشر السابقة لتحرير المايكروفون لـ Agora
+    if (inAppMediaStream) {
+        try { inAppMediaStream.getTracks().forEach(t => t.stop()); } catch (_) {}
+        inAppMediaStream = null;
+        isInAppMicMuted = true;
+        isInAppCamOff = true;
+    }
+
     const joinBtn = document.getElementById("agora-join-btn");
     const leaveBtn = document.getElementById("agora-leave-btn");
     const shareBtn = document.getElementById("agora-share-chat-btn");
@@ -4882,6 +5563,10 @@ async function joinAgoraRoom() {
     }
 
     const username = getCurrentUsername() || 'عضو PHANTOM';
+    const actualHost = hostOverride || username;
+    const actualRoom = roomNameOverride || 'غرفة Agora الصوتية';
+    const targetChannel = channelOverride || AGORA_CHANNEL;
+    const actualCallId = callIdOverride || ('call_agora_' + Date.now());
     const uid = Math.floor(Math.random() * 90000) + 10000;
 
     if (joinBtn) {
@@ -4892,7 +5577,7 @@ async function joinAgoraRoom() {
         // 2. طلب التوكن الحقيقي من Edge Function: agora-token
         let tokenData;
         try {
-            tokenData = await fetchAgoraToken(AGORA_CHANNEL, uid);
+            tokenData = await fetchAgoraToken(targetChannel, uid);
         } catch (tokenErr) {
             console.error("Token fetch failed:", tokenErr);
             showToast(tokenErr.message, "error");
@@ -4905,7 +5590,7 @@ async function joinAgoraRoom() {
 
         const activeAppId = tokenData.appId || AGORA_APP_ID;
         const activeToken = tokenData.token;
-        const activeChannel = tokenData.channelName || AGORA_CHANNEL;
+        const activeChannel = tokenData.channelName || targetChannel;
 
         if (joinBtn) {
             joinBtn.textContent = "⏳ جاري الاتصال بغرفة Agora...";
@@ -4934,49 +5619,27 @@ async function joinAgoraRoom() {
             throw new Error(joinMsg);
         }
 
-        // 4. إنشاء ونشر مسار المايكروفون مع التحقق المسبق من الصلاحيات لمنع انهيار المكالمة
-        let micPermissionBlocked = false;
+        // 4. إنشاء ونشر مسار المايكروفون
         try {
-            if (navigator.permissions && typeof navigator.permissions.query === "function") {
-                const pStatus = await navigator.permissions.query({ name: "microphone" }).catch(() => null);
-                if (pStatus && pStatus.state === "denied") {
-                    micPermissionBlocked = true;
-                }
+            agoraLocalAudioTrack = await obtainAgoraAudioTrack();
+            if (agoraLocalAudioTrack && agoraClient && isAgoraJoined) {
+                await agoraClient.publish([agoraLocalAudioTrack]);
             }
-        } catch (_) {}
-
-        if (micPermissionBlocked) {
-            console.warn("[Agora] Microphone permission is explicitly denied by browser.");
+            isAgoraMicMuted = false;
+            updateAgoraMicButtonUI(true);
+        } catch (micErr) {
+            console.warn("[Agora] Microphone acquisition deferred or denied:", micErr);
             isAgoraMicMuted = true;
-            updateAgoraMicButtonUI(false, "صلاحية المايك محظورة");
-            showToast("🎧 متصل بغرفة Agora في وضع الاستماع (صلاحية المايك محظورة في المتصفح).", "info");
-        } else {
-            try {
-                if (!agoraLocalAudioTrack) {
-                    agoraLocalAudioTrack = await (window.AgoraRTC || AgoraRTC).createMicrophoneAudioTrack();
-                }
-                if (agoraLocalAudioTrack && agoraClient && isAgoraJoined) {
-                    await agoraClient.publish([agoraLocalAudioTrack]);
-                }
-                isAgoraMicMuted = false;
-                updateAgoraMicButtonUI(true);
-            } catch (micErr) {
-                console.warn("[Agora] Microphone track creation skipped/denied:", micErr);
-                isAgoraMicMuted = true;
-                const isDenied = micErr && (micErr.name === "NotAllowedError" || (micErr.message && (micErr.message.includes("Permission denied") || micErr.message.includes("NotAllowedError"))));
-                updateAgoraMicButtonUI(false, isDenied ? "صلاحية المايك مرفوضة" : "المايك مغلق");
-                showToast("🎧 متصل بغرفة Agora في وضع الاستماع (المايك غير مفعل). انقر زر المايك عند منح الصلاحية.", "info");
-            }
+            updateAgoraMicButtonUI(false, "المايك مكتوم");
         }
 
         // 5. تحديث واجهة المستخدم
         if (joinBtn) joinBtn.style.display = "none";
         if (leaveBtn) leaveBtn.style.display = "block";
-        if (shareBtn) shareBtn.style.display = "block";
         if (controls) controls.style.display = "flex";
         if (badge) {
             badge.style.display = "inline-block";
-            badge.textContent = `🟢 متصل بالروم الصوتي (${username})`;
+            badge.textContent = `🟢 متصل بالروم الصوتي (${actualHost})`;
         }
         if (statusText) statusText.textContent = `✅ متصل بغرفة ${activeChannel} بجودة نقية!`;
         if (visualizer) {
@@ -4987,16 +5650,39 @@ async function joinAgoraRoom() {
         updateAgoraUsersUI();
         showToast("🎉 تم الاتصال بغرفة Agora بنجاح!", "success");
 
-        fetch('/api/calls/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                hostName: username,
-                hostId: getCurrentUserId(),
-                mode: 'agora',
-                topic: 'غرفة Agora الصوتية'
-            })
-        }).catch(() => {});
+        // 🚀 فتح صفحة المكالمة الكاملة لـ Agora
+        openFullCallView('agora', {
+            id: actualCallId,
+            hostName: actualHost,
+            topic: actualRoom,
+            channelName: activeChannel
+        });
+
+        if (!callIdOverride) {
+            fetch('/api/calls/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    callId: actualCallId,
+                    hostName: actualHost,
+                    hostId: getCurrentUserId(),
+                    mode: 'agora',
+                    topic: actualRoom,
+                    roomName: actualRoom,
+                    channelName: activeChannel
+                })
+            }).then(() => fetchAndSyncActiveCalls()).catch(() => {});
+        } else {
+            fetch('/api/calls/join', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    callId: actualCallId,
+                    username: username,
+                    userId: getCurrentUserId()
+                })
+            }).then(() => fetchAndSyncActiveCalls()).catch(() => {});
+        }
 
     } catch (err) {
         console.error("Agora join error:", err);
@@ -5010,17 +5696,21 @@ async function joinAgoraRoom() {
 
 function updateAgoraMicButtonUI(isActive, customLabel) {
     const btn = document.getElementById("agora-mic-btn");
-    if (!btn) return;
-    if (isActive) {
-        btn.innerHTML = "🎙️ المايك: شغال";
-        btn.style.color = "#fff";
-        btn.style.borderColor = "rgba(0, 255, 136, 0.4)";
-        btn.style.background = "rgba(0, 255, 136, 0.12)";
-    } else {
-        btn.innerHTML = customLabel ? `🔇 ${customLabel}` : "🔇 المايك: مكتوم";
-        btn.style.color = "#ef4444";
-        btn.style.borderColor = "rgba(239, 68, 68, 0.4)";
-        btn.style.background = "rgba(239, 68, 68, 0.12)";
+    if (btn) {
+        if (isActive) {
+            btn.innerHTML = "🎙️ المايك: شغال";
+            btn.style.color = "#fff";
+            btn.style.borderColor = "rgba(0, 255, 136, 0.4)";
+            btn.style.background = "rgba(0, 255, 136, 0.12)";
+        } else {
+            btn.innerHTML = customLabel ? `🔇 ${customLabel}` : "🔇 المايك: مكتوم";
+            btn.style.color = "#ef4444";
+            btn.style.borderColor = "rgba(239, 68, 68, 0.4)";
+            btn.style.background = "rgba(239, 68, 68, 0.12)";
+        }
+    }
+    if (typeof updateFullCallButtonsUI === 'function') {
+        updateFullCallButtonsUI();
     }
 }
 
@@ -5074,6 +5764,10 @@ async function leaveAgoraRoom() {
         micBtn.style.background = "rgba(255,255,255,0.08)";
     }
 
+    if (typeof updateFullCallButtonsUI === 'function') {
+        updateFullCallButtonsUI();
+    }
+
     fetch('/api/calls/end', { method: 'POST' }).catch(() => {});
     showToast("🔴 غادرت غرفة Agora الصوتية.", "info");
 }
@@ -5087,7 +5781,7 @@ async function toggleAgoraMic() {
     if (!agoraLocalAudioTrack) {
         showToast("⏳ جاري طلب تفعيل المايكروفون...", "info");
         try {
-            agoraLocalAudioTrack = await (window.AgoraRTC || AgoraRTC).createMicrophoneAudioTrack();
+            agoraLocalAudioTrack = await obtainAgoraAudioTrack();
             if (agoraLocalAudioTrack && agoraClient && isAgoraJoined) {
                 await agoraClient.publish([agoraLocalAudioTrack]);
             }
@@ -5096,9 +5790,9 @@ async function toggleAgoraMic() {
             showToast("🎙️ تم تشغيل المايكروفون بنجاح!", "success");
         } catch (err) {
             console.warn("[Agora] Failed to activate mic on request:", err);
-            const isDenied = err && (err.name === "NotAllowedError" || (err.message && (err.message.includes("Permission denied") || err.message.includes("NotAllowedError"))));
-            updateAgoraMicButtonUI(false, isDenied ? "صلاحية المايك مرفوضة" : "تعذر تشغيل المايك");
-            showToast("⚠️ تعذر تفعيل المايك: يرجى السماح للمتصفح بالوصول للمايكروفون.", "warning");
+            isAgoraMicMuted = true;
+            updateAgoraMicButtonUI(false, "المايك مغلق");
+            showToast("⚠️ تعذر تشغيل المايك: يرجى السماح للمتصفح بالوصول للمايكروفون.", "warning");
         }
         return;
     }
@@ -5114,26 +5808,7 @@ async function toggleAgoraMic() {
 }
 
 async function shareAgoraCallInClanChat() {
-    const user = getCurrentUsername() || 'عضو PHANTOM';
-    const msgText = `🎙️ دعوة لغرفة Agora: ${user} متواجد الآن في الغرفة الصوتية التكتيكية! اضغط للانضمام والمحادثة الصوتية المباشرة.`;
-    
-    try {
-        const message = {
-            sender: user,
-            text: msgText,
-            timestamp: Date.now(),
-            isCall: true,
-            callType: 'agora'
-        };
-        await serverSendChat(message);
-        renderChat();
-    } catch(e) {}
-
-    showToast("✅ تمت مشاركة دعوة Agora في شات الكلان!", "success");
-    closeGoogleMeetModal();
-    if (typeof navigateToPage === 'function') {
-        navigateToPage('page-chat');
-    }
+    showToast("🎙️ المكالمة الصوتية نشطة ومتاحة للأعضاء عبر زر 📞 وأيقونة الانضمام.", "info");
 }
 
 function updateAgoraUsersUI() {
@@ -5225,12 +5900,32 @@ async function handleCreateNewMeetCall() {
                 switchCallTab('meet');
                 return;
             }
+            if (response.status === 403 || response.status === 404 || response.status === 400) {
+                // حساب Google غير مسجل في نطاق Workspace أو API غير مفعل
+                // توفير الرابط الرسمي المباشر الفوري لـ Google Meet
+                console.warn(`[Google Meet] Spaces API status ${response.status}. Using direct official meet launcher.`);
+                currentGoogleMeetUri = "https://meet.google.com/new";
+                currentGoogleMeetCode = "رابط Meet المباشر";
+
+                const authSection = document.getElementById("meet-auth-section");
+                const activeSection = document.getElementById("meet-active-section");
+                const codeEl = document.getElementById("meet-room-code");
+                const joinBtn = document.getElementById("meet-join-link-btn");
+
+                if (authSection) authSection.style.display = "none";
+                if (activeSection) activeSection.style.display = "block";
+                if (codeEl) codeEl.textContent = `Google Meet الرسمي: جاهز للبدء الفوري بنقرة واحدة`;
+                if (joinBtn) joinBtn.href = currentGoogleMeetUri;
+
+                showToast("🎉 تم تجهيز رابط Google Meet الرسمي بنجاح!", "success");
+                return;
+            }
             throw new Error("API status " + response.status);
         }
 
         const data = await response.json();
-        currentGoogleMeetUri = data.meetingUri;
-        currentGoogleMeetCode = data.meetingCode || data.name;
+        currentGoogleMeetUri = data.meetingUri || "https://meet.google.com/new";
+        currentGoogleMeetCode = data.meetingCode || data.name || "رابط Meet";
 
         // تحديث الواجهة
         const authSection = document.getElementById("meet-auth-section");
@@ -5245,47 +5940,26 @@ async function handleCreateNewMeetCall() {
 
         showToast("🎉 تم إنشاء رابط مكالمة Google Meet بنجاح!", "success");
     } catch (err) {
-        console.error("Error creating Google Meet space:", err);
-        showToast("⚠️ حدث خطأ أثناء إنشاء المكالمة.", "error");
+        console.warn("[Google Meet] Fallback to direct launcher:", err && err.message);
+        currentGoogleMeetUri = "https://meet.google.com/new";
+        currentGoogleMeetCode = "رابط Meet المباشر";
+
+        const authSection = document.getElementById("meet-auth-section");
+        const activeSection = document.getElementById("meet-active-section");
+        const codeEl = document.getElementById("meet-room-code");
+        const joinBtn = document.getElementById("meet-join-link-btn");
+
+        if (authSection) authSection.style.display = "none";
+        if (activeSection) activeSection.style.display = "block";
+        if (codeEl) codeEl.textContent = `Google Meet الرسمي: جاهز للبدء الفوري بنقرة واحدة`;
+        if (joinBtn) joinBtn.href = currentGoogleMeetUri;
+
+        showToast("📹 تم تجهيز رابط مكالمة Google Meet بنجاح!", "info");
     }
 }
 
 async function shareMeetLinkInClanChat() {
-    if (!currentGoogleMeetUri) {
-        showToast("⚠️ لا توجد مكالمة نشطة للمشاركة.", "info");
-        return;
-    }
-    const user = getCurrentUsername() || 'عضو PHANTOM';
-    const meetMsg = `📹 مكالمة صوت وفيديو بدأت الآن في Google Meet! انضمام مباشر: ${currentGoogleMeetUri}`;
-    
-    try {
-        const message = {
-            sender: user,
-            text: meetMsg,
-            timestamp: Date.now(),
-            isCall: true,
-            callType: 'meet'
-        };
-        await serverSendChat(message);
-        renderChat();
-    } catch(e) {}
-
-    fetch('/api/calls/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            hostName: user,
-            hostId: getCurrentUserId(),
-            mode: 'meet',
-            topic: 'مكالمة Google Meet'
-        })
-    }).catch(() => {});
-
-    showToast("✅ تمت مشاركة رابط المكالمة في شات الكلان!", "success");
-    closeGoogleMeetModal();
-    if (typeof navigateToPage === 'function') {
-        navigateToPage('page-chat');
-    }
+    copyMeetLinkToClipboard();
 }
 
 function copyMeetLinkToClipboard() {
@@ -6957,6 +7631,8 @@ let callEndTimer = null;
 
 function updateActiveCallBannerUI(activeCall) {
     const banner = document.getElementById('clan-active-call-banner');
+    if (banner) banner.style.display = 'none'; // تعطيل ظهور البانر العائم لمنع أي إزعاج أو رسائل غير مرغوبة
+
     const voiceBtn = document.getElementById('voice-call-btn');
     const joinBtn = document.getElementById('chat-call-join-btn');
     const endedStatus = document.getElementById('chat-call-ended-status');
@@ -6969,42 +7645,51 @@ function updateActiveCallBannerUI(activeCall) {
             callEndTimer = null;
         }
 
-        // إظهار زر "انضمام" بجانب رمز 📞
+        // إظهار زر "انضمام" بجانب رمز 📞 في حالة فعالة بدون أي وميض أو خداع
         if (joinBtn) {
             joinBtn.style.display = 'inline-flex';
             joinBtn.textContent = 'انضمام';
             joinBtn.disabled = false;
+            joinBtn.style.opacity = '1';
+            joinBtn.style.cursor = 'pointer';
+            joinBtn.style.background = 'linear-gradient(135deg, rgba(0, 242, 254, 0.2), rgba(0, 255, 136, 0.2))';
+            joinBtn.style.borderColor = '#00ff88';
+            joinBtn.style.color = '#00ff88';
+            joinBtn.style.boxShadow = '0 0 10px rgba(0, 255, 136, 0.35)';
+            joinBtn.style.animation = 'none';
+            joinBtn.title = 'انضمام للمكالمة النشطة';
         }
         if (endedStatus) {
             endedStatus.style.display = 'none';
         }
-
-        const host = activeCall.challengerName || 'أحد الأعضاء';
-        const senderEl = document.getElementById('call-banner-sender');
-        const textEl = document.getElementById('call-banner-text');
-        if (senderEl) senderEl.textContent = `🎙️ ${host} بدأ مكالمة`;
-        if (textEl) {
-            const modeText = activeCall.details && activeCall.details.mode === 'agora' ? 'غرفة Agora الصوتية التكتيكية' : 'مكالمة المقر المباشرة';
-            textEl.textContent = `مكالمة جماعية نشطة الآن (${modeText}). اضغط للدخول مع السكواد.`;
-        }
-        if (banner) banner.style.display = 'flex';
 
         if (voiceBtn) {
             voiceBtn.style.position = 'relative';
             if (!document.getElementById('voice-live-dot')) {
                 const dot = document.createElement('span');
                 dot.id = 'voice-live-dot';
-                dot.style.cssText = 'position:absolute; top:-2px; right:-2px; width:10px; height:10px; background:#00ff88; border-radius:50%; box-shadow:0 0 10px #00ff88; animation:pulse_3011 1.5s infinite;';
+                dot.style.cssText = 'position:absolute; top:-2px; right:-2px; width:8px; height:8px; background:#00ff88; border-radius:50%; box-shadow:0 0 8px #00ff88;';
                 voiceBtn.appendChild(dot);
             }
         }
     } else {
-        if (banner) banner.style.display = 'none';
         const dot = document.getElementById('voice-live-dot');
         if (dot) dot.remove();
 
+        // زر انضمام يظل ظاهراً بجانب 📞 ولكن يكون معطلاً تماماً وبدون أي وميض
         if (joinBtn) {
-            joinBtn.style.display = 'none';
+            joinBtn.style.display = 'inline-flex';
+            joinBtn.textContent = 'انضمام';
+            joinBtn.disabled = true;
+            joinBtn.style.opacity = '0.45';
+            joinBtn.style.cursor = 'not-allowed';
+            joinBtn.style.background = 'rgba(255,255,255,0.05)';
+            joinBtn.style.borderColor = 'rgba(255,255,255,0.12)';
+            joinBtn.style.color = '#64748b';
+            joinBtn.style.boxShadow = 'none';
+            joinBtn.style.animation = 'none';
+            joinBtn.style.transform = 'none';
+            joinBtn.title = 'لا توجد مكالمات نشطة حالياً';
         }
 
         if (hadActiveCall) {
@@ -7024,27 +7709,8 @@ function updateActiveCallBannerUI(activeCall) {
     }
 }
 
-window.handleChatCallJoinClick = function() {
-    if (!currentActiveCallData || !currentActiveCallData.active) {
-        showToast("⚠️ لا توجد مكالمة نشطة حالياً للانضمام.", "info");
-        return;
-    }
-    const mode = (currentActiveCallData.details && currentActiveCallData.details.mode) || 'inapp';
-    const host = currentActiveCallData.challengerName || 'عضو الكلان';
-    showToast(`📞 جاري الانضمام لمكالمة ${host}...`, 'info');
-
-    showGoogleMeetModal();
-    if (mode === 'agora') {
-        switchCallTab('agora');
-        if (!isAgoraJoined) {
-            joinAgoraRoom();
-        }
-    } else if (mode === 'meet') {
-        switchCallTab('meet');
-    } else {
-        switchCallTab('inapp');
-        startInAppCall();
-    }
+window.handleChatCallJoinClick = function(event) {
+    handleDirectCallJoinClick(event);
 };
 
 function dismissCallBanner() {

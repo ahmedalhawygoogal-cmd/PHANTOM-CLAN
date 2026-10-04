@@ -1141,6 +1141,7 @@ ${clanContextSnippet}
 // --- In-Memory State for Realtime Clan Operations ---
 const onlineUsers = new Map(); // username -> { username, userId, rank, avatar, lastSeen }
 const activeChallenges = new Map(); // challengeId -> challengeObj
+const activeCalls = new Map(); // callId -> callObj
 let activeCallInfo = null;
 
 function cleanupStale() {
@@ -1154,6 +1155,19 @@ function cleanupStale() {
     if (now - ch.createdAt > 30 * 60 * 1000) {
       activeChallenges.delete(id);
     }
+  }
+  for (const [id, call] of activeCalls.entries()) {
+    const isTimedOut = (now - (call.lastHeartbeat || call.createdAt)) > 45 * 1000;
+    const hasNoParticipants = Array.isArray(call.participants) && call.participants.length === 0;
+    if (isTimedOut || hasNoParticipants || call.status !== 'active') {
+      activeCalls.delete(id);
+    }
+  }
+  if (activeCalls.size === 0) {
+    activeCallInfo = null;
+  } else {
+    const list = Array.from(activeCalls.values());
+    activeCallInfo = { ...list[list.length - 1], active: true };
   }
 }
 
@@ -1277,35 +1291,125 @@ app.get('/api/battles/state/:id', (req, res) => {
   res.json({ success: true, challenge });
 });
 
-// 📞 3. Calls Integration
+// 📞 3. Calls Integration (Multi-Call & Direct/Agora Separation)
 app.post('/api/calls/start', (req, res) => {
   cleanupStale();
-  const { hostName, hostId, mode, topic } = req.body || {};
-  const challengeId = 'call_' + Date.now();
-  const callChallenge = {
-    id: challengeId,
+  const { hostName, hostId, mode, topic, roomName, channelName, callId } = req.body || {};
+  const actualHost = hostName || 'عضو الكلان';
+  const actualMode = (mode === 'agora' || mode === 'voice') ? 'agora' : 'direct';
+  const id = callId || ('call_' + actualMode + '_' + Date.now());
+  const actualTopic = topic || roomName || (actualMode === 'agora' ? 'غرفة Agora الصوتية التكتيكية' : 'مكالمة المقر المباشرة');
+  const actualChannel = channelName || (actualMode === 'agora' ? 'phantom_hq' : ('direct_' + Date.now()));
+
+  const callObj = {
+    id,
     type: 'call',
-    challengerName: hostName || 'عضو الكلان',
-    challengerId: hostId || null,
+    challengerName: actualHost,
+    hostName: actualHost,
+    hostId: hostId || null,
     targetName: 'ALL',
     stake: 0,
-    details: { mode: mode || 'voice', topic: topic || 'مكالمة المقر المباشرة' },
-    status: 'pending',
-    createdAt: Date.now()
+    details: { mode: actualMode, topic: actualTopic, channelName: actualChannel, roomName: actualTopic },
+    mode: actualMode,
+    topic: actualTopic,
+    roomName: actualTopic,
+    channelName: actualChannel,
+    status: 'active',
+    participants: [{ username: actualHost, userId: hostId || null, isHost: true, joinedAt: Date.now() }],
+    createdAt: Date.now(),
+    lastHeartbeat: Date.now(),
+    active: true
   };
 
-  activeChallenges.set(challengeId, callChallenge);
-  activeCallInfo = { ...callChallenge, active: true };
-  res.json({ success: true, challenge: callChallenge });
+  activeCalls.set(id, callObj);
+  activeCallInfo = { ...callObj, active: true };
+  res.json({ success: true, call: callObj });
 });
 
 app.get('/api/calls/active', (req, res) => {
   cleanupStale();
-  res.json({ success: true, activeCall: activeCallInfo });
+  const calls = Array.from(activeCalls.values()).filter(c => c.status === 'active');
+  res.json({
+    success: true,
+    activeCalls: calls,
+    activeCall: calls.length > 0 ? { ...calls[calls.length - 1], active: true } : null
+  });
+});
+
+app.post('/api/calls/heartbeat', (req, res) => {
+  const { callId, username } = req.body || {};
+  if (callId && activeCalls.has(callId)) {
+    const c = activeCalls.get(callId);
+    c.lastHeartbeat = Date.now();
+    res.json({ success: true, call: c });
+  } else {
+    res.json({ success: false });
+  }
+});
+
+app.post('/api/calls/join', (req, res) => {
+  cleanupStale();
+  const { callId, username, userId } = req.body || {};
+  const user = username || 'عضو الكلان';
+  let targetCall = activeCalls.get(callId);
+  if (!targetCall && activeCalls.size > 0) {
+    targetCall = activeCalls.values().next().value;
+  }
+  if (targetCall) {
+    targetCall.lastHeartbeat = Date.now();
+    if (!Array.isArray(targetCall.participants)) targetCall.participants = [];
+    if (!targetCall.participants.some(p => p.username === user)) {
+      targetCall.participants.push({ username: user, userId: userId || null, isHost: false, joinedAt: Date.now() });
+    }
+    res.json({ success: true, call: targetCall });
+  } else {
+    res.status(404).json({ success: false, error: 'المكالمة غير موجودة أو انتهت' });
+  }
+});
+
+app.post('/api/calls/leave', (req, res) => {
+  cleanupStale();
+  const { callId, username } = req.body || {};
+  const user = username || 'عضو الكلان';
+  const targetCall = activeCalls.get(callId);
+  if (targetCall && Array.isArray(targetCall.participants)) {
+    targetCall.participants = targetCall.participants.filter(p => p.username !== user);
+    targetCall.lastHeartbeat = Date.now();
+    if (targetCall.hostName === user || targetCall.participants.length === 0) {
+      activeCalls.delete(targetCall.id);
+      activeChallenges.delete(targetCall.id);
+    }
+  }
+  if (activeCalls.size === 0) {
+    activeCallInfo = null;
+  } else {
+    const list = Array.from(activeCalls.values());
+    activeCallInfo = { ...list[list.length - 1], active: true };
+  }
+  res.json({ success: true });
 });
 
 app.post('/api/calls/end', (req, res) => {
-  activeCallInfo = null;
+  const { callId, hostName } = req.body || {};
+  if (callId && activeCalls.has(callId)) {
+    activeCalls.delete(callId);
+    activeChallenges.delete(callId);
+  } else if (hostName) {
+    for (const [id, c] of activeCalls.entries()) {
+      if (c.hostName === hostName) {
+        activeCalls.delete(id);
+        activeChallenges.delete(id);
+      }
+    }
+  } else {
+    activeCalls.clear();
+  }
+  if (activeCalls.size === 0) {
+    activeCallInfo = null;
+  } else {
+    const list = Array.from(activeCalls.values());
+    activeCallInfo = { ...list[list.length - 1], active: true };
+  }
   res.json({ success: true });
 });
 

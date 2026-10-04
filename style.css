@@ -812,7 +812,7 @@ input:focus, select:focus, textarea:focus {
     display: flex;
     flex-direction: column;
     margin: 0 auto 20px;
-    overflow-x: hidden;
+    overflow: visible;
 }
 
 .whatsapp-chat-header {
@@ -827,7 +827,9 @@ input:focus, select:focus, textarea:focus {
     box-sizing: border-box;
     width: 100%;
     max-width: 100%;
-    overflow: hidden;
+    overflow: visible;
+    position: relative;
+    z-index: 120;
 }
 
 .wa-avatar {
@@ -896,25 +898,44 @@ input:focus, select:focus, textarea:focus {
     transform: scale(1.12);
 }
 .chat-call-join-btn-header {
-    background: linear-gradient(135deg, #00f2fe, #00ff88);
-    color: #050a14;
-    border: none;
-    border-radius: 14px;
-    padding: 4px 12px;
+    background: rgba(255, 255, 255, 0.05);
+    color: #64748b;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 20px;
+    padding: 5px 12px;
     font-size: 0.8rem;
-    font-weight: 900;
-    cursor: pointer;
-    box-shadow: 0 0 12px rgba(0, 255, 136, 0.4);
-    animation: pulse_3011 2s infinite;
+    font-weight: 800;
+    cursor: not-allowed;
+    box-shadow: none !important;
+    animation: none !important;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     white-space: nowrap;
     transition: all 0.2s ease;
 }
-.chat-call-join-btn-header:hover {
-    transform: scale(1.05);
-    box-shadow: 0 0 18px rgba(0, 255, 136, 0.7);
+.chat-call-join-btn-header:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    background: rgba(255, 255, 255, 0.05) !important;
+    color: #64748b !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    box-shadow: none !important;
+    animation: none !important;
+    transform: none !important;
+}
+.chat-call-join-btn-header:not(:disabled) {
+    background: linear-gradient(135deg, rgba(0, 242, 254, 0.2), rgba(0, 255, 136, 0.2));
+    border: 1px solid #00ff88;
+    color: #00ff88;
+    box-shadow: 0 0 10px rgba(0, 255, 136, 0.3);
+    cursor: pointer;
+    opacity: 1;
+    animation: none !important;
+}
+.chat-call-join-btn-header:not(:disabled):hover {
+    transform: scale(1.04);
+    box-shadow: 0 0 15px rgba(0, 255, 136, 0.55);
 }
 .chat-call-ended-status {
     color: #94a3b8;
@@ -7788,7 +7809,7 @@ body.disable-animations *::after {
         width: 100% !important;
         max-width: 100% !important;
         box-sizing: border-box;
-        overflow-x: hidden;
+        overflow: visible !important;
     }
 
     /* ⚡ شات CODO يأخذ عرض الشاشة بالكامل وبدون أي فراغات جانبية */
@@ -8125,7 +8146,6 @@ body.disable-animations *::after {
     }
 
     /* 📱 جعل كافة الحاويات تستخدم العرض الكامل 100% بدون أي تجاوز أفقي */
-    .whatsapp-chat-container,
     .ghost-fullpage-layout,
     .chat-wrapper-card,
     .whatsapp-style-card,
@@ -8158,6 +8178,7 @@ body.disable-animations *::after {
         margin: 0 0 16px 0 !important;
         padding: 0 !important;
         border-radius: 0 !important;
+        overflow: visible !important;
     }
 
     .whatsapp-chat-header {
@@ -8166,6 +8187,15 @@ body.disable-animations *::after {
         max-width: 100% !important;
         box-sizing: border-box !important;
         border-radius: 12px 12px 0 0 !important;
+        overflow: visible !important;
+        position: relative !important;
+        z-index: 200 !important;
+    }
+
+    #chat-call-header-group {
+        position: relative !important;
+        overflow: visible !important;
+        z-index: 210 !important;
     }
 
     .chat-wrapper-card.whatsapp-style-card {
@@ -8814,5 +8844,913 @@ body.disable-animations *::after {
         flex: 1;
         text-align: center;
         padding: 10px 8px;
+    }
+}
+
+/* ========================================================
+   📞 PHANTOM UNIFIED CALLING SYSTEM (FULL-PAGE OVERLAY, DROPDOWN & MINI-BAR)
+   ======================================================== */
+
+/* 1. صفحة المكالمة الكاملة (تغطي مساحة الموقع بالكامل) */
+.full-page-call-overlay {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 99999999;
+    background: radial-gradient(circle at 50% 15%, #0c1424 0%, #060a12 65%, #020408 100%);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    direction: rtl;
+    color: #e2e8f0;
+    box-sizing: border-box;
+    font-family: inherit;
+    animation: fadeInCallOverlay 0.3s ease-out;
+}
+
+@keyframes fadeInCallOverlay {
+    from { opacity: 0; transform: scale(0.98); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+/* الشريط العلوي لصفحة المكالمة */
+.call-top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    background: rgba(10, 16, 28, 0.85);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-bottom: 1px solid rgba(0, 242, 254, 0.2);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    z-index: 10;
+    flex-shrink: 0;
+}
+
+.call-btn-minimize {
+    padding: 8px 16px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    transition: all 0.2s ease;
+}
+
+.call-btn-minimize:hover {
+    background: rgba(0, 242, 254, 0.15);
+    border-color: #00f2fe;
+    color: #00f2fe;
+    transform: translateY(-1px);
+}
+
+.call-header-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    text-align: center;
+}
+
+.call-room-title {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 900;
+    color: #fff;
+    letter-spacing: 0.5px;
+    text-shadow: 0 0 12px rgba(0, 242, 254, 0.4);
+}
+
+.call-header-badges {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.call-type-pill {
+    background: rgba(0, 242, 254, 0.12);
+    border: 1px solid rgba(0, 242, 254, 0.35);
+    color: #00f2fe;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 800;
+}
+
+.call-status-pill {
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 800;
+}
+
+.status-connected {
+    background: rgba(0, 255, 136, 0.15);
+    border: 1px solid #00ff88;
+    color: #00ff88;
+}
+
+.status-connecting {
+    background: rgba(234, 179, 8, 0.15);
+    border: 1px solid #eab308;
+    color: #eab308;
+}
+
+.call-timer-pill {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #cbd5e1;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-family: monospace;
+    font-weight: 700;
+}
+
+.call-ping-badge {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-family: monospace;
+}
+
+/* المنطقة الرئيسية لصفحة المكالمة */
+.call-main-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 16px 20px;
+    overflow-y: auto;
+    gap: 16px;
+    align-items: center;
+    justify-content: flex-start;
+    max-width: 960px;
+    width: 100%;
+    margin: 0 auto;
+    box-sizing: border-box;
+}
+
+/* معلومات المنشئ والموضوع */
+.call-info-banner {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(14, 22, 38, 0.7);
+    border: 1px solid rgba(0, 242, 254, 0.18);
+    padding: 10px 16px;
+    border-radius: 14px;
+    font-size: 0.85rem;
+    box-sizing: border-box;
+}
+
+.call-host-info .label, .call-topic-info .label {
+    color: #94a3b8;
+    margin-left: 6px;
+}
+
+.call-host-info .host-name {
+    color: #00ff88;
+    font-weight: 800;
+}
+
+.call-topic-info .topic-name {
+    color: #00f2fe;
+    font-weight: 700;
+}
+
+/* مرحلة Agora (صوتية فقط) */
+.agora-stage {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+    background: radial-gradient(circle, rgba(0, 242, 254, 0.06) 0%, rgba(5, 10, 20, 0.4) 100%);
+    border-radius: 20px;
+    border: 1px solid rgba(0, 242, 254, 0.15);
+    box-sizing: border-box;
+}
+
+.agora-avatar-glow-ring {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(0, 242, 254, 0.25), rgba(11, 18, 30, 0.9));
+    border: 3px solid #00f2fe;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 35px rgba(0, 242, 254, 0.45);
+    margin-bottom: 16px;
+    position: relative;
+    transition: all 0.3s ease;
+}
+
+.agora-avatar-glow-ring::after {
+    content: '';
+    position: absolute;
+    inset: -8px;
+    border-radius: 50%;
+    border: 2px dashed rgba(0, 255, 136, 0.4);
+    animation: rotateRing 12s linear infinite;
+}
+
+@keyframes rotateRing {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.agora-avatar-inner {
+    font-size: 3rem;
+}
+
+.agora-room-channel-tag {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    margin-bottom: 6px;
+}
+
+.agora-room-channel-tag strong {
+    color: #00f2fe;
+    font-family: monospace;
+    font-size: 0.95rem;
+    background: rgba(0, 242, 254, 0.1);
+    padding: 3px 10px;
+    border-radius: 8px;
+}
+
+.agora-speaking-indicator {
+    font-size: 0.8rem;
+    color: #a7f3d0;
+    font-weight: 700;
+}
+
+/* مرحلة الاتصال المباشر (شبكة فيديو وصوت) */
+.direct-stage {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    box-sizing: border-box;
+}
+
+.direct-video-grid {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px;
+    box-sizing: border-box;
+}
+
+.direct-video-card {
+    position: relative;
+    aspect-ratio: 16/10;
+    background: #090e18;
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1.5px solid rgba(0, 242, 254, 0.25);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.direct-video-media {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.direct-video-media video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+}
+
+.direct-video-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #94a3b8;
+    gap: 8px;
+    position: absolute;
+    inset: 0;
+    background: #0b1220;
+}
+
+.direct-video-placeholder .avatar-placeholder {
+    font-size: 2.8rem;
+}
+
+.video-card-overlay-badge {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(6px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    padding: 4px 10px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 800;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    z-index: 5;
+}
+
+/* قسم المشاركين في المكالمة */
+.call-participants-section {
+    width: 100%;
+    background: rgba(10, 16, 28, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    padding: 14px 18px;
+    box-sizing: border-box;
+}
+
+.participants-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding-bottom: 8px;
+}
+
+.participants-header h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 800;
+    color: #f1f5f9;
+}
+
+.my-mic-badge {
+    font-size: 0.8rem;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 12px;
+    background: rgba(0, 255, 136, 0.12);
+    border: 1px solid rgba(0, 255, 136, 0.3);
+    color: #00ff88;
+}
+
+.call-participants-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+}
+
+.participant-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 8px 12px;
+    transition: all 0.2s ease;
+}
+
+.participant-card.is-host {
+    border-color: rgba(0, 242, 254, 0.4);
+    background: rgba(0, 242, 254, 0.05);
+}
+
+.participant-card.is-speaking {
+    border-color: #00ff88;
+    box-shadow: 0 0 12px rgba(0, 255, 136, 0.3);
+}
+
+.participant-name-block {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+}
+
+.participant-avatar-badge {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #1e293b;
+    border: 1px solid var(--cyan);
+    color: #00f2fe;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 900;
+    flex-shrink: 0;
+}
+
+.participant-user-name {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.participant-status-icons {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.9rem;
+}
+
+/* الشريط السفلي للتحكم بالمكالمة */
+.call-bottom-controls {
+    padding: 16px 20px;
+    background: rgba(8, 12, 22, 0.95);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-top: 1px solid rgba(0, 242, 254, 0.15);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0;
+    z-index: 10;
+}
+
+.controls-inner-cluster {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 600px;
+    width: 100%;
+}
+
+.call-ctl-btn {
+    flex: 1;
+    min-width: 120px;
+    min-height: 52px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    font-size: 0.95rem;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    touch-action: manipulation;
+}
+
+.call-ctl-btn:active {
+    transform: scale(0.97);
+}
+
+.call-ctl-btn.mic-btn.mic-active {
+    background: rgba(0, 255, 136, 0.15);
+    border-color: #00ff88;
+    color: #fff;
+    box-shadow: 0 0 15px rgba(0, 255, 136, 0.25);
+}
+
+.call-ctl-btn.mic-btn.mic-muted {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: #ef4444;
+    color: #ef4444;
+}
+
+.call-ctl-btn.cam-btn {
+    background: rgba(0, 242, 254, 0.1);
+    border-color: rgba(0, 242, 254, 0.3);
+}
+
+.call-ctl-btn.minimize-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.15);
+    color: #cbd5e1;
+}
+
+.call-ctl-btn.end-btn {
+    background: linear-gradient(135deg, #ef4444, #b91c1c);
+    border: none;
+    color: #fff;
+    font-weight: 900;
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
+}
+
+.call-ctl-btn.end-btn:hover {
+    background: linear-gradient(135deg, #dc2626, #991b1b);
+    box-shadow: 0 0 25px rgba(239, 68, 68, 0.6);
+}
+
+/* 2. الشريط العائم للمكالمة الجارية عند التصغير */
+.floating-ongoing-call-bar {
+    position: fixed;
+    bottom: 75px;
+    left: 16px;
+    right: 16px;
+    max-width: 480px;
+    margin: 0 auto;
+    z-index: 9999998;
+    background: rgba(10, 18, 30, 0.95);
+    border: 1.5px solid #00ff88;
+    border-radius: 16px;
+    padding: 10px 14px;
+    box-shadow: 0 12px 35px rgba(0, 255, 136, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    direction: rtl;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    cursor: pointer;
+    animation: slideUpFloatBar 0.3s ease;
+}
+
+@keyframes slideUpFloatBar {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.floating-call-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    overflow: hidden;
+}
+
+.floating-pulse-dot {
+    font-size: 1.1rem;
+    animation: pulse_3011 1.5s infinite;
+}
+
+.floating-call-details {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.floating-call-title {
+    font-size: 0.85rem;
+    font-weight: 800;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.floating-call-meta {
+    font-size: 0.72rem;
+    color: #94a3b8;
+    font-family: monospace;
+}
+
+.floating-call-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.floating-action-btn {
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 0.78rem;
+    font-weight: 800;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    cursor: pointer;
+    transition: 0.15s;
+}
+
+.floating-action-btn.expand-btn {
+    background: rgba(0, 242, 254, 0.2);
+    border-color: #00f2fe;
+    color: #00f2fe;
+}
+
+.floating-action-btn.end-btn {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: #ef4444;
+    color: #ef4444;
+}
+
+/* 3. القائمة المنسدلة للمكالمات النشطة */
+.active-calls-dropdown {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    right: auto;
+    width: 330px;
+    max-width: min(340px, calc(100vw - 20px));
+    background: #090e18;
+    border: 1.5px solid rgba(0, 242, 254, 0.45);
+    border-radius: 14px;
+    box-shadow: 0 16px 50px rgba(0, 0, 0, 0.95), 0 0 20px rgba(0, 242, 254, 0.15);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    z-index: 99999999 !important;
+    direction: rtl;
+    padding: 12px;
+    box-sizing: border-box;
+    animation: fadeInDropdown 0.2s ease-out;
+}
+
+@keyframes fadeInDropdown {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.active-calls-dropdown-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.active-calls-dropdown-title {
+    font-size: 0.85rem;
+    font-weight: 800;
+    color: #00f2fe;
+}
+
+.active-calls-close-btn {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 2px 6px;
+}
+
+.active-calls-list-container {
+    max-height: 280px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.empty-calls-notice {
+    text-align: center;
+    padding: 16px;
+    font-size: 0.8rem;
+    color: #94a3b8;
+}
+
+.active-call-item {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    padding: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    transition: all 0.2s ease;
+}
+
+.active-call-item:hover {
+    background: rgba(0, 242, 254, 0.06);
+    border-color: rgba(0, 242, 254, 0.35);
+}
+
+.active-call-item-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    overflow: hidden;
+}
+
+.active-call-host-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.active-call-host-name {
+    font-size: 0.85rem;
+    font-weight: 800;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.active-call-type-badge {
+    font-size: 0.68rem;
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-weight: 700;
+}
+
+.active-call-type-badge.badge-agora {
+    background: rgba(0, 242, 254, 0.15);
+    border: 1px solid #00f2fe;
+    color: #00f2fe;
+}
+
+.active-call-type-badge.badge-direct {
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid #10b981;
+    color: #10b981;
+}
+
+.active-call-sub-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.72rem;
+    color: #94a3b8;
+    flex-wrap: wrap;
+}
+
+.active-call-status-badge {
+    color: #00ff88;
+    font-weight: 700;
+}
+
+.active-call-item-join-btn {
+    padding: 6px 12px;
+    background: linear-gradient(135deg, #00f2fe, #3b82f6);
+    border: none;
+    color: #000;
+    font-weight: 900;
+    font-size: 0.78rem;
+    border-radius: 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+    box-shadow: 0 0 10px rgba(0, 242, 254, 0.3);
+    transition: transform 0.15s;
+}
+
+.active-call-item-join-btn:hover {
+    transform: scale(1.05);
+}
+
+/* 4. نافذة اختيار نوع المكالمة */
+.call-type-chooser-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 99999999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    direction: rtl;
+    box-sizing: border-box;
+    animation: fadeInCallOverlay 0.2s ease-out;
+}
+
+.chooser-card {
+    background: #090f1a;
+    border: 1.5px solid rgba(0, 242, 254, 0.35);
+    border-radius: 18px;
+    width: 100%;
+    max-width: 440px;
+    padding: 20px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9);
+    box-sizing: border-box;
+}
+
+.chooser-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.chooser-header h3 {
+    margin: 0;
+    font-size: 1.15rem;
+    color: #00f2fe;
+    font-weight: 900;
+}
+
+.chooser-close {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 4px;
+}
+
+.chooser-desc {
+    font-size: 0.85rem;
+    color: #cbd5e1;
+    margin-bottom: 16px;
+    line-height: 1.5;
+}
+
+.chooser-options {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.chooser-option-card {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    padding: 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.chooser-option-card:hover {
+    background: rgba(0, 242, 254, 0.08);
+    border-color: #00f2fe;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 242, 254, 0.15);
+}
+
+.chooser-option-card .opt-icon {
+    font-size: 2rem;
+    flex-shrink: 0;
+}
+
+.chooser-option-card .opt-body {
+    flex: 1;
+}
+
+.chooser-option-card .opt-body h4 {
+    margin: 0 0 4px 0;
+    font-size: 0.95rem;
+    color: #fff;
+    font-weight: 800;
+}
+
+.chooser-option-card .opt-body p {
+    margin: 0;
+    font-size: 0.78rem;
+    color: #94a3b8;
+    line-height: 1.4;
+}
+
+.chooser-option-card .opt-btn {
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-weight: 900;
+    font-size: 0.8rem;
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    background: var(--cyan);
+    color: #000;
+}
+
+/* التجاوب مع شاشات الهاتف والتابلت */
+@media (max-width: 600px) {
+    .call-top-bar {
+        padding: 10px 14px;
+    }
+    .call-btn-minimize {
+        padding: 6px 12px;
+        font-size: 0.78rem;
+    }
+    .call-room-title {
+        font-size: 1rem;
+    }
+    .call-main-area {
+        padding: 12px 14px;
+        gap: 12px;
+    }
+    .call-bottom-controls {
+        padding: 12px 14px;
+    }
+    .call-ctl-btn {
+        min-height: 48px;
+        font-size: 0.88rem;
+    }
+    .controls-inner-cluster {
+        gap: 8px;
     }
 }
