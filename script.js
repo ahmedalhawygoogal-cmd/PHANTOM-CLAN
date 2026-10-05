@@ -420,12 +420,41 @@ async function serverCreateMember(username, rank, userId = null, gameId = null) 
 
 async function serverUpdatePresence(memberId) { return true; }
 
-async function serverGetChat() {
-    const result = await supabaseGet('messages', 'timestamp');
-    return result || getStorage(PHANTOM_MEMORY.chatStorageKey, []);
+let cachedChatMessages = null;
+
+async function serverGetChat(forceRefresh = false) {
+    if (cachedChatMessages && !forceRefresh) {
+        return cachedChatMessages;
+    }
+    if (supabaseClient) {
+        try {
+            const { data, error } = await supabaseClient
+                .from('messages')
+                .select('*')
+                .order('timestamp', { ascending: false })
+                .limit(60);
+            if (!error && Array.isArray(data)) {
+                cachedChatMessages = data.reverse();
+                return cachedChatMessages;
+            }
+        } catch (e) {
+            console.warn("⚠️ Supabase serverGetChat error:", e);
+        }
+    }
+    const localChat = getStorage(PHANTOM_MEMORY.chatStorageKey, []);
+    cachedChatMessages = localChat.slice(-60);
+    return cachedChatMessages;
 }
 
 async function serverSendChat(message) {
+    if (cachedChatMessages) {
+        cachedChatMessages.push(message);
+        if (cachedChatMessages.length > 80) cachedChatMessages.shift();
+    }
+    if (typeof appendSingleChatMessage === 'function') {
+        appendSingleChatMessage(message);
+    }
+
     const result = await supabaseInsert('messages', [{ sender: message.sender, text: message.text, timestamp: message.timestamp }]);
     if (result) return result;
     const localChat = getStorage(PHANTOM_MEMORY.chatStorageKey, []);
@@ -1305,34 +1334,86 @@ function renderOnlineUsers() {
     const container = getElement("online-members-list");
     const badge = getElement("online-count-badge");
     if (!container) return;
-    let users = getStorage(PHANTOM_MEMORY.presenceStorageKey, []);
-    const now = Date.now();
-    users = users.filter(user => user && user.time && now - user.time < 30 * 60 * 1000);
-    setStorage(PHANTOM_MEMORY.presenceStorageKey, users);
-    if (badge) badge.textContent = `${users.length} متواجد الآن`;
-    if (!users.length) {
-        container.innerHTML = `<div class="empty-state">لا يوجد أعضاء متواجدون حالياً.</div>`;
+
+    // قراءة المستخدمين المتواجدين فعلياً من السيرفر الحي
+    const list = (typeof serverOnlineUsers !== 'undefined' && Array.isArray(serverOnlineUsers)) ? serverOnlineUsers : [];
+    const count = list.length;
+
+    if (badge) badge.textContent = `${count} متواجد الآن`;
+    if (!count) {
+        container.innerHTML = `<div class="empty-state" style="padding:10px; font-size:0.75rem; color:#94a3b8; text-align:center;">لا يوجد أعضاء متواجدون حالياً.</div>`;
         return;
     }
-    container.innerHTML = users.map(user => `
-        <div class="online-user-item">
-            <div>
-                <div class="online-user-name">${escapeHTML(user.name)}</div>
-                <div class="online-user-status">يتصفح مقر PHANTOM</div>
+
+    container.innerHTML = list.map(user => {
+        const name = (user.username || 'عضو').trim();
+        const rank = user.rank || 'محارب';
+        const avatar = user.avatar && user.avatar.length <= 3 ? user.avatar : 'PH';
+
+        return `
+            <div class="online-user-compact-chip" title="${escapeHTML(name)} · ${escapeHTML(rank)}" onclick="openProfile('${escapeHTML(name)}')" style="cursor:pointer;">
+                <span style="width:20px; height:20px; border-radius:50%; background:#1e293b; color:#00ff88; font-size:0.65rem; font-weight:900; display:flex; align-items:center; justify-content:center; flex-shrink:0;">${escapeHTML(avatar)}</span>
+                <span class="online-chip-name">${escapeHTML(name)}</span>
+                <span style="width:6px; height:6px; border-radius:50%; background:#00ff88; box-shadow:0 0 6px #00ff88; flex-shrink:0;"></span>
             </div>
-            <span style="color:var(--green-online,#00ff88); font-size:.7rem; font-weight:800;">● متواجد</span>
-        </div>
-    `).join("");
+        `;
+    }).join("");
 }
 
 function renderChatOnlineCount() {
     const chatCounter = getElement("chat-online-counter");
-    if (!chatCounter) return;
-    let users = getStorage(PHANTOM_MEMORY.presenceStorageKey, []);
-    const now = Date.now();
-    users = users.filter(user => user && user.time && now - user.time < 30 * 60 * 1000);
-    chatCounter.textContent = `${users.length} متصلين حالياً`;
+    const list = (typeof serverOnlineUsers !== 'undefined' && Array.isArray(serverOnlineUsers)) ? serverOnlineUsers : [];
+    const count = list.length;
+
+    if (chatCounter) {
+        chatCounter.textContent = `${count} متصلين حالياً`;
+    }
+
+    // تحديث القائمة المنسدلة داخل الشات إذا كانت مفتوحة
+    const dropdownList = document.getElementById("chat-online-dropdown-list");
+    if (dropdownList) {
+        if (!count) {
+            dropdownList.innerHTML = `<div style="text-align:center; padding:10px; color:#94a3b8; font-size:0.75rem;">لا يوجد متصلون الآن</div>`;
+        } else {
+            dropdownList.innerHTML = list.map(u => `
+                <div class="chat-online-user-row" onclick="openProfile('${escapeHTML(u.username)}')" style="cursor:pointer;">
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <span style="color:#00ff88; font-size:0.7rem;">●</span>
+                        <strong style="color:#fff; font-size:0.75rem;">${escapeHTML(u.username)}</strong>
+                    </div>
+                    <span style="color:#94a3b8; font-size:0.7rem;">${escapeHTML(u.rank || 'عضو')}</span>
+                </div>
+            `).join("");
+        }
+    }
 }
+
+function toggleChatOnlineDropdown(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    const dropdown = document.getElementById("chat-online-dropdown");
+    if (!dropdown) return;
+    const isHidden = dropdown.style.display === "none" || !dropdown.style.display;
+    if (isHidden) {
+        dropdown.style.display = "block";
+        renderChatOnlineCount();
+    } else {
+        dropdown.style.display = "none";
+    }
+}
+window.toggleChatOnlineDropdown = toggleChatOnlineDropdown;
+
+document.addEventListener("click", (e) => {
+    const dropdown = document.getElementById("chat-online-dropdown");
+    const counter = document.getElementById("chat-online-counter");
+    if (dropdown && dropdown.style.display === "block") {
+        if (!dropdown.contains(e.target) && e.target !== counter) {
+            dropdown.style.display = "none";
+        }
+    }
+});
 
 /* ========================================================
    10. التنقل بين الصفحات
@@ -3344,15 +3425,69 @@ function renderChatMessages(messages, currentUser, titleName, nameColorEffect, c
     }, 500);
 }
 
+function appendSingleChatMessage(msg) {
+    const container = getElement("chat-messages-container");
+    if (!container) return;
+    if (msg.isCall) return;
+
+    // إزالة شاشة البداية الفارغة إن وجدت
+    const emptyState = container.querySelector(".empty-state");
+    if (emptyState) emptyState.remove();
+
+    const currentUser = getCurrentUsername();
+    const isMe = normalizeName(msg.sender) === normalizeName(currentUser);
+    const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString("ar-EG", { hour: '2-digit', minute: '2-digit' }) : "";
+
+    const div = document.createElement("div");
+    div.className = `chat-bubble note-style ${isMe ? 'mine' : 'others'}`;
+    div.innerHTML = `
+        <small>${escapeHTML(msg.sender)}</small>
+        <div>${escapeHTML(msg.text)}</div>
+        <span class="message-time">${time}</span>
+    `;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+}
+
+let chatRealtimeChannel = null;
+
 function setupChatRealtimeBridge() {
-    if (supabaseClient) {
-        supabaseClient
-            .channel('public:messages')
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => {
-                renderChat();
-                renderChatMonitor();
+    if (!supabaseClient) return;
+
+    // تنظيف أي اشتراك سابق لمنع تكرار المستمعات
+    if (chatRealtimeChannel) {
+        try {
+            supabaseClient.removeChannel(chatRealtimeChannel);
+        } catch (_) {}
+        chatRealtimeChannel = null;
+    }
+
+    try {
+        chatRealtimeChannel = supabaseClient
+            .channel('public_chat_realtime_bridge')
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
+                const newMsg = payload.new;
+                if (!newMsg) return;
+
+                if (cachedChatMessages) {
+                    const alreadyPresent = cachedChatMessages.some(m => 
+                        (m.id && newMsg.id && m.id === newMsg.id) || 
+                        (m.sender === newMsg.sender && m.text === newMsg.text && Math.abs((m.timestamp || 0) - (newMsg.timestamp || 0)) < 2500)
+                    );
+                    if (!alreadyPresent) {
+                        cachedChatMessages.push(newMsg);
+                        if (cachedChatMessages.length > 80) cachedChatMessages.shift();
+                        appendSingleChatMessage(newMsg);
+                        renderChatMonitor();
+                    }
+                } else {
+                    appendSingleChatMessage(newMsg);
+                    renderChatMonitor();
+                }
             })
             .subscribe();
+    } catch (err) {
+        console.warn("⚠️ Failed to setup chat realtime subscription:", err);
     }
 }
 
@@ -3687,9 +3822,33 @@ async function openProfile(memberName) {
 
     const giveHeartBtn = document.getElementById('give-heart-btn');
     const complaintBtn = document.getElementById('profile-complaint-btn');
+    const challengeFriendBtn = document.getElementById('profile-challenge-friend-btn');
 
-    if (isMe) { giveHeartBtn.style.display = 'none'; complaintBtn.style.display = 'none'; }
-    else { giveHeartBtn.style.display = 'block'; complaintBtn.style.display = 'block'; giveHeartBtn.onclick = () => giveHeart(memberName); complaintBtn.onclick = () => showComplaintForm(memberName); }
+    if (isMe) { 
+        giveHeartBtn.style.display = 'none'; 
+        complaintBtn.style.display = 'none'; 
+        if (challengeFriendBtn) challengeFriendBtn.style.display = 'none';
+    } else { 
+        giveHeartBtn.style.display = 'block'; 
+        complaintBtn.style.display = 'block'; 
+        giveHeartBtn.onclick = () => giveHeart(memberName); 
+        complaintBtn.onclick = () => showComplaintForm(memberName);
+        if (challengeFriendBtn) {
+            challengeFriendBtn.style.display = 'block';
+            challengeFriendBtn.onclick = () => {
+                if (!isMemberOnline(memberName)) {
+                    showToast(`🔴 ${memberName} غير متصل حالياً في الموقع لبدء المواجهة.`, "warning");
+                    return;
+                }
+                const overlay = document.getElementById('profile-overlay');
+                if (overlay) overlay.style.display = 'none';
+                const arenaOverlay = document.getElementById('arena-overlay');
+                if (arenaOverlay) arenaOverlay.style.display = 'flex';
+                if (typeof switchArenaView === 'function') switchArenaView('lobby');
+                sendDirectArenaChallenge(memberName);
+            };
+        }
+    }
 }
 
 function giveHeart(targetName) {
@@ -4333,8 +4492,23 @@ function openFullCallView(mode, callData = {}) {
     }
 
     if (statusPill) {
-        statusPill.textContent = '🟢 متصل';
-        statusPill.className = 'call-status-pill status-connected';
+        if (mode === 'agora') {
+            if (isAgoraJoined) {
+                statusPill.textContent = '🟢 متصل';
+                statusPill.className = 'call-status-pill status-connected';
+            } else {
+                statusPill.textContent = '⏳ جاري الاتصال...';
+                statusPill.className = 'call-status-pill status-connecting';
+            }
+        } else {
+            if (inAppMediaStream) {
+                statusPill.textContent = '🟢 متصل';
+                statusPill.className = 'call-status-pill status-connected';
+            } else {
+                statusPill.textContent = '⏳ جاري الاتصال...';
+                statusPill.className = 'call-status-pill status-connecting';
+            }
+        }
     }
 
     // بدء عداد وقت المكالمة
@@ -5650,6 +5824,17 @@ async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, room
         updateAgoraUsersUI();
         showToast("🎉 تم الاتصال بغرفة Agora بنجاح!", "success");
 
+        // 💾 حفظ بيانات جلسة Agora الحالية في sessionStorage لإعادة الاتصال التلقائي عند Refresh بالخطأ
+        try {
+            sessionStorage.setItem('phantom_active_agora_session', JSON.stringify({
+                channel: activeChannel,
+                callId: actualCallId,
+                host: actualHost,
+                room: actualRoom,
+                timestamp: Date.now()
+            }));
+        } catch (_) {}
+
         // 🚀 فتح صفحة المكالمة الكاملة لـ Agora
         openFullCallView('agora', {
             id: actualCallId,
@@ -5657,6 +5842,12 @@ async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, room
             topic: actualRoom,
             channelName: activeChannel
         });
+
+        const statusPill = document.getElementById('call-connection-status');
+        if (statusPill) {
+            statusPill.textContent = '🟢 متصل';
+            statusPill.className = 'call-status-pill status-connected';
+        }
 
         if (!callIdOverride) {
             fetch('/api/calls/start', {
@@ -5686,6 +5877,12 @@ async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, room
 
     } catch (err) {
         console.error("Agora join error:", err);
+        try { sessionStorage.removeItem('phantom_active_agora_session'); } catch (_) {}
+        const statusPill = document.getElementById('call-connection-status');
+        if (statusPill && activeCallMode === 'agora') {
+            statusPill.textContent = '🔴 فشل الاتصال';
+            statusPill.className = 'call-status-pill status-disconnected';
+        }
         showToast("⚠️ " + (err.message || "تعذر الاتصال بغرفة Agora الصوتية."), "error");
         if (joinBtn) {
             joinBtn.disabled = false;
@@ -5731,6 +5928,13 @@ async function leaveAgoraRoom() {
     isAgoraJoined = false;
     isAgoraMicMuted = false;
     agoraRemoteUsers.clear();
+    try { sessionStorage.removeItem('phantom_active_agora_session'); } catch (_) {}
+
+    const statusPill = document.getElementById('call-connection-status');
+    if (statusPill && activeCallMode === 'agora') {
+        statusPill.textContent = '🔴 غير متصل';
+        statusPill.className = 'call-status-pill status-disconnected';
+    }
 
     const joinBtn = document.getElementById("agora-join-btn");
     const leaveBtn = document.getElementById("agora-leave-btn");
@@ -7608,12 +7812,15 @@ async function sendPresenceHeartbeat() {
             }
         }
 
-        // 📞 فحص المكالمات المباشرة النشطة في الكلان
+        // 📞 فحص ومزامنة المكالمات النشطة الحقيقية من السيرفر
         try {
             const callRes = await fetch('/api/calls/active');
             if (callRes.ok) {
                 const callData = await callRes.json();
-                updateActiveCallBannerUI(callData && callData.activeCall);
+                const activeCallsList = Array.isArray(callData.activeCalls) ? callData.activeCalls : (callData.activeCall ? [callData.activeCall] : []);
+                if (typeof updateActiveCallsSync === 'function') {
+                    updateActiveCallsSync(activeCallsList, callData.activeCall);
+                }
             }
         } catch (callErr) {}
     } catch (e) {
@@ -7624,93 +7831,32 @@ async function sendPresenceHeartbeat() {
     }
 }
 
+// تنظيف الجلسة عند مغادرة الموقع
+if (typeof window !== "undefined") {
+    window.addEventListener('beforeunload', () => {
+        const username = getCurrentUsername();
+        const userId = getCurrentUserId();
+        if (username && navigator.sendBeacon) {
+            navigator.sendBeacon('/api/presence/leave', JSON.stringify({ username, userId }));
+        }
+    });
+}
+
 let dismissedCallId = null;
 let currentActiveCallData = null;
 let hadActiveCall = false;
 let callEndTimer = null;
 
 function updateActiveCallBannerUI(activeCall) {
-    const banner = document.getElementById('clan-active-call-banner');
-    if (banner) banner.style.display = 'none'; // تعطيل ظهور البانر العائم لمنع أي إزعاج أو رسائل غير مرغوبة
-
-    const voiceBtn = document.getElementById('voice-call-btn');
-    const joinBtn = document.getElementById('chat-call-join-btn');
-    const endedStatus = document.getElementById('chat-call-ended-status');
-
-    if (activeCall && activeCall.active && activeCall.id !== dismissedCallId) {
-        currentActiveCallData = activeCall;
-        hadActiveCall = true;
-        if (callEndTimer) {
-            clearTimeout(callEndTimer);
-            callEndTimer = null;
-        }
-
-        // إظهار زر "انضمام" بجانب رمز 📞 في حالة فعالة بدون أي وميض أو خداع
-        if (joinBtn) {
-            joinBtn.style.display = 'inline-flex';
-            joinBtn.textContent = 'انضمام';
-            joinBtn.disabled = false;
-            joinBtn.style.opacity = '1';
-            joinBtn.style.cursor = 'pointer';
-            joinBtn.style.background = 'linear-gradient(135deg, rgba(0, 242, 254, 0.2), rgba(0, 255, 136, 0.2))';
-            joinBtn.style.borderColor = '#00ff88';
-            joinBtn.style.color = '#00ff88';
-            joinBtn.style.boxShadow = '0 0 10px rgba(0, 255, 136, 0.35)';
-            joinBtn.style.animation = 'none';
-            joinBtn.title = 'انضمام للمكالمة النشطة';
-        }
-        if (endedStatus) {
-            endedStatus.style.display = 'none';
-        }
-
-        if (voiceBtn) {
-            voiceBtn.style.position = 'relative';
-            if (!document.getElementById('voice-live-dot')) {
-                const dot = document.createElement('span');
-                dot.id = 'voice-live-dot';
-                dot.style.cssText = 'position:absolute; top:-2px; right:-2px; width:8px; height:8px; background:#00ff88; border-radius:50%; box-shadow:0 0 8px #00ff88;';
-                voiceBtn.appendChild(dot);
-            }
-        }
-    } else {
-        const dot = document.getElementById('voice-live-dot');
-        if (dot) dot.remove();
-
-        // زر انضمام يظل ظاهراً بجانب 📞 ولكن يكون معطلاً تماماً وبدون أي وميض
-        if (joinBtn) {
-            joinBtn.style.display = 'inline-flex';
-            joinBtn.textContent = 'انضمام';
-            joinBtn.disabled = true;
-            joinBtn.style.opacity = '0.45';
-            joinBtn.style.cursor = 'not-allowed';
-            joinBtn.style.background = 'rgba(255,255,255,0.05)';
-            joinBtn.style.borderColor = 'rgba(255,255,255,0.12)';
-            joinBtn.style.color = '#64748b';
-            joinBtn.style.boxShadow = 'none';
-            joinBtn.style.animation = 'none';
-            joinBtn.style.transform = 'none';
-            joinBtn.title = 'لا توجد مكالمات نشطة حالياً';
-        }
-
-        if (hadActiveCall) {
-            // كانت هناك مكالمة وانتهت الآن
-            if (endedStatus) {
-                endedStatus.style.display = 'inline-block';
-                endedStatus.textContent = 'انتهت المكالمة';
-                callEndTimer = setTimeout(() => {
-                    if (endedStatus) endedStatus.style.display = 'none';
-                }, 7000);
-            }
-            hadActiveCall = false;
-        } else {
-            if (endedStatus) endedStatus.style.display = 'none';
-        }
-        currentActiveCallData = null;
+    if (typeof updateActiveCallsSync === 'function') {
+        updateActiveCallsSync(activeCall ? [activeCall] : [], activeCall);
     }
 }
 
 window.handleChatCallJoinClick = function(event) {
-    handleDirectCallJoinClick(event);
+    if (typeof toggleActiveCallsDropdown === 'function') {
+        toggleActiveCallsDropdown(event);
+    }
 };
 
 function dismissCallBanner() {
@@ -7721,9 +7867,9 @@ function dismissCallBanner() {
 
 window.dismissCallBanner = dismissCallBanner;
 
-// تحديث عدادات المتصلين في الواجهات المختلفة
+// تحديث عدادات المتصلين في الواجهات المختلفة بالقيمة الحقيقية
 function updateAllOnlineCounters() {
-    const count = Math.max(1, serverOnlineUsers.length);
+    const count = Array.isArray(serverOnlineUsers) ? serverOnlineUsers.length : 0;
     const chatCounter = document.getElementById('chat-online-counter');
     const arenaCounter = document.getElementById('arena-online-counter');
     const popCounter = document.getElementById('popularity-online-counter');
@@ -7731,6 +7877,9 @@ function updateAllOnlineCounters() {
     if (chatCounter) chatCounter.textContent = `${count} متصلين حالياً`;
     if (arenaCounter) arenaCounter.textContent = `${count} متصل بالمقر`;
     if (popCounter) popCounter.textContent = `${count} متصل`;
+
+    renderOnlineUsers();
+    renderChatOnlineCount();
 }
 
 // 🔍 استطلاع التحديات والإشعارات الموجهة للعضو من السيرفر
@@ -8023,22 +8172,27 @@ function sendDirectArenaChallenge(targetName) {
     if (!lobby) return;
     lobby.style.display = 'block';
 
-    let timeLeft = 20;
-    lobby.innerHTML = `
-        <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
-            <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚡</div>
-            <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري إرسال إشعار التحدي المباشر إلى <span style="color:#00f2fe;">${escapeHTML(targetName)}</span>...</div>
-            <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">بانتظار قبول النزال: ${timeLeft} ثانية (الرهان: ${phantomArenaState.stake ? phantomArenaState.stake + ' نقطة' : 'نزال شرف'})</div>
-            <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:14px;">
-                <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="acceptInstantBotDuel()">
-                    ⚡ بدء مواجهة فورية مع حارس الساحة (Bot)
-                </button>
-                <button type="button" class="btn-danger" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelMatching()">
-                    ❌ إلغاء التحدي
-                </button>
+    let timeLeft = 25;
+    const renderDirectLobby = () => {
+        const percent = Math.max(0, (timeLeft / 25) * 100);
+        lobby.innerHTML = `
+            <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
+                <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚡</div>
+                <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري إرسال إشعار التحدي المباشر إلى <span style="color:#00f2fe;">${escapeHTML(targetName)}</span>...</div>
+                <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">بانتظار قبول النزال: ${timeLeft} ثانية (الرهان: ${phantomArenaState.stake ? phantomArenaState.stake + ' نقطة' : 'نزال شرف'})</div>
+                <div style="width:100%; height:6px; background:rgba(255,255,255,0.1); border-radius:10px; overflow:hidden; margin:10px 0 12px;">
+                    <div style="width:${percent}%; height:100%; background:linear-gradient(90deg, #00f2fe, #00ff88); transition:width 1s linear;"></div>
+                </div>
+                <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:14px;">
+                    <button type="button" class="btn-danger" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelMatching()">
+                        ❌ إلغاء التحدي
+                    </button>
+                </div>
             </div>
-        </div>
-    `;
+        `;
+    };
+
+    renderDirectLobby();
 
     // إرسال التحدي للسيرفر
     fetch('/api/battles/challenge', {
@@ -8053,7 +8207,8 @@ function sendDirectArenaChallenge(targetName) {
         })
     }).then(res => res.json()).then(data => {
         if (data.success && data.challenge) {
-            trackArenaDirectChallenge(data.challenge.id, targetName);
+            currentArenaChallengeId = data.challenge.id;
+            trackArenaDirectChallenge(data.challenge.id, targetName, timeLeft);
         }
     }).catch(() => {});
 
@@ -8061,31 +8216,67 @@ function sendDirectArenaChallenge(targetName) {
 }
 
 // متابعة حالة قبول التحدي المباشر في الساحة
-function trackArenaDirectChallenge(challengeId, targetName) {
+function trackArenaDirectChallenge(challengeId, targetName, initialTime = 25) {
     if (arenaDirectSearchInterval) clearInterval(arenaDirectSearchInterval);
+    let timeLeft = initialTime;
+    const lobby = document.getElementById('arena-search-lobby');
 
     arenaDirectSearchInterval = setInterval(async () => {
-        try {
-            const res = await fetch(`/api/battles/state/${challengeId}`);
-            if (res.ok) {
-                const data = await res.json();
-                if (data && data.challenge && data.challenge.status === 'active') {
-                    clearInterval(arenaDirectSearchInterval);
-                    arenaDirectSearchInterval = null;
-                    cancelMatching();
-
-                    phantomArenaState.mode = 'duel';
-                    phantomArenaState.opponent = {
-                        name: targetName,
-                        avatar: '⚔️',
-                        sub: `مبارزة حقيقية مباشرة · رهان: ${phantomArenaState.stake} نقطة`
-                    };
-                    showToast(`🔥 قبل ${targetName} التحدي! النزال يبدأ الآن...`, 'success');
-                    launchVersusCountdown();
-                }
+        timeLeft--;
+        if (timeLeft > 0) {
+            const percent = Math.max(0, (timeLeft / 25) * 100);
+            if (lobby && lobby.style.display !== 'none') {
+                const subEl = lobby.querySelector('div[style*="monospace"]');
+                const barEl = lobby.querySelector('div[style*="linear-gradient"]');
+                if (subEl) subEl.textContent = `بانتظار قبول النزال: ${timeLeft} ثانية (الرهان: ${phantomArenaState.stake ? phantomArenaState.stake + ' نقطة' : 'نزال شرف'})`;
+                if (barEl) barEl.style.width = `${percent}%`;
             }
-        } catch (e) {}
-    }, 1500);
+
+            try {
+                const res = await fetch(`/api/battles/state/${challengeId}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.challenge && data.challenge.status === 'active') {
+                        clearInterval(arenaDirectSearchInterval);
+                        arenaDirectSearchInterval = null;
+                        cancelMatching();
+
+                        phantomArenaState.mode = 'duel';
+                        phantomArenaState.challengeId = challengeId;
+                        phantomArenaState.opponent = {
+                            name: targetName,
+                            avatar: '⚔️',
+                            sub: `مبارزة حقيقية مباشرة · رهان: ${phantomArenaState.stake} نقطة`
+                        };
+                        showToast(`🔥 قبل ${targetName} التحدي! النزال يبدأ الآن...`, 'success');
+                        launchVersusCountdown();
+                        return;
+                    }
+                }
+            } catch (e) {}
+        } else {
+            clearInterval(arenaDirectSearchInterval);
+            arenaDirectSearchInterval = null;
+            cancelMatching();
+            if (lobby) {
+                lobby.style.display = 'block';
+                lobby.innerHTML = `
+                    <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:14px;">
+                        <div style="font-size:2.2rem;">⏱️</div>
+                        <div style="font-weight:900; color:#ef4444; font-size:1.1rem; margin:6px 0;">لم يقبل ${escapeHTML(targetName)} التحدي خلال المهلة. حاول مرة أخرى.</div>
+                        <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:10px;">
+                            <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="sendDirectArenaChallenge('${escapeHTML(targetName)}')">
+                                🔄 إعادة إرسال التحدي
+                            </button>
+                            <button type="button" class="btn-secondary" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelMatching()">
+                                إغلاق
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+    }, 1000);
 }
 
 // ========================================================
@@ -8170,17 +8361,16 @@ function renderPopularityClanMembers() {
 function sendDirectPopularityChallenge(targetName) {
     const username = getCurrentUsername() || 'المحارب';
     const lobby = document.getElementById('popularity-search-lobby');
+    let timeLeft = 25;
+
     if (lobby) {
         lobby.style.display = 'block';
         lobby.innerHTML = `
             <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
                 <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚔️</div>
                 <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري إرسال إشعار معركة الشعبية إلى <span style="color:#00f2fe;">${escapeHTML(targetName)}</span>...</div>
-                <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">بانتظار قبول التحدي وانطلاق الـ PK...</div>
+                <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">بانتظار قبول التحدي: ${timeLeft} ثانية</div>
                 <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:14px;">
-                    <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="startInstantPopularityMatch('${escapeHTML(targetName)}')">
-                        ⚡ بدء الجولة فوراً
-                    </button>
                     <button type="button" class="btn-danger" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelPopularitySearch()">
                         ❌ إلغاء التحدي
                     </button>
@@ -8200,36 +8390,77 @@ function sendDirectPopularityChallenge(targetName) {
         })
     }).then(res => res.json()).then(data => {
         if (data.success && data.challenge) {
-            trackPopularityDirectChallenge(data.challenge.id, targetName);
+            currentPopularityChallengeId = data.challenge.id;
+            trackPopularityDirectChallenge(data.challenge.id, targetName, timeLeft);
         }
     }).catch(() => {});
 
     showToast(`🚀 تم إرسال إشعار معركة الشعبية إلى ${targetName}!`, 'info');
 }
 
-function trackPopularityDirectChallenge(challengeId, targetName) {
+function trackPopularityDirectChallenge(challengeId, targetName, initialTime = 25) {
     if (popularityDirectSearchInterval) clearInterval(popularityDirectSearchInterval);
+    let timeLeft = initialTime;
+    const lobby = document.getElementById('popularity-search-lobby');
+    const username = getCurrentUsername() || 'المحارب';
 
     popularityDirectSearchInterval = setInterval(async () => {
-        try {
-            const res = await fetch(`/api/battles/state/${challengeId}`);
-            if (res.ok) {
-                const data = await res.json();
-                if (data && data.challenge && data.challenge.status === 'active') {
-                    clearInterval(popularityDirectSearchInterval);
-                    popularityDirectSearchInterval = null;
-                    cancelPopularitySearch();
-                    startInstantPopularityMatch(targetName);
-                }
+        timeLeft--;
+        if (timeLeft > 0) {
+            if (lobby && lobby.style.display !== 'none') {
+                const subEl = lobby.querySelector('div[style*="monospace"]');
+                if (subEl) subEl.textContent = `بانتظار قبول التحدي: ${timeLeft} ثانية`;
             }
-        } catch (e) {}
-    }, 1500);
+
+            try {
+                const res = await fetch(`/api/battles/state/${challengeId}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.challenge && data.challenge.status === 'active') {
+                        clearInterval(popularityDirectSearchInterval);
+                        popularityDirectSearchInterval = null;
+                        cancelPopularitySearch();
+                        startLivePopularityBattle(username, targetName, challengeId);
+                    }
+                }
+            } catch (e) {}
+        } else {
+            clearInterval(popularityDirectSearchInterval);
+            popularityDirectSearchInterval = null;
+            cancelPopularitySearch();
+            if (lobby) {
+                lobby.style.display = 'block';
+                lobby.innerHTML = `
+                    <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:14px;">
+                        <div style="font-size:2.2rem;">⏱️</div>
+                        <div style="font-weight:900; color:#ef4444; font-size:1.1rem; margin:6px 0;">لم يقبل ${escapeHTML(targetName)} التحدي خلال المهلة. حاول مرة أخرى.</div>
+                        <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:10px;">
+                            <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="sendDirectPopularityChallenge('${escapeHTML(targetName)}')">
+                                🔄 إعادة إرسال التحدي
+                            </button>
+                            <button type="button" class="btn-secondary" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelPopularitySearch()">
+                                إغلاق
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+    }, 1000);
 }
 
 function cancelPopularitySearch() {
     if (popularityDirectSearchInterval) {
         clearInterval(popularityDirectSearchInterval);
         popularityDirectSearchInterval = null;
+    }
+    if (currentPopularityChallengeId) {
+        fetch('/api/battles/dismiss', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ challengeId: currentPopularityChallengeId, username: getCurrentUsername() })
+        }).catch(() => {});
+        currentPopularityChallengeId = null;
     }
     const lobby = document.getElementById('popularity-search-lobby');
     if (lobby) {
@@ -8296,7 +8527,41 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!challengePollingInterval) {
         challengePollingInterval = setInterval(pollIncomingChallenges, 3500);
     }
+    // فحص إعادة الاتصال بمكالمة Agora عند Refresh بالخطأ إذا كانت الغرفة ما زالت نشطة
+    setTimeout(checkAgoraAutoReconnectOnRefresh, 1500);
 });
+
+async function checkAgoraAutoReconnectOnRefresh() {
+    try {
+        const savedRaw = sessionStorage.getItem('phantom_active_agora_session');
+        if (!savedRaw) return;
+        const savedSession = JSON.parse(savedRaw);
+        if (!savedSession || !savedSession.callId) return;
+
+        // التحقق من المصدر الحقيقي: السيرفر
+        const res = await fetch('/api/calls/active');
+        if (res.ok) {
+            const data = await res.json();
+            const activeCalls = Array.isArray(data.activeCalls) ? data.activeCalls : (data.activeCall ? [data.activeCall] : []);
+            const stillActive = activeCalls.some(c => c.id === savedSession.callId && (c.status === 'active' || c.active));
+
+            if (stillActive) {
+                showToast("🔄 جاري إعادة الاتصال التلقائي بغرفة Agora الصوتية...", "info");
+                try {
+                    await joinAgoraRoom(savedSession.channel, savedSession.callId, savedSession.host, savedSession.room);
+                } catch (reconnectErr) {
+                    sessionStorage.removeItem('phantom_active_agora_session');
+                    showToast("⚠️ تعذر إعادة الاتصال: انتهت صلاحية التوكن أو الغرفة غير متاحة.", "error");
+                }
+            } else {
+                sessionStorage.removeItem('phantom_active_agora_session');
+                showToast("⚠️ تعذر إعادة الاتصال: انتهت المكالمة أو تم إغلاق الغرفة.", "warning");
+            }
+        }
+    } catch (e) {
+        try { sessionStorage.removeItem('phantom_active_agora_session'); } catch (_) {}
+    }
+}
 
 /* ========================================================
    ⚡ 1v1 PHANTOM ARENA ENGINE (ساحة المبارزات والتحديات التفاعلية)
@@ -8965,6 +9230,23 @@ function concludeArenaMatch() {
     if (stats.history.length > 20) stats.history.pop();
 
     saveArenaStats(stats);
+
+    // ⚔️ إنشاء سجل مواجهة واحد موحد للطرفين الحقيقيين على السيرفر
+    if (phantomArenaState.challengeId || phantomArenaState.mode === 'duel') {
+        const winner = isWin ? currentUsername : (isDraw ? 'تعادل' : (phantomArenaState.opponent ? phantomArenaState.opponent.name : 'الخصم'));
+        fetch('/api/battles/finish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                challengeId: phantomArenaState.challengeId || `duel_${Date.now()}`,
+                winnerName: winner,
+                myScore: p1,
+                oppScore: p2,
+                bestSpeed: bestInMatch,
+                mode: 'arena'
+            })
+        }).catch(() => {});
+    }
 }
 
 // 🏳️ استسلام من النزال
@@ -9158,21 +9440,24 @@ function startPopularityBattle() {
     };
 
     renderPopLobby();
-    showToast("📡 تم بث تحدي معركة الشعبية لجميع أعضاء الكلان المتصلين بالمقر!", "info");
+    showToast("📡 دخلت طابور مطابقة معركة الشعبية...", "info");
 
-    // إرسال تحدي مفتوح إلى السيرفر
-    fetch('/api/battles/challenge', {
+    // الدخول في طابور السيرفر الحقيقي
+    fetch('/api/battles/queue/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             type: 'popularity',
-            challengerName: username,
-            challengerId: getCurrentUserId(),
-            targetName: 'ALL'
+            username: username,
+            userId: getCurrentUserId(),
+            stake: 0
         })
-    }).then(res => res.json()).then(data => {
-        if (data.success && data.challenge) {
-            currentPopularityChallengeId = data.challenge.id;
+    }).then(res => res.json()).then(joinData => {
+        if (joinData.matched && joinData.challenge) {
+            cancelPopularityMatchmaking();
+            const opp = joinData.challenge.challengerName === username ? joinData.challenge.targetName : joinData.challenge.challengerName;
+            showToast(`🔥 تم التوفيق مع ${opp}! تبدأ معركة الشعبية الآن...`, 'success');
+            startLivePopularityBattle(username, opp, joinData.challenge.id);
         }
     }).catch(() => {});
 
@@ -9181,36 +9466,39 @@ function startPopularityBattle() {
         timeLeft--;
         if (timeLeft > 0) {
             renderPopLobby();
-            // فحص هل انضم أحد للتحدي من السيرفر
-            if (currentPopularityChallengeId) {
-                try {
-                    const res = await fetch(`/api/battles/state/${currentPopularityChallengeId}`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        if (data && data.challenge && data.challenge.status === 'active') {
-                            clearInterval(popularityMatchmakingInterval);
-                            popularityMatchmakingInterval = null;
-                            if (lobby) lobby.style.display = 'none';
-                            const joiner = data.challenge.acceptedBy || 'بطل الكلان';
-                            showToast(`🔥 انضم ${joiner} إلى معركة الشعبية!`, 'success');
-                            startLivePopularityBattle(username, joiner, currentPopularityChallengeId);
-                            return;
-                        }
+            // فحص حالة الطابور من السيرفر
+            try {
+                const res = await fetch(`/api/battles/queue/status?type=popularity&username=${encodeURIComponent(username)}&userId=${encodeURIComponent(getCurrentUserId())}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.matched && data.challenge) {
+                        clearInterval(popularityMatchmakingInterval);
+                        popularityMatchmakingInterval = null;
+                        if (lobby) lobby.style.display = 'none';
+                        const opp = data.challenge.challengerName === username ? data.challenge.targetName : data.challenge.challengerName;
+                        showToast(`🔥 انضم ${opp} إلى معركة الشعبية!`, 'success');
+                        startLivePopularityBattle(username, opp, data.challenge.id);
+                        return;
                     }
-                } catch (e) {}
-            }
+                }
+            } catch (e) {}
         } else {
             clearInterval(popularityMatchmakingInterval);
             popularityMatchmakingInterval = null;
+            fetch('/api/battles/queue/leave', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'popularity', username, userId: getCurrentUserId() })
+            }).catch(() => {});
+
             if (lobby) {
                 lobby.innerHTML = `
                     <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:14px;">
                         <div style="font-size:2.2rem;">⏱️</div>
-                        <div style="font-weight:900; color:#ef4444; font-size:1.1rem; margin:6px 0;">لم يقبل أي عضو التحدي خلال المهلة</div>
-                        <div style="color:#cbd5e1; font-size:0.85rem; margin-bottom:12px;">يمكنك بدء جولة تنافس فورية مع أبطال الكلان الآن!</div>
-                        <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
-                            <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="launchRivalPopularityMatch()">
-                                ⚡ مواجهة فورية
+                        <div style="font-weight:900; color:#ef4444; font-size:1.1rem; margin:6px 0;">لا يوجد منافس متاح حالياً، حاول مرة أخرى.</div>
+                        <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:10px;">
+                            <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="startPopularityBattle()">
+                                🔄 محاولة مجدداً
                             </button>
                             <button type="button" class="btn-secondary" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelPopularityMatchmaking()">
                                 إغلاق
@@ -9220,7 +9508,7 @@ function startPopularityBattle() {
                 `;
             }
         }
-    }, 1000);
+    }, 1200);
 }
 
 function cancelPopularityMatchmaking() {
@@ -9228,6 +9516,14 @@ function cancelPopularityMatchmaking() {
         clearInterval(popularityMatchmakingInterval);
         popularityMatchmakingInterval = null;
     }
+    const username = getCurrentUsername();
+    const userId = getCurrentUserId();
+    fetch('/api/battles/queue/leave', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'popularity', username, userId })
+    }).catch(() => {});
+
     if (currentPopularityChallengeId) {
         fetch('/api/battles/dismiss', {
             method: 'POST',
@@ -9244,12 +9540,7 @@ function cancelPopularityMatchmaking() {
 }
 
 function launchRivalPopularityMatch() {
-    cancelPopularityMatchmaking();
-    const username = getCurrentUsername() || 'المحارب';
-    const roster = typeof getFullRoster === 'function' ? getFullRoster() : [];
-    const rivals = roster.filter(m => m && m.name && normalizeName(m.name) !== normalizeName(username));
-    const opponentName = rivals.length > 0 ? rivals[Math.floor(Math.random() * rivals.length)].name : 'المتحدي الشبح';
-    startLivePopularityBattle(username, opponentName, null);
+    startPopularityBattle();
 }
 
 function startLivePopularityBattle(playerAName, playerBName, challengeId = null) {
@@ -9469,6 +9760,7 @@ let currentArenaChallengeId = null;
 function startMatching() {
     ArenaAudio.init();
     const username = getCurrentUsername() || 'المحارب';
+    const userId = getCurrentUserId();
     const balance = getUserBalance();
 
     if (phantomArenaState.stake > 0 && balance < phantomArenaState.stake) {
@@ -9486,15 +9778,12 @@ function startMatching() {
         lobby.innerHTML = `
             <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
                 <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚔️</div>
-                <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري إرسال إشعار التحدي والبحث عن منافس عبر السيرفر...</div>
+                <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري البحث عن لاعب حقيقي في قائمة الانتظار بالسيرفر...</div>
                 <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">مهلة الانتظار: ${timeLeft} ثانية (الرهان: ${phantomArenaState.stake ? phantomArenaState.stake + ' نقطة' : 'نزال شرف'})</div>
                 <div style="width:100%; height:6px; background:rgba(255,255,255,0.1); border-radius:10px; overflow:hidden; margin:10px 0 12px;">
                     <div style="width:${percent}%; height:100%; background:linear-gradient(90deg, #00f2fe, #00ff88); transition:width 1s linear;"></div>
                 </div>
                 <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
-                    <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="acceptInstantBotDuel()">
-                        ⚡ مواجهة فورية مع حارس الساحة (Bot)
-                    </button>
                     <button type="button" class="btn-danger" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelMatching()">
                         ❌ إلغاء البحث
                     </button>
@@ -9505,22 +9794,31 @@ function startMatching() {
 
     renderSearchLobby();
     ArenaAudio.playCountdown(false);
-    showToast("📡 تم إرسال تحدي ساحة النزال لسيرفر الكلان!", "info");
+    showToast("📡 دخلت قائمة انتظار ساحة النزال بالسيرفر...", "info");
 
-    // إرسال تحدي مفتوح للسيرفر
-    fetch('/api/battles/challenge', {
+    // الدخول في طابور السيرفر الحقيقي
+    fetch('/api/battles/queue/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             type: 'arena',
-            challengerName: username,
-            challengerId: getCurrentUserId(),
-            targetName: 'ALL',
+            username: username,
+            userId: userId,
             stake: phantomArenaState.stake
         })
-    }).then(res => res.json()).then(data => {
-        if (data.success && data.challenge) {
-            currentArenaChallengeId = data.challenge.id;
+    }).then(res => res.json()).then(joinData => {
+        if (joinData.matched && joinData.challenge) {
+            cancelMatching();
+            const opp = joinData.challenge.challengerName === username ? joinData.challenge.targetName : joinData.challenge.challengerName;
+            phantomArenaState.mode = 'duel';
+            phantomArenaState.challengeId = joinData.challenge.id;
+            phantomArenaState.opponent = {
+                name: opp,
+                avatar: '⚔️',
+                sub: `منافس حقيقي من قائمة الانتظار · رهان: ${phantomArenaState.stake} نقطة`
+            };
+            showToast(`🔥 تم التوفيق مع ${opp}! يبدأ النزال الآن...`, 'success');
+            launchVersusCountdown();
         }
     }).catch(() => {});
 
@@ -9531,42 +9829,46 @@ function startMatching() {
             renderSearchLobby();
             ArenaAudio.playTone(380, 'sine', 0.05, 0.08);
 
-            // فحص قبول النزال من لاعب آخر
-            if (currentArenaChallengeId) {
-                try {
-                    const res = await fetch(`/api/battles/state/${currentArenaChallengeId}`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        if (data && data.challenge && data.challenge.status === 'active') {
-                            clearInterval(arenaSearchInterval);
-                            arenaSearchInterval = null;
-                            cancelMatching();
+            // استعلام حالة الطابور عن منافس حقيقي دخل الساحة
+            try {
+                const res = await fetch(`/api/battles/queue/status?type=arena&username=${encodeURIComponent(username)}&userId=${encodeURIComponent(userId)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.matched && data.challenge) {
+                        clearInterval(arenaSearchInterval);
+                        arenaSearchInterval = null;
+                        cancelMatching();
 
-                            const joiner = data.challenge.acceptedBy || 'بطل الكلان';
-                            phantomArenaState.mode = 'duel';
-                            phantomArenaState.opponent = {
-                                name: joiner,
-                                avatar: '⚔️',
-                                sub: `مبارزة مباشرة عبر السيرفر · رهان: ${phantomArenaState.stake} نقطة`
-                            };
-                            showToast(`🔥 انضم ${joiner} إلى ساحة النزال! يبدأ النزال الآن...`, 'success');
-                            launchVersusCountdown();
-                            return;
-                        }
+                        const opp = data.challenge.challengerName === username ? data.challenge.targetName : data.challenge.challengerName;
+                        phantomArenaState.mode = 'duel';
+                        phantomArenaState.challengeId = data.challenge.id;
+                        phantomArenaState.opponent = {
+                            name: opp,
+                            avatar: '⚔️',
+                            sub: `منافس حقيقي من قائمة الانتظار · رهان: ${phantomArenaState.stake} نقطة`
+                        };
+                        showToast(`🔥 انضم ${opp} إلى ساحة النزال! يبدأ النزال الآن...`, 'success');
+                        launchVersusCountdown();
+                        return;
                     }
-                } catch (e) {}
-            }
+                }
+            } catch (e) {}
         } else {
             clearInterval(arenaSearchInterval);
             arenaSearchInterval = null;
+            fetch('/api/battles/queue/leave', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'arena', username, userId })
+            }).catch(() => {});
+
             lobby.innerHTML = `
                 <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:14px;">
                     <div style="font-size:2.2rem;">⏱️</div>
-                    <div style="font-weight:900; color:#ef4444; font-size:1.1rem; margin:6px 0;">لم ينضم أي عضو خلال المهلة</div>
-                    <div style="color:#cbd5e1; font-size:0.85rem; margin-bottom:12px;">يمكنك مواجهة حارس الساحة التكتيكي واختبار سرعتك الآن!</div>
-                    <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
-                        <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="acceptInstantBotDuel()">
-                            ⚡ نزال حارس الساحة
+                    <div style="font-weight:900; color:#ef4444; font-size:1.1rem; margin:6px 0;">لا يوجد منافس متاح حالياً، حاول مرة أخرى.</div>
+                    <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:10px;">
+                        <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="startMatching()">
+                            🔄 محاولة مجدداً
                         </button>
                         <button type="button" class="btn-secondary" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelMatching()">
                             إغلاق
@@ -9575,7 +9877,7 @@ function startMatching() {
                 </div>
             `;
         }
-    }, 1000);
+    }, 1200);
 }
 
 function cancelMatching() {
@@ -9583,11 +9885,23 @@ function cancelMatching() {
         clearInterval(arenaSearchInterval);
         arenaSearchInterval = null;
     }
+    if (arenaDirectSearchInterval) {
+        clearInterval(arenaDirectSearchInterval);
+        arenaDirectSearchInterval = null;
+    }
+    const username = getCurrentUsername();
+    const userId = getCurrentUserId();
+    fetch('/api/battles/queue/leave', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'arena', username, userId })
+    }).catch(() => {});
+
     if (currentArenaChallengeId) {
         fetch('/api/battles/dismiss', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ challengeId: currentArenaChallengeId, username: getCurrentUsername() })
+            body: JSON.stringify({ challengeId: currentArenaChallengeId, username: username })
         }).catch(() => {});
         currentArenaChallengeId = null;
     }

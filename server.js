@@ -1171,14 +1171,26 @@ function cleanupStale() {
   }
 }
 
-// 🟢 1. Presence Heartbeat & Query
+// 🟢 1. Presence Heartbeat & Query with UserId Deduplication
 app.post('/api/presence', (req, res) => {
   cleanupStale();
   const { username, userId, rank, avatar } = req.body || {};
   if (username) {
-    onlineUsers.set(username, {
-      username,
-      userId: userId || null,
+    const cleanUser = String(username).trim();
+    const cleanId = userId ? String(userId).trim() : null;
+    const key = cleanId || cleanUser.toLowerCase();
+
+    // إزالة أي سجل مكرر بنفس الاسم أو نفس المعرف
+    for (const [k, u] of onlineUsers.entries()) {
+      if ((cleanId && u.userId === cleanId) || (u.username.toLowerCase() === cleanUser.toLowerCase())) {
+        onlineUsers.delete(k);
+      }
+    }
+
+    onlineUsers.set(key, {
+      key,
+      username: cleanUser,
+      userId: cleanId,
       rank: rank || 'عضو',
       avatar: avatar || 'PH',
       lastSeen: Date.now()
@@ -1187,12 +1199,148 @@ app.post('/api/presence', (req, res) => {
   res.json({ success: true, onlineUsers: Array.from(onlineUsers.values()) });
 });
 
+app.post('/api/presence/leave', (req, res) => {
+  const { username, userId } = req.body || {};
+  const cleanUser = username ? String(username).trim().toLowerCase() : null;
+  const cleanId = userId ? String(userId).trim() : null;
+
+  for (const [k, u] of onlineUsers.entries()) {
+    if ((cleanId && u.userId === cleanId) || (cleanUser && u.username.toLowerCase() === cleanUser)) {
+      onlineUsers.delete(k);
+    }
+  }
+  res.json({ success: true });
+});
+
 app.get('/api/presence', (req, res) => {
   cleanupStale();
   res.json({ success: true, onlineUsers: Array.from(onlineUsers.values()) });
 });
 
-// ⚔️ 2. Battles & Challenges API (Popularity Battle & 1v1 Arena)
+// ⚔️ 2. Battles & Challenges API (Popularity Battle & 1v1 Arena & Real Queue)
+const matchmakingQueue = new Map(); // type -> Map of userId/name -> { name, id, queuedAt, stake }
+const battleHistoryRecords = []; // سجل موحد للمواجهات الحقيقية بين الطرفين
+
+function cleanupQueue() {
+  const now = Date.now();
+  for (const [key, q] of matchmakingQueue.entries()) {
+    if (now - q.queuedAt > 60000) {
+      matchmakingQueue.delete(key);
+    }
+  }
+}
+
+app.post('/api/battles/queue/join', (req, res) => {
+  cleanupStale();
+  cleanupQueue();
+  const { type, username, userId, stake } = req.body || {};
+  if (!username) {
+    return res.status(400).json({ error: 'اسم اللاعب مطلوب للمطابقة.' });
+  }
+
+  const cleanUser = String(username).trim();
+  const cleanId = userId ? String(userId).trim() : cleanUser;
+  const matchType = type || 'popularity';
+
+  // البحث عن لاعب حقيقي آخر متواجد في الطابور بنفس النوع وليس نفس اللاعب
+  let matchedOpponent = null;
+  for (const [key, waiter] of matchmakingQueue.entries()) {
+    if (waiter.type === matchType && waiter.name.toLowerCase() !== cleanUser.toLowerCase() && waiter.id !== cleanId) {
+      // التحقق من أن الخصم لا يزال متصلاً
+      const isStillOnline = Array.from(onlineUsers.values()).some(u => 
+        (u.userId && u.userId === waiter.id) || u.username.toLowerCase() === waiter.name.toLowerCase()
+      );
+      if (isStillOnline) {
+        matchedOpponent = waiter;
+        matchmakingQueue.delete(key);
+        break;
+      } else {
+        matchmakingQueue.delete(key);
+      }
+    }
+  }
+
+  if (matchedOpponent) {
+    // إنشاء مواجهة حقيقية موحدة للطرفين لمدة يوم كامل (24 ساعة)
+    const challengeId = 'match_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    const durationMs = 24 * 60 * 60 * 1000; // 24 ساعة كاملة
+    const now = Date.now();
+
+    const challenge = {
+      id: challengeId,
+      type: matchType,
+      challengerName: matchedOpponent.name,
+      challengerId: matchedOpponent.id,
+      targetName: cleanUser,
+      targetId: cleanId,
+      acceptedBy: cleanUser,
+      stake: Math.max(matchedOpponent.stake || 0, Number(stake) || 0),
+      status: 'active',
+      startedAt: now,
+      expiresAt: now + durationMs,
+      durationMs: durationMs,
+      playerA: { name: matchedOpponent.name, id: matchedOpponent.id, votes: 0, score: 0 },
+      playerB: { name: cleanUser, id: cleanId, votes: 0, score: 0 },
+      voters: {},
+      createdAt: now
+    };
+
+    activeChallenges.set(challengeId, challenge);
+    return res.json({ success: true, matched: true, challenge });
+  }
+
+  // إذا لم يتوفر خصم حقيقي، إضافته إلى الطابور بانتظار خصم حقيقي
+  const queueKey = `${matchType}:${cleanId}`;
+  matchmakingQueue.set(queueKey, {
+    key: queueKey,
+    type: matchType,
+    name: cleanUser,
+    id: cleanId,
+    stake: Number(stake) || 0,
+    queuedAt: Date.now()
+  });
+
+  res.json({ success: true, matched: false, message: 'في انتظار منافس حقيقي...' });
+});
+
+app.post('/api/battles/queue/leave', (req, res) => {
+  const { type, username, userId } = req.body || {};
+  const cleanUser = username ? String(username).trim().toLowerCase() : '';
+  const cleanId = userId ? String(userId).trim() : cleanUser;
+  const matchType = type || 'popularity';
+
+  const queueKey = `${matchType}:${cleanId}`;
+  matchmakingQueue.delete(queueKey);
+  for (const [key, q] of matchmakingQueue.entries()) {
+    if (q.id === cleanId || q.name.toLowerCase() === cleanUser) {
+      matchmakingQueue.delete(key);
+    }
+  }
+  res.json({ success: true });
+});
+
+app.get('/api/battles/queue/status', (req, res) => {
+  cleanupStale();
+  cleanupQueue();
+  const { username, userId, type } = req.query || {};
+  const cleanUser = username ? String(username).trim().toLowerCase() : '';
+  const cleanId = userId ? String(userId).trim() : cleanUser;
+  const matchType = type || 'popularity';
+
+  // البحث عما إذا تم إنشاء تحدٍ نشط لهذا المستخدم
+  for (const ch of activeChallenges.values()) {
+    if (ch.type === matchType && ch.status === 'active') {
+      const isA = (ch.challengerId && ch.challengerId === cleanId) || ch.challengerName.toLowerCase() === cleanUser;
+      const isB = (ch.targetId && ch.targetId === cleanId) || ch.targetName.toLowerCase() === cleanUser || (ch.acceptedBy && ch.acceptedBy.toLowerCase() === cleanUser);
+      if (isA || isB) {
+        return res.json({ success: true, matched: true, challenge: ch });
+      }
+    }
+  }
+
+  res.json({ success: true, matched: false });
+});
+
 app.post('/api/battles/challenge', (req, res) => {
   cleanupStale();
   const { type, challengerName, challengerId, targetName, stake, details } = req.body || {};
@@ -1201,18 +1349,23 @@ app.post('/api/battles/challenge', (req, res) => {
   }
 
   const challengeId = 'ch_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+  const now = Date.now();
+  const durationMs = 24 * 60 * 60 * 1000; // 24 ساعة كاملة
+
   const challenge = {
     id: challengeId,
-    type: type || 'popularity', // 'popularity' | 'arena' | 'call'
+    type: type || 'popularity', // 'popularity' | 'arena'
     challengerName,
     challengerId: challengerId || null,
     targetName: targetName || 'ALL', // 'ALL' or specific username
     stake: Number(stake) || 0,
     details: details || {},
     status: 'pending',
-    playerA: { name: challengerName, votes: 50, score: 0 },
-    playerB: { name: targetName && targetName !== 'ALL' ? targetName : 'المنافس القادم', votes: 50, score: 0 },
-    createdAt: Date.now()
+    durationMs: durationMs,
+    playerA: { name: challengerName, id: challengerId || null, votes: 0, score: 0 },
+    playerB: { name: targetName && targetName !== 'ALL' ? targetName : 'المنافس القادم', votes: 0, score: 0 },
+    voters: {},
+    createdAt: now
   };
 
   activeChallenges.set(challengeId, challenge);
@@ -1221,13 +1374,13 @@ app.post('/api/battles/challenge', (req, res) => {
 
 app.get('/api/battles/challenges', (req, res) => {
   cleanupStale();
-  const currentUser = req.query.user;
+  const currentUser = req.query.user ? String(req.query.user).toLowerCase() : null;
   const list = [];
 
   for (const ch of activeChallenges.values()) {
     if (ch.status !== 'pending') continue;
-    if (currentUser && ch.challengerName === currentUser) continue;
-    if (!ch.targetName || ch.targetName === 'ALL' || (currentUser && ch.targetName === currentUser)) {
+    if (currentUser && ch.challengerName.toLowerCase() === currentUser) continue;
+    if (!ch.targetName || ch.targetName === 'ALL' || (currentUser && ch.targetName.toLowerCase() === currentUser)) {
       list.push(ch);
     }
   }
@@ -1246,11 +1399,16 @@ app.post('/api/battles/join', (req, res) => {
     return res.status(400).json({ error: 'تم قبول هذا التحدي مسبقاً' });
   }
 
+  const now = Date.now();
+  const durationMs = 24 * 60 * 60 * 1000; // 24 ساعة كاملة
+
   challenge.status = 'active';
   challenge.acceptedBy = joinerName;
   challenge.playerB.name = joinerName;
   challenge.playerB.id = joinerId || null;
-  challenge.startedAt = Date.now();
+  challenge.startedAt = now;
+  challenge.expiresAt = now + durationMs;
+  challenge.durationMs = durationMs;
 
   res.json({ success: true, challenge });
 });
@@ -1267,20 +1425,64 @@ app.post('/api/battles/dismiss', (req, res) => {
 });
 
 app.post('/api/battles/vote', (req, res) => {
-  const { challengeId, choice, voterName, amount } = req.body || {};
-  const weight = (Number(amount) || 10) * 2;
-  let challenge = null;
-
-  if (challengeId && activeChallenges.has(challengeId)) {
-    challenge = activeChallenges.get(challengeId);
-    if (choice === 'A') {
-      challenge.playerA.votes = (challenge.playerA.votes || 0) + weight;
-    } else {
-      challenge.playerB.votes = (challenge.playerB.votes || 0) + weight;
-    }
+  const { challengeId, choice, voterName, voterId, amount } = req.body || {};
+  if (!voterName) {
+    return res.status(400).json({ error: 'اسم المصوت مطلوب.' });
   }
 
-  res.json({ success: true, challenge, addedVotes: weight });
+  if (!challengeId || !activeChallenges.has(challengeId)) {
+    return res.status(404).json({ error: 'المواجهة غير موجودة أو انتهت.' });
+  }
+
+  const challenge = activeChallenges.get(challengeId);
+  if (challenge.status !== 'active') {
+    return res.status(400).json({ error: 'المواجهة غير نشطة حالياً.' });
+  }
+
+  // التحقق من مدة المواجهة (24 ساعة)
+  if (challenge.expiresAt && Date.now() > challenge.expiresAt) {
+    challenge.status = 'completed';
+    return res.status(400).json({ error: 'انتهت مدة المواجهة (24 ساعة).' });
+  }
+
+  challenge.voters = challenge.voters || {};
+  const voterKey = (voterId ? String(voterId).trim() : null) || String(voterName).trim().toLowerCase();
+
+  // منع التصويت لنفس العضو أكثر من مرة في نفس المواجهة
+  if (challenge.voters[voterKey]) {
+    return res.status(400).json({ error: 'لقد قمت بالتصويت بالفعل في هذه المواجهة! كل عضو له صوت واحد فقط.' });
+  }
+
+  // منع اللاعب من التصويت لنفسه إذا كان أحد المتنافسين
+  const nameLower = String(voterName).trim().toLowerCase();
+  const playerALower = String(challenge.playerA.name).trim().toLowerCase();
+  const playerBLower = String(challenge.playerB.name).trim().toLowerCase();
+
+  if (nameLower === playerALower || nameLower === playerBLower) {
+    return res.status(400).json({ error: 'لا يمكنك التصويت في مواجهة أنت طرف فيها.' });
+  }
+
+  // تسجيل الصوت الحقيقي (صوت واحد موثق)
+  challenge.voters[voterKey] = {
+    choice,
+    voterName,
+    voterId: voterId || null,
+    votedAt: Date.now()
+  };
+
+  if (choice === 'A') {
+    challenge.playerA.votes = (Number(challenge.playerA.votes) || 0) + 1;
+  } else {
+    challenge.playerB.votes = (Number(challenge.playerB.votes) || 0) + 1;
+  }
+
+  res.json({
+    success: true,
+    challenge,
+    votesA: challenge.playerA.votes,
+    votesB: challenge.playerB.votes,
+    votersCount: Object.keys(challenge.voters).length
+  });
 });
 
 app.get('/api/battles/state/:id', (req, res) => {
@@ -1288,7 +1490,74 @@ app.get('/api/battles/state/:id', (req, res) => {
   if (!challenge) {
     return res.status(404).json({ error: 'Not found' });
   }
+  // فحص انتهاء المدة (24 ساعة)
+  if (challenge.expiresAt && Date.now() > challenge.expiresAt && challenge.status === 'active') {
+    challenge.status = 'completed';
+  }
   res.json({ success: true, challenge });
+});
+
+app.post('/api/battles/finish', (req, res) => {
+  cleanupStale();
+  const { challengeId, winnerName, myScore, oppScore, bestSpeed, mode } = req.body || {};
+  if (!challengeId) {
+    return res.status(400).json({ error: 'معرف التحدي مطلوب.' });
+  }
+
+  let ch = activeChallenges.get(challengeId);
+  if (ch) {
+    ch.status = 'completed';
+    ch.winner = winnerName;
+    ch.completedAt = Date.now();
+    if (!ch.finalRecord) {
+      const p1 = ch.challengerName || (ch.playerA ? ch.playerA.name : 'اللاعب 1');
+      const p2 = ch.targetName !== 'ALL' ? (ch.targetName || ch.acceptedBy) : (ch.acceptedBy || 'اللاعب 2');
+      ch.finalRecord = {
+        id: challengeId,
+        type: ch.type || mode || 'arena',
+        playerA: p1,
+        playerB: p2,
+        winner: winnerName,
+        scoreA: myScore || 0,
+        scoreB: oppScore || 0,
+        bestSpeed: bestSpeed || null,
+        stake: ch.stake || 0,
+        timestamp: Date.now(),
+        date: new Date().toLocaleDateString('ar-EG')
+      };
+      battleHistoryRecords.unshift(ch.finalRecord);
+      if (battleHistoryRecords.length > 80) battleHistoryRecords.pop();
+    }
+    return res.json({ success: true, record: ch.finalRecord });
+  }
+
+  // إذا لم يكن التحدي موجوداً في الذاكرة ولكن تم إرسال نتيجته
+  const fallbackRecord = {
+    id: challengeId,
+    type: mode || 'arena',
+    winner: winnerName,
+    scoreA: myScore || 0,
+    scoreB: oppScore || 0,
+    bestSpeed: bestSpeed || null,
+    timestamp: Date.now(),
+    date: new Date().toLocaleDateString('ar-EG')
+  };
+  battleHistoryRecords.unshift(fallbackRecord);
+  res.json({ success: true, record: fallbackRecord });
+});
+
+app.get('/api/battles/history', (req, res) => {
+  cleanupStale();
+  const user = req.query.user ? String(req.query.user).toLowerCase() : null;
+  if (!user) {
+    return res.json({ success: true, history: battleHistoryRecords.slice(0, 30) });
+  }
+  const userRecords = battleHistoryRecords.filter(r => 
+    (r.playerA && r.playerA.toLowerCase() === user) ||
+    (r.playerB && r.playerB.toLowerCase() === user) ||
+    (r.winner && r.winner.toLowerCase() === user)
+  );
+  res.json({ success: true, history: userRecords.slice(0, 30) });
 });
 
 // 📞 3. Calls Integration (Multi-Call & Direct/Agora Separation)

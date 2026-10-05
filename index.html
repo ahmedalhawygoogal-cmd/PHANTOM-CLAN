@@ -206,7 +206,21 @@
         <div class="whatsapp-chat-container">
             <div class="whatsapp-chat-header">
                 <div class="wa-avatar">『PH』</div>
-                <div class="wa-header-info"><h3>شات كلان PHANTOM</h3><div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;"><span class="wa-status-text">متصل الآن</span><span id="chat-online-counter" style="font-size:0.7rem; color:var(--silver-muted);">0 متصلين حالياً</span></div></div>
+                <div class="wa-header-info">
+                    <h3>شات كلان PHANTOM</h3>
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; position:relative;">
+                        <span class="wa-status-text">متصل الآن</span>
+                        <span id="chat-online-counter" style="font-size:0.7rem; color:var(--silver-muted); cursor:pointer; text-decoration:underline;" onclick="toggleChatOnlineDropdown(event)" title="اضغط لعرض قائمة المتواجدين">0 متصلين حالياً</span>
+                        <!-- 👥 قائمة المتواجدين المنسدلة داخل الشات -->
+                        <div id="chat-online-dropdown" class="chat-online-users-dropdown" style="display:none;" onclick="event.stopPropagation()">
+                            <div class="chat-online-users-dropdown-header">
+                                <span>🟢 المتواجدون بالشات</span>
+                                <button type="button" style="background:none; border:none; color:#94a3b8; font-size:0.85rem; cursor:pointer;" onclick="toggleChatOnlineDropdown(event)">✕</button>
+                            </div>
+                            <div id="chat-online-dropdown-list" class="chat-online-users-list-scroll"></div>
+                        </div>
+                    </div>
+                </div>
                 <div id="chat-call-header-group" class="chat-call-header-group" style="margin-right:auto; display:flex; align-items:center; gap:6px; position:relative;">
                     <button id="voice-call-btn" class="icon-btn-call" type="button" onclick="handleVoiceCallBtnClick()" style="background:transparent; border:none; color:var(--cyan); font-size:1.25rem; cursor:pointer; padding:6px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; transition:0.2s;" title="بدء مكالمة">📞</button>
                     <button id="chat-call-join-btn" class="chat-call-join-btn-header" type="button" onclick="toggleActiveCallsDropdown(event)" title="لا توجد مكالمات نشطة حالياً" disabled>
@@ -1115,6 +1129,7 @@
                     <div style="font-size:0.8rem; color:var(--muted); margin-top:4px;">المعرف الفريد: <strong id="profile-user-id" style="color:var(--cyan);">PH-XXXXX</strong></div>
                 </div>
                 <div style="display:flex; gap:8px; margin-top:4px; justify-content:center; flex-wrap:wrap;">
+                    <button id="profile-challenge-friend-btn" class="btn-primary" style="padding:6px 14px; font-size:0.75rem; border-radius:20px; width:auto; background:linear-gradient(135deg, #00f2fe, #00ff88); color:#090e18; font-weight:900;">⚔️ بدء مواجهة 1v1</button>
                     <button id="give-heart-btn" class="btn-accent" style="padding:6px 14px; font-size:0.75rem; border-radius:20px; width:auto;">💛 إعطاء قلب</button>
                     <button id="profile-complaint-btn" class="btn-danger" style="padding:6px 14px; font-size:0.75rem; border-radius:20px; width:auto;">📩 تقديم شكوى</button>
                 </div>
