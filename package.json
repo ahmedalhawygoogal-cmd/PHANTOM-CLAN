@@ -4,11 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node server.js",
+    "dev": "PORT=3000 node server.js",
     "build": "echo 'Build complete'",
     "lint": "node -c script.js data.js server.js sw.js",
     "test": "echo 'No tests specified' && exit 0",
-    "start": "node server.js"
+    "start": "PORT=3000 node server.js"
   },
   "dependencies": {
     "@google/genai": "^2.24.0",
