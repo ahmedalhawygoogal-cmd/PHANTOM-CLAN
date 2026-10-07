@@ -289,10 +289,48 @@ function safePostgrest(queryPromise) {
 }
 
 let supabaseClient = null;
+
+function ensureSupabaseClient() {
+    if (supabaseClient) return supabaseClient;
+    if (typeof window !== "undefined" && window.supabase && typeof window.supabase.createClient === "function") {
+        try {
+            supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+                realtime: {
+                    params: {
+                        eventsPerSecond: 10
+                    }
+                }
+            });
+            console.log("[Supabase Diagnostic] هل تم الاتصال بـ Supabase؟ نعم، تم الاتصال بـ Supabase بنجاح (" + SUPABASE_URL + ")");
+            return supabaseClient;
+        } catch (e) {
+            console.error("[Supabase Diagnostic] هل تم الاتصال بـ Supabase؟ لا، حدث خطأ أثناء إنشاء العميل:", e);
+            return null;
+        }
+    }
+    return null;
+}
+
 try {
-    supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    ensureSupabaseClient();
 } catch (e) {
-    console.warn("⚠️ فشل إنشاء عميل Supabase. سيتم استخدام localStorage كنسخة احتياطية.");
+    console.warn("⚠️ فشل إنشاء عميل Supabase مبدئياً:", e);
+}
+
+if (typeof window !== "undefined" && !supabaseClient) {
+    const supabaseWaitInterval = setInterval(() => {
+        if (typeof window !== "undefined" && window.supabase && typeof window.supabase.createClient === "function") {
+            clearInterval(supabaseWaitInterval);
+            ensureSupabaseClient();
+            if (typeof initSupabasePresence === "function") {
+                initSupabasePresence();
+            }
+            if (typeof setupChatRealtimeBridge === "function") {
+                setupChatRealtimeBridge();
+            }
+        }
+    }, 100);
+    setTimeout(() => clearInterval(supabaseWaitInterval), 12000);
 }
 
 // 🤖 مسار Supabase Edge Function الرسمي لـ CODO AI عبر Groq
@@ -468,7 +506,6 @@ async function serverGetLeaderboard() {
     return result || [];
 }
 
-async function serverAddAttendance(memberId) { return true; }
 
 async function serverCreateWarning(memberId, type, reason) {
     const data = { name: memberId, type, reason, date: new Date().toLocaleDateString('ar-EG') };
@@ -543,7 +580,11 @@ async function serverCancelPoll() {
 
 async function serverGetEvents() {
     const result = await supabaseGet('events');
-    return result || getStorage(PHANTOM_MEMORY.eventsKey, []);
+    if (Array.isArray(result)) {
+        setStorage(PHANTOM_MEMORY.eventsKey, result);
+        return result;
+    }
+    return getStorage(PHANTOM_MEMORY.eventsKey, []);
 }
 
 async function serverCreateEvent(data) {
@@ -567,6 +608,522 @@ async function serverDeleteEvent(id) {
 async function serverGetUpdates() {
     const result = await supabaseGet('system_updates');
     return result || [];
+}
+
+/* ========================================================
+   Supabase Database Handlers for the 9 Tables
+   ======================================================== */
+
+// 1. excuses
+async function serverGetExcuses() {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { data, error } = await client.from('excuses').select('*').order('created_at', { ascending: false });
+            if (!error && Array.isArray(data)) {
+                setStorage(PHANTOM_MEMORY.excusesKey, data);
+                return data;
+            }
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverGetExcuses error:", e);
+        }
+    }
+    return getStorage(PHANTOM_MEMORY.excusesKey, []);
+}
+
+async function serverCreateExcuse(excuseData) {
+    let savedInSupabase = false;
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { error } = await client.from('excuses').insert([excuseData]);
+            if (!error) savedInSupabase = true;
+            else console.warn("⚠️ [Supabase] serverCreateExcuse insert error:", error);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverCreateExcuse error:", e);
+        }
+    }
+    const excuses = getStorage(PHANTOM_MEMORY.excusesKey, []);
+    excuses.unshift(excuseData);
+    setStorage(PHANTOM_MEMORY.excusesKey, excuses);
+    return savedInSupabase;
+}
+
+async function serverDeleteExcuse(id) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            await client.from('excuses').delete().eq('id', id);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverDeleteExcuse error:", e);
+        }
+    }
+    let excuses = getStorage(PHANTOM_MEMORY.excusesKey, []);
+    excuses = excuses.filter(e => e.id !== id);
+    setStorage(PHANTOM_MEMORY.excusesKey, excuses);
+    return true;
+}
+
+async function serverUpdateExcuseStatus(id, newStatus) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            await client.from('excuses').update({ status: newStatus }).eq('id', id);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverUpdateExcuseStatus error:", e);
+        }
+    }
+    let excuses = getStorage(PHANTOM_MEMORY.excusesKey, []);
+    excuses = excuses.map(e => e.id === id ? { ...e, status: newStatus } : e);
+    setStorage(PHANTOM_MEMORY.excusesKey, excuses);
+    return true;
+}
+
+// 2. complaints
+async function serverGetComplaints() {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { data, error } = await client.from('complaints').select('*').order('created_at', { ascending: false });
+            if (!error && Array.isArray(data)) {
+                setStorage(PHANTOM_MEMORY.complaintsKey, data);
+                return data;
+            }
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverGetComplaints error:", e);
+        }
+    }
+    return getStorage(PHANTOM_MEMORY.complaintsKey, []);
+}
+
+async function serverCreateComplaint(complaintData) {
+    let savedInSupabase = false;
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { error } = await client.from('complaints').insert([complaintData]);
+            if (!error) savedInSupabase = true;
+            else console.warn("⚠️ [Supabase] serverCreateComplaint insert error:", error);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverCreateComplaint error:", e);
+        }
+    }
+    const complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []);
+    complaints.unshift(complaintData);
+    setStorage(PHANTOM_MEMORY.complaintsKey, complaints);
+    return savedInSupabase;
+}
+
+async function serverDeleteComplaint(id) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            await client.from('complaints').delete().eq('id', id);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverDeleteComplaint error:", e);
+        }
+    }
+    let complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []);
+    complaints = complaints.filter(c => c.id !== id);
+    setStorage(PHANTOM_MEMORY.complaintsKey, complaints);
+    return true;
+}
+
+// 3. hearts
+async function serverGetHearts() {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { data, error } = await client.from('hearts').select('*');
+            if (!error && Array.isArray(data)) {
+                const aggregate = { givenBy: {} };
+                data.forEach(row => {
+                    const t = row.target;
+                    const f = row.from;
+                    if (t) {
+                        aggregate[t] = (aggregate[t] || 0) + 1;
+                        if (!aggregate.givenBy[t]) aggregate.givenBy[t] = [];
+                        if (f && !aggregate.givenBy[t].includes(f)) aggregate.givenBy[t].push(f);
+                    }
+                });
+                setStorage(PHANTOM_MEMORY.heartsKey, aggregate);
+                return aggregate;
+            }
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverGetHearts error:", e);
+        }
+    }
+    return getStorage(PHANTOM_MEMORY.heartsKey, {});
+}
+
+async function serverGiveHeart(from, target) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { error } = await client.from('hearts').insert([{ from: from, target: target }]);
+            if (error) {
+                if (error.code === '23505' || String(error.message || '').includes('unique')) {
+                    return { success: false, duplicate: true };
+                }
+                console.warn("⚠️ [Supabase] serverGiveHeart insert error:", error);
+                return { success: false, error };
+            }
+            return { success: true };
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverGiveHeart error:", e);
+            return { success: false, error: e };
+        }
+    }
+    return { success: true, localOnly: true };
+}
+
+// 4. attendance_records
+async function serverGetAttendanceRecords() {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { data, error } = await client.from('attendance_records').select('*');
+            if (!error && Array.isArray(data)) {
+                const aggregate = {};
+                data.forEach(row => {
+                    const name = row.member_name;
+                    if (name) {
+                        aggregate[name] = (aggregate[name] || 0) + 1;
+                    }
+                });
+                setStorage(PHANTOM_MEMORY.attendanceRecordsKey, aggregate);
+                return aggregate;
+            }
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverGetAttendanceRecords error:", e);
+        }
+    }
+    return getStorage(PHANTOM_MEMORY.attendanceRecordsKey, {});
+}
+
+async function serverAddAttendance(memberName, roomId = 'general', points = 30) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            await client.from('attendance_records').insert([{
+                member_name: memberName,
+                room_id: String(roomId || 'general'),
+                points_awarded: points || 30,
+                recorded_by: getCurrentUsername() || 'المشرف',
+                attended_at: new Date().toISOString()
+            }]);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverAddAttendance error:", e);
+        }
+    }
+    return true;
+}
+
+// 5. name_change_requests
+async function serverGetNameChangeRequests() {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { data, error } = await client.from('name_change_requests').select('*').order('created_at', { ascending: false });
+            if (!error && Array.isArray(data)) {
+                setStorage(PHANTOM_MEMORY.nameChangeRequestsKey, data);
+                return data;
+            }
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverGetNameChangeRequests error:", e);
+        }
+    }
+    return getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []);
+}
+
+async function serverCreateNameChangeRequest(requestData) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            await client.from('name_change_requests').insert([requestData]);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverCreateNameChangeRequest error:", e);
+        }
+    }
+    const requests = getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []);
+    requests.unshift(requestData);
+    setStorage(PHANTOM_MEMORY.nameChangeRequestsKey, requests);
+    return true;
+}
+
+async function serverDeleteNameChangeRequest(id) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            await client.from('name_change_requests').delete().eq('id', id);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverDeleteNameChangeRequest error:", e);
+        }
+    }
+    let requests = getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []);
+    requests = requests.filter(r => r.id !== id);
+    setStorage(PHANTOM_MEMORY.nameChangeRequestsKey, requests);
+    return true;
+}
+
+// 6. id_change_requests
+async function serverGetIdChangeRequests() {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { data, error } = await client.from('id_change_requests').select('*').order('created_at', { ascending: false });
+            if (!error && Array.isArray(data)) {
+                setStorage("phantom_id_change_requests", data);
+                return data;
+            }
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverGetIdChangeRequests error:", e);
+        }
+    }
+    return getStorage("phantom_id_change_requests", []);
+}
+
+async function serverCreateIdChangeRequest(requestData) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            await client.from('id_change_requests').insert([requestData]);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverCreateIdChangeRequest error:", e);
+        }
+    }
+    const requests = getStorage("phantom_id_change_requests", []);
+    requests.unshift(requestData);
+    setStorage("phantom_id_change_requests", requests);
+    return true;
+}
+
+async function serverDeleteIdChangeRequest(id) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            await client.from('id_change_requests').delete().eq('id', id);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverDeleteIdChangeRequest error:", e);
+        }
+    }
+    let requests = getStorage("phantom_id_change_requests", []);
+    requests = requests.filter(r => r.id !== id);
+    setStorage("phantom_id_change_requests", requests);
+    return true;
+}
+
+// 7. rejoin_requests
+async function serverGetRejoinRequests() {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { data, error } = await client.from('rejoin_requests').select('*').order('created_at', { ascending: false });
+            if (!error && Array.isArray(data)) {
+                setStorage("phantom_rejoin_requests", data);
+                return data;
+            }
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverGetRejoinRequests error:", e);
+        }
+    }
+    return getStorage("phantom_rejoin_requests", []);
+}
+
+async function serverCreateRejoinRequest(requestData) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            await client.from('rejoin_requests').insert([requestData]);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverCreateRejoinRequest error:", e);
+        }
+    }
+    const requests = getStorage("phantom_rejoin_requests", []);
+    requests.unshift(requestData);
+    setStorage("phantom_rejoin_requests", requests);
+    return true;
+}
+
+async function serverDeleteRejoinRequest(id) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            await client.from('rejoin_requests').delete().eq('id', id);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverDeleteRejoinRequest error:", e);
+        }
+    }
+    let requests = getStorage("phantom_rejoin_requests", []);
+    requests = requests.filter(r => r.id !== id);
+    setStorage("phantom_rejoin_requests", requests);
+    return true;
+}
+
+// 8. clips
+async function serverGetClips() {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { data, error } = await client.from('clips').select('*').order('created_at', { ascending: false }).limit(1);
+            if (!error && Array.isArray(data) && data.length > 0) {
+                const clip = data[0];
+                setStorage(PHANTOM_MEMORY.clipsKey, clip);
+                return clip;
+            }
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverGetClips error:", e);
+        }
+    }
+    return getStorage(PHANTOM_MEMORY.clipsKey, { videoUrl: "", uploadedBy: "", uploadedAt: null, likes: 0, likedBy: [] });
+}
+
+async function serverCreateClip(clipData) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { data, error } = await client.from('clips').insert([clipData]).select();
+            if (!error && Array.isArray(data) && data[0]) {
+                setStorage(PHANTOM_MEMORY.clipsKey, data[0]);
+                return data[0];
+            }
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverCreateClip error:", e);
+        }
+    }
+    setStorage(PHANTOM_MEMORY.clipsKey, clipData);
+    return clipData;
+}
+
+async function serverUpdateClip(id, updates) {
+    const client = ensureSupabaseClient();
+    if (client && id) {
+        try {
+            await client.from('clips').update(updates).eq('id', id);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverUpdateClip error:", e);
+        }
+    }
+    let data = getStorage(PHANTOM_MEMORY.clipsKey, {});
+    Object.assign(data, updates);
+    setStorage(PHANTOM_MEMORY.clipsKey, data);
+    return data;
+}
+
+async function serverDeleteClip(id) {
+    const client = ensureSupabaseClient();
+    if (client && id) {
+        try {
+            await client.from('clip_comments').delete().eq('clip_id', id);
+            await client.from('clips').delete().eq('id', id);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverDeleteClip error:", e);
+        }
+    }
+    setStorage(PHANTOM_MEMORY.clipsKey, { videoUrl: "", uploadedBy: "", uploadedAt: null, likes: 0, likedBy: [] });
+    setStorage(PHANTOM_MEMORY.commentsKey, []);
+    return true;
+}
+
+// 9. clip_comments
+async function serverGetClipComments(clipId) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            let q = client.from('clip_comments').select('*').order('created_at', { ascending: true });
+            if (clipId) q = q.eq('clip_id', clipId);
+            const { data, error } = await q;
+            if (!error && Array.isArray(data)) {
+                setStorage(PHANTOM_MEMORY.commentsKey, data);
+                return data;
+            }
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverGetClipComments error:", e);
+        }
+    }
+    return getStorage(PHANTOM_MEMORY.commentsKey, []);
+}
+
+async function serverCreateClipComment(commentData) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { data, error } = await client.from('clip_comments').insert([commentData]).select();
+            if (!error && Array.isArray(data) && data[0]) {
+                const comments = getStorage(PHANTOM_MEMORY.commentsKey, []);
+                comments.push(data[0]);
+                setStorage(PHANTOM_MEMORY.commentsKey, comments);
+                return data[0];
+            }
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverCreateClipComment error:", e);
+        }
+    }
+    const comments = getStorage(PHANTOM_MEMORY.commentsKey, []);
+    comments.push(commentData);
+    setStorage(PHANTOM_MEMORY.commentsKey, comments);
+    return commentData;
+}
+
+let tablesRealtimeChannel = null;
+function setupTablesRealtime() {
+    const client = ensureSupabaseClient();
+    if (!client) return;
+    if (tablesRealtimeChannel) {
+        try { client.removeChannel(tablesRealtimeChannel); } catch (_) {}
+        tablesRealtimeChannel = null;
+    }
+    try {
+        tablesRealtimeChannel = client.channel('phantom_realtime_tables');
+        tablesRealtimeChannel
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'excuses' }, async () => {
+                await serverGetExcuses();
+                renderFounderNotifications();
+                if (typeof renderAdminInbox === 'function') renderAdminInbox();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'complaints' }, async () => {
+                await serverGetComplaints();
+                renderFounderNotifications();
+                if (typeof renderAdminInbox === 'function') renderAdminInbox();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'hearts' }, async () => {
+                await serverGetHearts();
+                renderHearts();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_records' }, async () => {
+                await serverGetAttendanceRecords();
+                updateAttendanceRate();
+                renderAll();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'name_change_requests' }, async () => {
+                await serverGetNameChangeRequests();
+                renderFounderNotifications();
+                if (typeof renderAdminInbox === 'function') renderAdminInbox();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'id_change_requests' }, async () => {
+                await serverGetIdChangeRequests();
+                renderFounderNotifications();
+                if (typeof renderAdminInbox === 'function') renderAdminInbox();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'rejoin_requests' }, async () => {
+                await serverGetRejoinRequests();
+                renderFounderNotifications();
+                if (typeof renderAdminInbox === 'function') renderAdminInbox();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'clips' }, async () => {
+                await serverGetClips();
+                renderClips();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'clip_comments' }, async () => {
+                const clip = getStorage(PHANTOM_MEMORY.clipsKey, null);
+                await serverGetClipComments(clip?.id);
+                renderComments();
+                renderClips();
+            })
+            .subscribe();
+    } catch (e) {
+        console.warn("⚠️ [Realtime] setupTablesRealtime error:", e);
+    }
 }
 
 async function checkServerConnection() {
@@ -614,6 +1171,23 @@ async function serverKickMember(usernameOrId) {
         return false;
     }
 }
+
+async function kickMember(name) {
+    if (!name) return;
+    if (!confirm(`هل أنت متأكد من طرد العضو ${name} من الكلان؟`)) return;
+    await serverKickMember(name);
+    let bannedUsers = getBannedUsers();
+    bannedUsers[name] = { status: 'banned', bannedAt: Date.now(), reason: 'تم الطرد بواسطة المشرف' };
+    setBannedUsers(bannedUsers);
+    let members = getStorage('phantom_custom_roster', []);
+    members = members.filter(m => m.name !== name);
+    setStorage('phantom_custom_roster', members);
+    showToast(`🚫 تم استبعاد ${name}.`, 'info');
+    renderAll();
+    if (typeof renderAdminInbox === 'function') renderAdminInbox();
+    if (typeof renderFounderNotifications === 'function') renderFounderNotifications();
+}
+window.kickMember = kickMember;
 
 // ------------------------------------------------------------
 
@@ -769,6 +1343,24 @@ if (Array.isArray(warnings)) {
         if (Array.isArray(chat)) setStorage(PHANTOM_MEMORY.chatStorageKey, chat);
 
         await serverGetEvents();
+
+        // ✅ مزامنة الجداول التسعة من Supabase كمصدر أساسي
+        await Promise.allSettled([
+            serverGetExcuses(),
+            serverGetComplaints(),
+            serverGetHearts(),
+            serverGetAttendanceRecords(),
+            serverGetNameChangeRequests(),
+            serverGetIdChangeRequests(),
+            serverGetRejoinRequests(),
+            serverGetClips()
+        ]);
+        const currentClip = getStorage(PHANTOM_MEMORY.clipsKey, null);
+        if (currentClip && currentClip.id) {
+            await serverGetClipComments(currentClip.id);
+        }
+
+        setupTablesRealtime();
     } catch (error) {
         console.warn("[PHANTOM] Server data sync fallback activated.");
     }
@@ -881,7 +1473,11 @@ function createIdentity(username, password = "", userId = null, gameId = null) {
 
 function saveIdentity(username, password = "", userId = null, gameId = null) {
     if (!username) return false;
-    return setStorage(PHANTOM_MEMORY.identityKey, createIdentity(username, password, userId, gameId));
+    const res = setStorage(PHANTOM_MEMORY.identityKey, createIdentity(username, password, userId, gameId));
+    if (typeof initSupabasePresence === 'function') {
+        setTimeout(initSupabasePresence, 50);
+    }
+    return res;
 }
 
 function getSavedIdentity() {
@@ -899,9 +1495,15 @@ function getSavedIdentity() {
 }
 
 function clearIdentity() {
+    if (typeof cleanupSupabasePresence === 'function') {
+        cleanupSupabasePresence();
+    }
     removeStorage(PHANTOM_MEMORY.identityKey);
     removeStorage("phantom_active_username");
     removeSession(PHANTOM_MEMORY.founderSessionKey);
+    if (typeof initSupabasePresence === 'function') {
+        setTimeout(initSupabasePresence, 100);
+    }
 }
 
 function getCurrentUsername() {
@@ -1195,24 +1797,24 @@ function showBannedScreen(username) {
         const sendBtn = document.getElementById("send-rejoin-btn");
         const input = document.getElementById("rejoin-request-input");
         if (sendBtn && input) {
-            sendBtn.onclick = function() {
+            sendBtn.onclick = async function() {
                 const message = input.value.trim();
                 if (!message) {
                     showToast("اكتب رسالة لطلب الرجوع.", "error");
                     return;
                 }
-                const requests = getRejoinRequests();
-                requests.push({
+                const newReq = {
                     id: `rejoin_${Date.now()}`,
                     username: username,
                     message: message,
                     timestamp: Date.now(),
                     status: 'pending'
-                });
-                setRejoinRequests(requests);
+                };
+                await serverCreateRejoinRequest(newReq);
                 showToast("✅ تم إرسال طلب الرجوع للمؤسسين.", "success");
                 input.value = "";
                 renderFounderNotifications();
+                if (typeof renderAdminInbox === 'function') renderAdminInbox();
                 rejoinArea.innerHTML = `
                     <div style="background:rgba(212,175,55,0.1); padding:15px; border-radius:8px; border:1px solid var(--gold-main,#d4af37); text-align:center;">
                         <p style="color:var(--gold-main,#d4af37); font-weight:bold;">⏳ تم إرسال طلبك، في انتظار موافقة المؤسسين</p>
@@ -1298,36 +1900,199 @@ async function saveOnboardingData(password, ign, gameId) {
 }
 
 /* ========================================================
-   9. التواجد أونلاين
+   9. التواجد أونلاين - Supabase Realtime Presence الحقيقي
    ======================================================== */
 
-function registerPresence(username) {
-    if (!username) return;
-    let users = getStorage(PHANTOM_MEMORY.presenceStorageKey, []);
-    const now = Date.now();
-    users = users.filter(user => user && user.time && now - user.time < 30 * 60 * 1000);
-    const normalized = normalizeName(username);
-    const index = users.findIndex(user => normalizeName(user.name) === normalized);
-    if (index !== -1) {
-        users[index].name = username;
-        users[index].time = now;
-    } else {
-        users.push({ name: username, time: now });
+let presenceChannel = null;
+let realtimeOnlineUsers = [];
+let presenceSyncReceived = false;
+let serverOnlineUsers = [];
+let pendingBattleInvite = null;
+let presenceHeartbeatInterval = null;
+let challengePollingInterval = null;
+let arenaDirectSearchInterval = null;
+let popularityDirectSearchInterval = null;
+
+function getPresenceCurrentUser() {
+    let username = "";
+    if (typeof getCurrentUsername === "function") {
+        username = (getCurrentUsername() || "").trim();
     }
-    setStorage(PHANTOM_MEMORY.presenceStorageKey, users);
-    updateMemberLastSeen(username);
-    renderOnlineUsers();
-    renderChatOnlineCount();
+    let userId = "";
+    if (typeof getCurrentUserId === "function") {
+        userId = (getCurrentUserId() || "").trim();
+    }
+    let rank = (typeof getCurrentUserRank === "function") ? getCurrentUserRank() : "محارب";
+
+    if (!username) {
+        let guestId = "";
+        try {
+            guestId = sessionStorage.getItem("phantom_guest_id");
+            if (!guestId) {
+                guestId = "PH_" + Math.floor(1000 + Math.random() * 9000);
+                sessionStorage.setItem("phantom_guest_id", guestId);
+            }
+        } catch (_) {
+            guestId = "PH_" + Math.floor(1000 + Math.random() * 9000);
+        }
+        username = "عضو " + guestId;
+        userId = "guest_" + guestId;
+        rank = "زائر";
+    }
+
+    return {
+        username: username,
+        userId: userId || username,
+        rank: rank || "محارب"
+    };
 }
 
-function setupPresenceHeartbeat() {
-    const username = getCurrentUsername();
-    if (!username) return;
-    registerPresence(username);
-    setInterval(() => {
-        const currentUser = getCurrentUsername();
-        if (currentUser) registerPresence(currentUser);
-    }, 60 * 1000);
+function setInitialOnlinePresence(user) {
+    if (!user || !user.username) return;
+    if (!realtimeOnlineUsers || realtimeOnlineUsers.length === 0) {
+        realtimeOnlineUsers = [{
+            username: user.username,
+            userId: user.userId,
+            rank: user.rank,
+            avatar: "PH",
+            onlineAt: Date.now()
+        }];
+        serverOnlineUsers = realtimeOnlineUsers;
+        updateAllOnlineCounters();
+    }
+}
+
+async function initSupabasePresence() {
+    const client = ensureSupabaseClient();
+    const current = getPresenceCurrentUser();
+
+    // فور فتح الموقع: تسجيل وعرض المستخدم الحالي على الأقل لتفادي ظهور 0 متواجدون الآن
+    setInitialOnlinePresence(current);
+
+    if (!client) {
+        console.warn("[Supabase Diagnostic] هل تم الاتصال بـ Supabase؟ لا، عميل Supabase غير متاح حالياً.");
+        return;
+    }
+
+    console.log("[Supabase Diagnostic] هل تم الاتصال بـ Supabase؟ نعم، تم الاتصال بـ Supabase بنجاح (" + SUPABASE_URL + ")");
+
+    if (presenceChannel) {
+        try {
+            client.removeChannel(presenceChannel);
+        } catch (_) {}
+        presenceChannel = null;
+    }
+
+    const userKey = (current.userId && String(current.userId).trim()) || current.username || ("user_" + Date.now());
+
+    try {
+        presenceChannel = client.channel('phantom_hq_presence', {
+            config: {
+                presence: {
+                    key: userKey
+                }
+            }
+        });
+
+        // 1. مزامنة حالة التواجد
+        presenceChannel.on('presence', { event: 'sync' }, () => {
+            presenceSyncReceived = true;
+            syncPresenceFromState();
+        });
+
+        // 2. انضمام عضو
+        presenceChannel.on('presence', { event: 'join' }, ({ key, newPresences }) => {
+            console.log(`[Supabase Presence] انضمام مستخدم عبر القناة: ${key}`, newPresences);
+            syncPresenceFromState();
+        });
+
+        // 3. خروج عضو
+        presenceChannel.on('presence', { event: 'leave' }, ({ key, leftPresences }) => {
+            console.log(`[Supabase Presence] مغادرة مستخدم عبر القناة: ${key}`, leftPresences);
+            syncPresenceFromState();
+        });
+
+        // الاشتراك في قناة Realtime Presence
+        presenceChannel.subscribe(async (status, err) => {
+            const isSubscribed = (status === 'SUBSCRIBED');
+            console.log("[Supabase Diagnostic] هل تم فتح Presence channel؟", isSubscribed ? "نعم، تم فتح قناة Presence بنجاح (SUBSCRIBED)" : `لا، حالة القناة: ${status}`, err || '');
+
+            if (isSubscribed) {
+                // إرسال track فوراً عند فتح القناة
+                await trackCurrentUserPresence();
+            }
+        });
+    } catch (err) {
+        console.error("⚠️ خطأ أثناء إعداد قناة Presence:", err);
+    }
+}
+
+async function trackCurrentUserPresence() {
+    if (!presenceChannel) return;
+    const current = getPresenceCurrentUser();
+    try {
+        const trackData = {
+            username: current.username,
+            userId: current.userId,
+            rank: current.rank,
+            avatar: "PH",
+            onlineAt: Date.now()
+        };
+        const trackResult = await presenceChannel.track(trackData);
+        const isOk = (trackResult === 'ok' || !trackResult);
+        console.log("[Supabase Diagnostic] هل تم إرسال track للمستخدم؟", isOk ? `نعم، تم إرسال track للمستخدم (${current.username}) بنجاح` : `حالة إرسال track: ${trackResult}`);
+        syncPresenceFromState();
+    } catch (trackErr) {
+        console.error("[Supabase Diagnostic] هل تم إرسال track للمستخدم؟ لا، فشل إرسال track:", trackErr);
+    }
+}
+
+function syncPresenceFromState() {
+    if (!presenceChannel) return;
+    const state = presenceChannel.presenceState();
+    const userMap = new Map();
+
+    for (const key in state) {
+        const presences = state[key];
+        if (Array.isArray(presences)) {
+            for (const p of presences) {
+                if (p && p.username) {
+                    const norm = normalizeName(p.username);
+                    if (!userMap.has(norm)) {
+                        userMap.set(norm, {
+                            username: p.username,
+                            userId: p.userId || key,
+                            rank: p.rank || 'محارب',
+                            avatar: p.avatar || 'PH',
+                            onlineAt: p.onlineAt || Date.now()
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // ✅ اعرض المستخدم الحالي على الأقل إذا تم تسجيله بنجاح
+    const current = getPresenceCurrentUser();
+    if (current && current.username) {
+        const myNorm = normalizeName(current.username);
+        if (!userMap.has(myNorm)) {
+            userMap.set(myNorm, {
+                username: current.username,
+                userId: current.userId,
+                rank: current.rank,
+                avatar: "PH",
+                onlineAt: Date.now()
+            });
+        }
+    }
+
+    realtimeOnlineUsers = Array.from(userMap.values());
+    serverOnlineUsers = realtimeOnlineUsers;
+
+    console.log("[Supabase Diagnostic] ما عدد المستخدمين الذي أعادته Presence؟", `عدد المستخدمين الفعلي: ${realtimeOnlineUsers.length}`, realtimeOnlineUsers);
+
+    updateAllOnlineCounters();
 }
 
 function renderOnlineUsers() {
@@ -1335,8 +2100,8 @@ function renderOnlineUsers() {
     const badge = getElement("online-count-badge");
     if (!container) return;
 
-    // قراءة المستخدمين المتواجدين فعلياً من السيرفر الحي
-    const list = (typeof serverOnlineUsers !== 'undefined' && Array.isArray(serverOnlineUsers)) ? serverOnlineUsers : [];
+    // استخدام القيمة الحية من Supabase Presence دون استخدام localStorage أو رقم ثابت
+    const list = Array.isArray(realtimeOnlineUsers) ? realtimeOnlineUsers : [];
     const count = list.length;
 
     if (badge) badge.textContent = `${count} متواجد الآن`;
@@ -1362,7 +2127,8 @@ function renderOnlineUsers() {
 
 function renderChatOnlineCount() {
     const chatCounter = getElement("chat-online-counter");
-    const list = (typeof serverOnlineUsers !== 'undefined' && Array.isArray(serverOnlineUsers)) ? serverOnlineUsers : [];
+    // استخدام القيمة الحية من Supabase Presence
+    const list = Array.isArray(realtimeOnlineUsers) ? realtimeOnlineUsers : [];
     const count = list.length;
 
     if (chatCounter) {
@@ -1387,6 +2153,62 @@ function renderChatOnlineCount() {
         }
     }
 }
+
+function registerPresence(username) {
+    try {
+        if (username && typeof username === "string") {
+            const trimmed = username.trim();
+            if (trimmed) {
+                setStorage("phantom_active_username", trimmed);
+            }
+        }
+        const user = getPresenceCurrentUser();
+        if (username && (!user.username || user.username.startsWith("عضو PH_"))) {
+            user.username = username;
+        }
+        setInitialOnlinePresence(user);
+        if (presenceChannel) {
+            trackCurrentUserPresence();
+        } else {
+            initSupabasePresence();
+        }
+        if (typeof sendPresenceHeartbeat === "function") {
+            sendPresenceHeartbeat().catch(() => {});
+        }
+    } catch (err) {
+        console.warn("⚠️ [Presence] خطأ في registerPresence:", err);
+    }
+}
+window.registerPresence = registerPresence;
+
+function setupPresenceHeartbeat() {
+    initSupabasePresence();
+    if (!presenceHeartbeatInterval) {
+        presenceHeartbeatInterval = setInterval(sendPresenceHeartbeat, 10000);
+    }
+}
+
+function cleanupSupabasePresence() {
+    if (presenceChannel) {
+        try {
+            presenceChannel.untrack();
+            if (supabaseClient) {
+                supabaseClient.removeChannel(presenceChannel);
+            }
+        } catch (_) {}
+        presenceChannel = null;
+    }
+}
+
+if (typeof window !== "undefined") {
+    window.addEventListener("beforeunload", cleanupSupabasePresence);
+    window.addEventListener("pagehide", cleanupSupabasePresence);
+}
+
+// بدء تسجيل التواجد فوراً عند قراءة السكربت
+try {
+    initSupabasePresence();
+} catch (_) {}
 
 function toggleChatOnlineDropdown(event) {
     if (event) {
@@ -1806,7 +2628,7 @@ function initAdminPage3() {
 
     const attendanceBtn = getElement('mark-attendance-btn');
     if (attendanceBtn) {
-        attendanceBtn.onclick = function() {
+        attendanceBtn.onclick = async function() {
             const memberSelect = getElement('attendance-member-select');
             if (!memberSelect) return;
             const name = memberSelect.value;
@@ -1817,11 +2639,13 @@ function initAdminPage3() {
             if (extraPoints < 0) extraPoints = 0;
 
             addPoints(name, 30 + extraPoints);
+            await serverAddAttendance(name, 'general', 30 + extraPoints);
             let attendance = getStorage(PHANTOM_MEMORY.attendanceRecordsKey, {});
             attendance[name] = (attendance[name] || 0) + 1;
             setStorage(PHANTOM_MEMORY.attendanceRecordsKey, attendance);
             showToast(`✅ تم تسجيل حضور ${name} (${30 + extraPoints}+).`, 'success');
             renderAll();
+            updateAttendanceRate();
         };
     }
 
@@ -1922,11 +2746,11 @@ function renderAdminInbox() {
     if (!container) return;
     
     let html = '';
-    const complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []);
-    const rejoinRequests = getRejoinRequests().filter(r => r.status === 'pending');
-    const excuses = getStorage(PHANTOM_MEMORY.excusesKey, []);
-    const nameChanges = getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []);
-    const idChanges = getStorage("phantom_id_change_requests", []);
+    const complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []).filter(c => !c.status || c.status === 'pending');
+    const rejoinRequests = getRejoinRequests().filter(r => !r.status || r.status === 'pending');
+    const excuses = getStorage(PHANTOM_MEMORY.excusesKey, []).filter(e => !e.status || e.status === 'pending');
+    const nameChanges = getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []).filter(n => !n.status || n.status === 'pending');
+    const idChanges = getStorage("phantom_id_change_requests", []).filter(i => !i.status || i.status === 'pending');
 
     const allRequests = [
         ...complaints.map(c => ({...c, type: 'شكوى'})),
@@ -1950,21 +2774,21 @@ function renderAdminInbox() {
             if (req.type === 'شكوى') {
                 typeClass = 'type-complaint';
                 headerTitle = 'شكوى';
-                mainText = `${req.from} شكوى ${req.target}`;
-                details = `السبب: ${req.reason}`;
+                mainText = `${escapeHTML(req.from || '')} شكوى ضد ${escapeHTML(req.target || '')}`;
+                details = `السبب: ${escapeHTML(req.reason || '')}`;
                 buttonsHtml = `
                     <button class="inbox-btn dismiss" onclick="dismissComplaint('${req.id}')">فض</button>
                     <button class="inbox-btn warn" onclick="giveWarningToComplaint('${req.id}')">تنبيه</button>
                     <button class="inbox-btn accept" onclick="giveBanToComplaint('${req.id}')">إنذار</button>
-                    <button class="inbox-btn ban" onclick="kickMember('${req.target}')">طرد</button>
+                    <button class="inbox-btn ban" onclick="kickMember('${escapeHTML(req.target || '')}')">طرد</button>
                 `;
             }
             // 2. رجوع للكلان
             else if (req.type === 'رجوع') {
                 typeClass = 'type-rejoin';
                 headerTitle = 'رجوع للكلان';
-                mainText = `${req.username} يريد الرجوع للكلان`;
-                details = '';
+                mainText = `${escapeHTML(req.username || '')} يريد الرجوع للكلان`;
+                details = req.message ? `الرسالة: ${escapeHTML(req.message)}` : '';
                 buttonsHtml = `
                     <button class="inbox-btn accept" onclick="handleRequest('${req.id}', 'accept', 'رجوع')">موافق</button>
                     <button class="inbox-btn reject" onclick="handleRequest('${req.id}', 'reject', 'رجوع')">رفض</button>
@@ -1974,8 +2798,8 @@ function renderAdminInbox() {
             else if (req.type === 'عذر') {
                 typeClass = 'type-excuse';
                 headerTitle = 'عذر عدم حضور';
-                mainText = `${req.from} لم يحضر ${req.eventId}`;
-                details = `السبب: ${req.reason}`;
+                mainText = `${escapeHTML(req.from || '')} - روم: ${escapeHTML(req.roomTitle || req.eventId || '')}`;
+                details = `السبب: ${escapeHTML(req.reason || '')}`;
                 buttonsHtml = `
                     <button class="inbox-btn accept" onclick="acceptExcuse('${req.id}')">موافق</button>
                     <button class="inbox-btn reject" onclick="rejectExcuse('${req.id}')">رفض</button>
@@ -1985,8 +2809,8 @@ function renderAdminInbox() {
             else if (req.type === 'اسم') {
                 typeClass = 'type-name';
                 headerTitle = 'تغيير اسم';
-                mainText = `${req.oldName} يريد تغيير اسم`;
-                details = `جديد: ${req.newName}`;
+                mainText = `${escapeHTML(req.oldName || '')} يريد تغيير اسم`;
+                details = `جديد: ${escapeHTML(req.newName || '')}`;
                 buttonsHtml = `
                     <button class="inbox-btn accept" onclick="approveNameChange('${req.id}')">موافق</button>
                     <button class="inbox-btn reject" onclick="rejectNameChange('${req.id}')">رفض</button>
@@ -1996,8 +2820,8 @@ function renderAdminInbox() {
             else if (req.type === 'ID') {
                 typeClass = 'type-id';
                 headerTitle = 'تغيير ID';
-                mainText = `${req.username} يريد تغيير ID`;
-                details = `جديد: ${req.newId}`;
+                mainText = `${escapeHTML(req.username || '')} يريد تغيير ID`;
+                details = `جديد: ${escapeHTML(req.newId || '')}`;
                 buttonsHtml = `
                     <button class="inbox-btn accept" onclick="handleIdChange('${req.id}', 'accept')">موافق</button>
                     <button class="inbox-btn reject" onclick="handleIdChange('${req.id}', 'reject')">رفض</button>
@@ -2020,20 +2844,24 @@ function renderAdminInbox() {
     container.innerHTML = html;
 }
 
-function handleRequest(id, action, type) {
+async function handleRequest(id, action, type) {
     // ✅ 1. طلب الرجوع
-    if (type === 'طلب رجوع') {
+    if (type === 'طلب رجوع' || type === 'رجوع') {
         let requests = getRejoinRequests();
         const req = requests.find(r => r.id === id);
         if (req) {
-            // تنفيذ القرار
+            await serverDeleteRejoinRequest(id);
             if (action === 'accept') {
-                // حذفه من المحظورين
                 let bannedUsers = getBannedUsers();
                 delete bannedUsers[req.username];
                 setBannedUsers(bannedUsers);
                 
-                // إرجاعه للقائمة المحلية
+                if (supabaseClient) {
+                    try {
+                        await supabaseClient.from('banned_users').delete().eq('username', req.username);
+                    } catch (_) {}
+                }
+
                 let roster = getStorage("phantom_custom_roster", []);
                 if (!roster.some(m => normalizeName(m.name) === normalizeName(req.username))) {
                     roster.push({
@@ -2052,14 +2880,8 @@ function handleRequest(id, action, type) {
                 }
                 showToast(`✅ تم قبول رجوع ${req.username}.`, 'success');
             } else {
-                // رفض (يبقى في المحظورين)
-                req.status = 'rejected';
                 showToast(`❌ تم رفض طلب ${req.username}.`, 'info');
             }
-            
-            // حذف الطلب نهائياً من القائمة (لأن القرار تم)
-            requests = requests.filter(r => r.id !== id && r.status !== 'pending');
-            setRejoinRequests(requests);
         }
     }
     
@@ -2068,11 +2890,10 @@ function handleRequest(id, action, type) {
         let complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []);
         const complaint = complaints.find(c => c.id === id);
         if (complaint) {
+            await serverDeleteComplaint(id);
             if (action === 'accept') {
-                // فض الشكوى (حذفها فقط)
                 showToast('🗑️ تم فض الشكوى.', 'info');
             } else {
-                // إنذار (يضيف إنذار للمشتكى منه)
                 let warnings = getStorage("phantom_warnings", []);
                 warnings.push({
                     id: `warning_${Date.now()}`,
@@ -2086,43 +2907,41 @@ function handleRequest(id, action, type) {
                 renderWarnings();
                 renderAdminWarnings();
             }
-            // حذف الشكوى نهائياً
-            complaints = complaints.filter(c => c.id !== id);
-            setStorage(PHANTOM_MEMORY.complaintsKey, complaints);
         }
     }
     
     // ✅ 3. عذر عدم حضور
-    else if (type === 'عذر عدم حضور') {
+    else if (type === 'عذر عدم حضور' || type === 'عذر') {
         let excuses = getStorage(PHANTOM_MEMORY.excusesKey, []);
         const excuse = excuses.find(e => e.id === id);
         if (excuse) {
+            await serverDeleteExcuse(id);
             if (action === 'accept') {
                 showToast(`✅ تم قبول عذر ${excuse.from}.`, 'success');
             } else {
                 showToast(`❌ تم رفض عذر ${excuse.from}.`, 'info');
             }
-            excuses = excuses.filter(e => e.id !== id);
-            setStorage(PHANTOM_MEMORY.excusesKey, excuses);
         }
     }
     
-    // ✅ 4. طلب تغيير الاسم (الأهم)
-    else if (type === 'طلب تغيير اسم') {
+    // ✅ 4. طلب تغيير الاسم
+    else if (type === 'طلب تغيير اسم' || type === 'اسم') {
         if (action === 'accept') {
-            approveNameChange(id);
+            await approveNameChange(id);
         } else {
-            rejectNameChange(id);
+            await rejectNameChange(id);
         }
+        return;
     }
 
-    // ✅ 5. طلب تغيير الـ ID (ده اللي كان ناقص وبيبوظ كل حاجة)
-    else if (type === 'طلب تغيير ID') {
+    // ✅ 5. طلب تغيير الـ ID
+    else if (type === 'طلب تغيير ID' || type === 'ID') {
         handleIdChange(id, action);
-        return; // بنوقف هنا عشان الـ ID له مسار مختلف
+        return;
     }
     
     renderAdminInbox();
+    renderFounderNotifications();
 }
 /* ========================================================
    13. إدارة الرومات والفاعليات
@@ -2146,6 +2965,27 @@ function setupEventsManager() {
     const emptyMsg = getElement("cancel-room-empty-msg");
     const confirmBtn = getElement("confirm-cancel-event-btn");
     const closePopupBtn = getElement("close-cancel-room-popup-btn");
+
+    function populateActiveEventsSelect() {
+        if (!activeSelect) return;
+        const events = getEventsList();
+        activeSelect.innerHTML = "";
+        if (!events || events.length === 0) {
+            if (emptyMsg) emptyMsg.style.display = "block";
+            activeSelect.style.display = "none";
+            if (confirmBtn) confirmBtn.style.display = "none";
+        } else {
+            if (emptyMsg) emptyMsg.style.display = "none";
+            activeSelect.style.display = "block";
+            if (confirmBtn) confirmBtn.style.display = "inline-block";
+            events.forEach(e => {
+                const opt = document.createElement("option");
+                opt.value = e.id;
+                opt.textContent = `${e.title || "روم بدون عنوان"} (${e.mode || "عام"})`;
+                activeSelect.appendChild(opt);
+            });
+        }
+    }
 
     if (createBtn) {
         // ✅ استخدام onclick بدلاً من addEventListener لمنع التكرار
@@ -2483,17 +3323,18 @@ function renderRosterAndLeadership() {
     }
 }
 
-// دالة مساعدة للتحقق من التواجد الفعلي (سيرفر + محلي)
+// دالة مساعدة للتحقق من التواجد الفعلي (Supabase Realtime Presence)
 function isMemberOnline(username) {
     if (!username) return false;
     const current = typeof getCurrentUsername === 'function' ? getCurrentUsername() : null;
     if (current && normalizeName(username) === normalizeName(current)) return true;
+    if (Array.isArray(realtimeOnlineUsers) && realtimeOnlineUsers.length > 0) {
+        if (realtimeOnlineUsers.some(u => normalizeName(u.username) === normalizeName(username))) return true;
+    }
     if (typeof serverOnlineUsers !== 'undefined' && Array.isArray(serverOnlineUsers)) {
         if (serverOnlineUsers.some(u => normalizeName(u.username) === normalizeName(username))) return true;
     }
-    let users = getStorage(PHANTOM_MEMORY.presenceStorageKey, []);
-    const now = Date.now();
-    return users.some(user => normalizeName(user.name) === normalizeName(username) && now - user.time < 30 * 60 * 1000);
+    return false;
 }
 
 /* ========================================================
@@ -2612,10 +3453,7 @@ function setupAttendance() {
         const roster = getFullRoster();
         const attendanceRecords = getStorage(PHANTOM_MEMORY.attendanceRecordsKey, {});
         for (const username of selectedUsernames) {
-            const member = roster.find(item => normalizeName(item.name) === normalizeName(username));
-            if (member && member.id && !String(member.id).startsWith("local_")) {
-                await serverAddAttendance(member.id);
-            }
+            await serverAddAttendance(username, 'general', 30);
             attendanceRecords[username] = (attendanceRecords[username] || 0) + 1;
             addPoints(username, 30);
             addSystemUpdate("تسجيل حضور", `تم تسجيل حضور العضو ${username} ومنحه +30 نقطة.`);
@@ -3851,18 +4689,32 @@ async function openProfile(memberName) {
     }
 }
 
-function giveHeart(targetName) {
-    const hearts = getStorage(PHANTOM_MEMORY.heartsKey, {});
+async function giveHeart(targetName) {
     const from = getCurrentUsername();
     if (!from) { showToast("يجب تسجيل الدخول أولاً.", "error"); return; }
     if (from === targetName) { showToast("لا يمكنك إعطاء قلب لنفسك.", "error"); return; }
-    if (hearts.givenBy && hearts.givenBy[targetName] && hearts.givenBy[targetName].includes(from)) { showToast("لقد أعطيت قلبًا لهذا العضو مسبقًا (قلب واحد فقط).", "error"); return; }
+
+    const hearts = getStorage(PHANTOM_MEMORY.heartsKey, {});
+    if (hearts.givenBy && hearts.givenBy[targetName] && hearts.givenBy[targetName].includes(from)) {
+        showToast("لقد أعطيت قلبًا لهذا العضو مسبقًا (قلب واحد فقط).", "error");
+        return;
+    }
+
+    const res = await serverGiveHeart(from, targetName);
+    if (!res.success && res.duplicate) {
+        showToast("لقد أعطيت قلبًا لهذا العضو مسبقًا (قلب واحد فقط).", "error");
+        return;
+    }
+
     if (!hearts.givenBy) hearts.givenBy = {};
     if (!hearts.givenBy[targetName]) hearts.givenBy[targetName] = [];
-    hearts.givenBy[targetName].push(from);
-    if (!hearts[targetName]) hearts[targetName] = 0;
-    hearts[targetName]++;
+    if (!hearts.givenBy[targetName].includes(from)) hearts.givenBy[targetName].push(from);
+    hearts[targetName] = (hearts[targetName] || 0) + 1;
     setStorage(PHANTOM_MEMORY.heartsKey, hearts);
+
+    const profileHeartEl = document.getElementById('profile-hearts');
+    if (profileHeartEl) profileHeartEl.textContent = hearts[targetName];
+
     showToast(`💛 تم إعطاء قلب لـ ${targetName}.`, "success");
     renderHearts();
 }
@@ -3905,42 +4757,49 @@ function showComplaintForm(targetName) {
     document.getElementById("close-complaint-btn").addEventListener("click", close);
     overlay.addEventListener("click", close);
 
-    document.getElementById("send-complaint-submit").addEventListener("click", () => {
+    document.getElementById("send-complaint-submit").addEventListener("click", async () => {
         const reason = document.getElementById("complaint-reason").value.trim();
         if (!reason) { showToast("يرجى كتابة سبب الشكوى.", "error"); return; }
-        const complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []);
-        complaints.push({ id: `complaint_${Date.now()}`, from: getCurrentUsername(), target: targetName, reason: reason, date: new Date().toLocaleString("ar-EG") });
-        setStorage(PHANTOM_MEMORY.complaintsKey, complaints);
+        const newComplaint = {
+            id: `complaint_${Date.now()}`,
+            from: getCurrentUsername() || 'عضو PHANTOM',
+            target: targetName,
+            reason: reason,
+            date: new Date().toLocaleString("ar-EG"),
+            status: "pending"
+        };
+        await serverCreateComplaint(newComplaint);
         showToast("📩 تم إرسال الشكوى للمؤسسين.", "success");
         renderFounderNotifications();
+        if (typeof renderAdminInbox === 'function') renderAdminInbox();
         close();
     });
 }
 
-function acceptComplaint(id) {
+async function acceptComplaint(id) {
     let complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []);
     const complaint = complaints.find(c => c.id === id);
-    complaints = complaints.filter(c => c.id !== id);
-    setStorage(PHANTOM_MEMORY.complaintsKey, complaints);
+    await serverDeleteComplaint(id);
     renderFounderNotifications();
+    if (typeof renderAdminInbox === 'function') renderAdminInbox();
     if (complaint) { addSystemUpdate("قبول شكوى", `تم قبول شكوى ${complaint.from} ضد ${complaint.target}.`); showToast("✅ تم قبول الشكوى.", "success"); }
 }
 
-function rejectComplaint(id) {
+async function rejectComplaint(id) {
     let complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []);
     const complaint = complaints.find(c => c.id === id);
-    complaints = complaints.filter(c => c.id !== id);
-    setStorage(PHANTOM_MEMORY.complaintsKey, complaints);
+    await serverDeleteComplaint(id);
     renderFounderNotifications();
+    if (typeof renderAdminInbox === 'function') renderAdminInbox();
     if (complaint) { addSystemUpdate("رفض شكوى", `تم رفض شكوى ${complaint.from} ضد ${complaint.target}.`); showToast("❌ تم رفض الشكوى.", "info"); }
 }
 
-function giveWarningToComplaint(id) {
+async function giveWarningToComplaint(id) {
     let complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []);
     const complaint = complaints.find(c => c.id === id);
-    complaints = complaints.filter(c => c.id !== id);
-    setStorage(PHANTOM_MEMORY.complaintsKey, complaints);
+    await serverDeleteComplaint(id);
     renderFounderNotifications();
+    if (typeof renderAdminInbox === 'function') renderAdminInbox();
     if (complaint) {
         const warnings = getStorage("phantom_warnings", []);
         warnings.push({ id: `warning_${Date.now()}`, name: complaint.target, type: "تنبيه", reason: `بناءً على شكوى من ${complaint.from}: ${complaint.reason}`, date: new Date().toLocaleDateString("ar-EG") });
@@ -3951,12 +4810,12 @@ function giveWarningToComplaint(id) {
     }
 }
 
-function giveBanToComplaint(id) {
+async function giveBanToComplaint(id) {
     let complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []);
     const complaint = complaints.find(c => c.id === id);
-    complaints = complaints.filter(c => c.id !== id);
-    setStorage(PHANTOM_MEMORY.complaintsKey, complaints);
+    await serverDeleteComplaint(id);
     renderFounderNotifications();
+    if (typeof renderAdminInbox === 'function') renderAdminInbox();
     if (complaint) {
         const warnings = getStorage("phantom_warnings", []);
         warnings.push({ id: `warning_${Date.now()}`, name: complaint.target, type: "إنذار", reason: `بناءً على شكوى من ${complaint.from}: ${complaint.reason}`, date: new Date().toLocaleDateString("ar-EG") });
@@ -3967,11 +4826,10 @@ function giveBanToComplaint(id) {
     }
 }
 
-function dismissComplaint(id) {
-    let complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []);
-    complaints = complaints.filter(c => c.id !== id);
-    setStorage(PHANTOM_MEMORY.complaintsKey, complaints);
+async function dismissComplaint(id) {
+    await serverDeleteComplaint(id);
     renderFounderNotifications();
+    if (typeof renderAdminInbox === 'function') renderAdminInbox();
     showToast("🗑️ تم فض الشكوى.", "info");
 }
 
@@ -3979,64 +4837,211 @@ function dismissComplaint(id) {
    26. نظام إرسال عذر لعدم حضور الروم
    ======================================================== */
 
+function getAvailableRoomsForExcuse() {
+    const events = (typeof getEventsList === 'function') ? getEventsList() : [];
+    const basic = (typeof getBasicData === 'function') ? getBasicData() : {};
+    const staticRooms = Array.isArray(basic.rooms) ? basic.rooms : [];
+
+    const map = new Map();
+
+    // 1. الرومات من جدول events في Supabase
+    if (Array.isArray(events)) {
+        events.forEach(ev => {
+            if (ev && ev.id && ev.title) {
+                map.set(String(ev.id), {
+                    id: String(ev.id),
+                    title: ev.title,
+                    mode: ev.mode || 'عام',
+                    timing: ev.timingLabel || ev.timing || ev.datetime || 'بدون وقت محدد'
+                });
+            }
+        });
+    }
+
+    // 2. الرومات الثابتة إن وجدت
+    if (Array.isArray(staticRooms)) {
+        staticRooms.forEach((r, idx) => {
+            const rId = r.id || `static_room_${idx + 1}`;
+            if (!map.has(String(rId))) {
+                map.set(String(rId), {
+                    id: String(rId),
+                    title: r.title || r.name || `روم ${r.mode || ''}`,
+                    mode: r.mode || 'عام',
+                    timing: r.time || 'محدد في الجدول'
+                });
+            }
+        });
+    }
+
+    return Array.from(map.values());
+}
+
 function setupExcuseSystem() {
     const excuseBtn = document.getElementById("send-excuse-btn");
     if (excuseBtn) {
-        excuseBtn.addEventListener("click", () => {
-            const selectedEvent = document.getElementById("active-events-select")?.value;
-            if (!selectedEvent) { showToast("اختر الروم أولاً.", "error"); return; }
-            showExcuseForm(selectedEvent);
-        });
+        excuseBtn.onclick = async (e) => {
+            if (e) e.preventDefault();
+            // مزامنة الرومات مباشرة من Supabase جدول events
+            if (typeof serverGetEvents === 'function') {
+                try {
+                    await serverGetEvents();
+                } catch (_) {}
+            }
+
+            const availableRooms = getAvailableRoomsForExcuse();
+
+            // إذا لم توجد رومات، اعرض: لا توجد رومات متاحة لإرسال عذر عليها.
+            if (!availableRooms || availableRooms.length === 0) {
+                showToast("لا توجد رومات متاحة لإرسال عذر عليها.", "warning");
+                return;
+            }
+
+            // فتح نافذة إرسال العذر مع قائمة الرومات المتاحة
+            showExcuseForm(availableRooms);
+        };
     }
 }
 
-function showExcuseForm(eventId) {
+function showExcuseForm(availableRooms) {
+    if (!Array.isArray(availableRooms) || availableRooms.length === 0) {
+        showToast("لا توجد رومات متاحة لإرسال عذر عليها.", "warning");
+        return;
+    }
+
+    const oldModal = document.getElementById("phantom-excuse-modal");
+    const oldOverlay = document.getElementById("phantom-excuse-overlay");
+    if (oldModal) oldModal.remove();
+    if (oldOverlay) oldOverlay.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "phantom-excuse-overlay";
+    overlay.style.cssText = `position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 9999998;`;
+
     const modal = document.createElement("div");
-    modal.style.cssText = `position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 9999999; background: rgba(16,23,34,0.98); padding: 20px; border-radius: var(--radius-lg); border: 1px solid var(--border); box-shadow: 0 20px 60px rgba(0,0,0,0.8); width: 90%; max-width: 400px; text-align: center; direction: rtl;`;
+    modal.id = "phantom-excuse-modal";
+    modal.style.cssText = `position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 9999999; background: #0f172a; padding: 22px; border-radius: 16px; border: 1px solid rgba(0,242,254,0.4); box-shadow: 0 20px 60px rgba(0,0,0,0.9); width: 92%; max-width: 440px; text-align: right; direction: rtl; font-family: Tajawal, Arial, sans-serif;`;
+
+    const roomsOptionsHTML = availableRooms.map(r => {
+        const timePart = r.timing ? ` [⏰ ${r.timing}]` : '';
+        const modePart = r.mode ? ` (مود: ${r.mode})` : '';
+        return `<option value="${escapeHTML(r.id)}">${escapeHTML(r.title)}${escapeHTML(modePart)}${escapeHTML(timePart)}</option>`;
+    }).join("");
+
     modal.innerHTML = `
-        <h3 style="color:var(--white); margin-bottom:12px;">⏳ إرسال عذر لعدم الحضور</h3>
-        <textarea id="excuse-reason" placeholder="اكتب سبب عدم الحضور..." style="width:100%; height:80px; padding:10px; border-radius:6px; background:rgba(255,255,255,0.05); border:1px solid var(--border); color:#fff; resize:none;"></textarea>
-        <div style="display:flex; gap:10px; margin-top:10px;">
-            <button id="send-excuse-submit" class="btn-success" style="flex:1;">إرسال العذر</button>
-            <button id="close-excuse-btn" class="btn-secondary" style="flex:1;">إلغاء</button>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:10px;">
+            <h3 style="color:#fff; margin:0; font-size:1.15rem; font-weight:800; display:flex; align-items:center; gap:8px;">
+                <span>⏳ إرسال عذر لعدم الحضور</span>
+            </h3>
+            <button id="close-excuse-x-btn" type="button" style="background:none; border:none; color:#94a3b8; font-size:1.2rem; cursor:pointer;">✕</button>
+        </div>
+
+        <div style="margin-bottom:12px;">
+            <label for="excuse-room-select" style="display:block; font-size:0.85rem; color:#00f2fe; font-weight:700; margin-bottom:6px;">
+                اختر الروم المتاحة: <span style="color:#ef4444;">*</span>
+            </label>
+            <select id="excuse-room-select" style="width:100%; padding:10px 12px; border-radius:8px; background:#1e293b; border:1px solid #334155; color:#fff; font-size:0.88rem; outline:none;">
+                <option value="">-- اضغط لاختيار الروم من القائمة --</option>
+                ${roomsOptionsHTML}
+            </select>
+        </div>
+
+        <div style="margin-bottom:14px;">
+            <label for="excuse-reason" style="display:block; font-size:0.85rem; color:#cbd5e1; font-weight:700; margin-bottom:6px;">
+                سبب العذر: <span style="color:#ef4444;">*</span>
+            </label>
+            <textarea id="excuse-reason" placeholder="اكتب سبب عدم قدرتك على الحضور بالتفصيل..." style="width:100%; height:90px; padding:10px 12px; border-radius:8px; background:#1e293b; border:1px solid #334155; color:#fff; font-size:0.88rem; resize:none; outline:none; box-sizing:border-box;"></textarea>
+        </div>
+
+        <div style="display:flex; gap:10px;">
+            <button id="send-excuse-submit" type="button" class="btn-success" style="flex:1; padding:10px; font-weight:800; font-size:0.95rem; border-radius:8px; background:#00ff88; color:#0b0f19; border:none; cursor:pointer;">
+                🚀 تأكيد وإرسال العذر
+            </button>
+            <button id="close-excuse-btn" type="button" class="btn-secondary" style="flex:0.6; padding:10px; font-weight:700; font-size:0.9rem; border-radius:8px; background:#334155; color:#fff; border:none; cursor:pointer;">
+                إلغاء
+            </button>
         </div>
     `;
-    document.body.appendChild(modal);
-    const overlay = document.createElement("div");
-    overlay.style.cssText = `position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); z-index: 9999998;`;
-    document.body.appendChild(overlay);
 
-    const close = () => { modal.remove(); overlay.remove(); };
+    document.body.appendChild(overlay);
+    document.body.appendChild(modal);
+
+    const close = () => {
+        modal.remove();
+        overlay.remove();
+    };
+
     document.getElementById("close-excuse-btn").addEventListener("click", close);
+    document.getElementById("close-excuse-x-btn").addEventListener("click", close);
     overlay.addEventListener("click", close);
 
-    document.getElementById("send-excuse-submit").addEventListener("click", () => {
-        const reason = document.getElementById("excuse-reason").value.trim();
-        if (!reason) { showToast("يرجى كتابة سبب العذر.", "error"); return; }
-        const excuses = getStorage(PHANTOM_MEMORY.excusesKey, []);
-        excuses.push({ id: `excuse_${Date.now()}`, from: getCurrentUsername(), eventId: eventId, reason: reason, date: new Date().toLocaleString("ar-EG") });
-        setStorage(PHANTOM_MEMORY.excusesKey, excuses);
-        showToast("⏳ تم إرسال العذر للمؤسسين.", "success");
+    document.getElementById("send-excuse-submit").addEventListener("click", async () => {
+        const roomSelect = document.getElementById("excuse-room-select");
+        const selectedRoomId = roomSelect ? roomSelect.value.trim() : "";
+
+        // إذا لم يختر المستخدم رومًا، اعرض: اختر الروم أولاً قبل إرسال العذر.
+        if (!selectedRoomId) {
+            showToast("اختر الروم أولاً قبل إرسال العذر.", "error");
+            if (roomSelect) roomSelect.focus();
+            return;
+        }
+
+        // ممنوع إرسال العذر بدون roomId حقيقي
+        const targetRoom = availableRooms.find(r => String(r.id) === String(selectedRoomId));
+        if (!targetRoom) {
+            showToast("اختر الروم أولاً قبل إرسال العذر.", "error");
+            return;
+        }
+
+        const reasonInput = document.getElementById("excuse-reason");
+        const reason = reasonInput ? reasonInput.value.trim() : "";
+        if (!reason) {
+            showToast("يرجى كتابة سبب العذر.", "error");
+            if (reasonInput) reasonInput.focus();
+            return;
+        }
+
+        const username = getCurrentUsername() || 'عضو PHANTOM';
+        const excuseId = `excuse_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+        const newExcuse = {
+            id: excuseId,
+            from: username,
+            userId: getCurrentUserId(),
+            roomId: targetRoom.id,
+            roomTitle: targetRoom.title,
+            roomMode: targetRoom.mode,
+            eventId: targetRoom.id,
+            reason: reason,
+            date: new Date().toLocaleString("ar-EG"),
+            timestamp: Date.now(),
+            status: "pending"
+        };
+
+        await serverCreateExcuse(newExcuse);
+
         renderFounderNotifications();
+        if (typeof renderAdminInbox === 'function') renderAdminInbox();
+
+        showToast(`✅ تم إرسال العذر لروم "${targetRoom.title}" بنجاح للإدارة.`, "success");
         close();
     });
 }
 
-function acceptExcuse(id) {
+async function acceptExcuse(id) {
     let excuses = getStorage(PHANTOM_MEMORY.excusesKey, []);
     const excuse = excuses.find(e => e.id === id);
-    excuses = excuses.filter(e => e.id !== id);
-    setStorage(PHANTOM_MEMORY.excusesKey, excuses);
+    await serverDeleteExcuse(id);
     renderFounderNotifications();
+    if (typeof renderAdminInbox === 'function') renderAdminInbox();
     if (excuse) { addSystemUpdate("قبول عذر", `تم قبول عذر العضو ${excuse.from} لعدم حضور الروم.`); showToast("✅ تم قبول العذر.", "success"); }
 }
 
-function rejectExcuse(id) {
+async function rejectExcuse(id) {
     let excuses = getStorage(PHANTOM_MEMORY.excusesKey, []);
     const excuse = excuses.find(e => e.id === id);
-    excuses = excuses.filter(e => e.id !== id);
-    setStorage(PHANTOM_MEMORY.excusesKey, excuses);
+    await serverDeleteExcuse(id);
     renderFounderNotifications();
+    if (typeof renderAdminInbox === 'function') renderAdminInbox();
     if (excuse) { addSystemUpdate("رفض عذر", `تم رفض عذر العضو ${excuse.from} لعدم حضور الروم.`); showToast("❌ تم رفض العذر.", "info"); }
 }
 
@@ -4073,17 +5078,23 @@ function showNameChangeForm() {
     document.getElementById("close-name-change").addEventListener("click", close);
     overlay.addEventListener("click", close);
 
-    document.getElementById("submit-name-change").addEventListener("click", () => {
+    document.getElementById("submit-name-change").addEventListener("click", async () => {
         const newName = document.getElementById("new-name-input").value.trim();
         if (!newName) { showToast("يرجى كتابة الاسم الجديد.", "error"); return; }
         if (newName.length < 2) { showToast("الاسم يجب أن يكون حرفين على الأقل.", "error"); return; }
         const roster = getFullRoster();
         if (roster.some(m => normalizeName(m.name) === normalizeName(newName))) { showToast("هذا الاسم مستخدم بالفعل.", "error"); return; }
-        const requests = getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []);
-        requests.push({ id: `namechange_${Date.now()}`, oldName: currentName, newName: newName, date: new Date().toLocaleString("ar-EG") });
-        setStorage(PHANTOM_MEMORY.nameChangeRequestsKey, requests);
+        const newReq = {
+            id: `namechange_${Date.now()}`,
+            oldName: currentName,
+            newName: newName,
+            date: new Date().toLocaleString("ar-EG"),
+            status: "pending"
+        };
+        await serverCreateNameChangeRequest(newReq);
         showToast("📝 تم إرسال طلب تغيير الاسم للمؤسسين.", "success");
         renderFounderNotifications();
+        if (typeof renderAdminInbox === 'function') renderAdminInbox();
         close();
     });
 }
@@ -4207,8 +5218,7 @@ async function approveNameChange(id) {
     }
 
     // 11. حذف الطلب
-    requests = requests.filter(r => r.id !== id);
-    setStorage(PHANTOM_MEMORY.nameChangeRequestsKey, requests);
+    await serverDeleteNameChangeRequest(id);
 
     // ✅ 12. نقل حالة التسجيل (Onboarding) للاسم الجديد حتى لا تظهر شاشة الرقم السري
     let onboardingData = getStorage(PHANTOM_MEMORY.onboardingKey, {});
@@ -4223,6 +5233,7 @@ async function approveNameChange(id) {
     showToast(`✅ تم تغيير اسم ${oldName} إلى ${newName}.`, "success");
     renderAll();
     renderFounderNotifications();
+    if (typeof renderAdminInbox === 'function') renderAdminInbox();
     populateAdminSelects();
     logAdminAction(`📝 تغيير اسم ${oldName} إلى ${newName}`, newName, 'info');
 }
@@ -4230,9 +5241,14 @@ async function approveNameChange(id) {
    28. نظام Clips
    ======================================================== */
 
-function setupClips() {
+async function setupClips() {
     const clipsPage = getElement("clips-view");
     if (!clipsPage) return;
+    await serverGetClips();
+    const clip = getClipsData();
+    if (clip && clip.id) {
+        await serverGetClipComments(clip.id);
+    }
     renderClips();
 }
 
@@ -4303,20 +5319,28 @@ function getDirectVideoUrl(url) {
 }
 
 // دالة إعجاب
-function handleClipLike() {
+async function handleClipLike() {
     const username = getCurrentUsername();
     if (!username) { showToast("يجب تسجيل الدخول.", "error"); return; }
     const data = getClipsData();
-    if (data.likedBy.includes(username)) { showToast("لقد أعجبت بالفعل!", "info"); return; }
+    if (data.likedBy && data.likedBy.includes(username)) { showToast("لقد أعجبت بالفعل!", "info"); return; }
     data.likes = (data.likes || 0) + 1;
+    if (!data.likedBy) data.likedBy = [];
     data.likedBy.push(username);
     setClipsData(data);
     renderClips();
+    if (data.id) {
+        await serverUpdateClip(data.id, { likes: data.likes, likedBy: data.likedBy });
+    }
 }
 
 // دالة حذف الفيديو
-function deleteClipVideo() {
+async function deleteClipVideo() {
     if (!confirm("هل أنت متأكد من حذف الفيديو؟")) return;
+    const data = getClipsData();
+    if (data.id) {
+        await serverDeleteClip(data.id);
+    }
     setClipsData({ videoUrl: "", uploadedBy: "", uploadedAt: null, likes: 0, likedBy: [] });
     setComments([]);
     renderClips();
@@ -7782,15 +8806,18 @@ function setupSnakeTouchControls() {
    ⚔️ PHANTOM BATTLE & REALTIME ENGINE (السيرفر، الحضور، الإشعارات الدائمة، والتحديات المباشرة)
    ======================================================== */
 
-let serverOnlineUsers = [];
-let pendingBattleInvite = null;
-let presenceHeartbeatInterval = null;
-let challengePollingInterval = null;
-let arenaDirectSearchInterval = null;
-let popularityDirectSearchInterval = null;
+// تم تعريف متغيرات التواجد والمحرك في أعلى الملف لتفادي أخطاء التهيئة (TDZ)
 
-// 💓 إرسال نبض التواجد إلى السيرفر وتحديث قائمة المتصلين
+
+// 💓 إرسال نبض التواجد إلى السيرفر وتحديث قناة Supabase Realtime Presence
 async function sendPresenceHeartbeat() {
+    // 1. إعادة التحقق من تفعيل Supabase Presence وإرسال Track إذا لزم الأمر
+    if (!presenceChannel) {
+        initSupabasePresence();
+    } else {
+        trackCurrentUserPresence();
+    }
+
     const username = getCurrentUsername();
     if (!username) return;
     const userId = getCurrentUserId();
@@ -7806,6 +8833,10 @@ async function sendPresenceHeartbeat() {
             const data = await res.json();
             if (data && Array.isArray(data.onlineUsers)) {
                 serverOnlineUsers = data.onlineUsers;
+                // إذا لم تكن قناة Realtime قد استلمت بعد، استخدام المتصلين بالسيرفر
+                if (!realtimeOnlineUsers || realtimeOnlineUsers.length === 0) {
+                    realtimeOnlineUsers = data.onlineUsers;
+                }
                 updateAllOnlineCounters();
                 renderArenaClanMembers();
                 renderPopularityClanMembers();
@@ -7834,6 +8865,7 @@ async function sendPresenceHeartbeat() {
 // تنظيف الجلسة عند مغادرة الموقع
 if (typeof window !== "undefined") {
     window.addEventListener('beforeunload', () => {
+        cleanupSupabasePresence();
         const username = getCurrentUsername();
         const userId = getCurrentUserId();
         if (username && navigator.sendBeacon) {
@@ -7867,13 +8899,17 @@ function dismissCallBanner() {
 
 window.dismissCallBanner = dismissCallBanner;
 
-// تحديث عدادات المتصلين في الواجهات المختلفة بالقيمة الحقيقية
+// تحديث عدادات المتصلين في الواجهات المختلفة بالقيمة الحقيقية لـ Supabase Realtime Presence
 function updateAllOnlineCounters() {
-    const count = Array.isArray(serverOnlineUsers) ? serverOnlineUsers.length : 0;
+    const list = (Array.isArray(realtimeOnlineUsers) && realtimeOnlineUsers.length > 0) ? realtimeOnlineUsers : (Array.isArray(serverOnlineUsers) ? serverOnlineUsers : []);
+    const count = list.length;
+
     const chatCounter = document.getElementById('chat-online-counter');
     const arenaCounter = document.getElementById('arena-online-counter');
     const popCounter = document.getElementById('popularity-online-counter');
+    const badge = document.getElementById('online-count-badge');
 
+    if (badge) badge.textContent = `${count} متواجد الآن`;
     if (chatCounter) chatCounter.textContent = `${count} متصلين حالياً`;
     if (arenaCounter) arenaCounter.textContent = `${count} متصل بالمقر`;
     if (popCounter) popCounter.textContent = `${count} متصل`;
@@ -10333,7 +11369,7 @@ function renderFounderNotifications() {
 
     let html = "";
 
-    const complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []);
+    const complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []).filter(c => !c.status || c.status === 'pending');
     complaints.forEach(c => {
         html += `
             <div style="border-bottom:1px solid var(--border); padding:8px;">
@@ -10350,7 +11386,7 @@ function renderFounderNotifications() {
         `;
     });
 
-    const rejoinRequests = getRejoinRequests().filter(r => r.status === 'pending');
+    const rejoinRequests = getRejoinRequests().filter(r => !r.status || r.status === 'pending');
     rejoinRequests.forEach(r => {
         html += `
             <div style="border-bottom:1px solid var(--border); padding:8px;">
@@ -10364,11 +11400,12 @@ function renderFounderNotifications() {
         `;
     });
 
-    const excuses = getStorage(PHANTOM_MEMORY.excusesKey, []);
+    const excuses = getStorage(PHANTOM_MEMORY.excusesKey, []).filter(e => !e.status || e.status === 'pending');
     excuses.forEach(e => {
+        const roomInfo = e.roomTitle ? ` (روم: ${escapeHTML(e.roomTitle)})` : (e.eventId ? ` (روم: ${escapeHTML(e.eventId)})` : '');
         html += `
             <div style="border-bottom:1px solid var(--border); padding:8px;">
-                <strong style="color:var(--cyan);">⏳ عذر عدم حضور</strong> - ${escapeHTML(e.from)}<br>
+                <strong style="color:var(--cyan);">⏳ عذر عدم حضور</strong> - ${escapeHTML(e.from)}${roomInfo}<br>
                 <small>${escapeHTML(e.reason)}</small>
                 <div style="margin-top:5px;">
                     <button class="btn-success" onclick="acceptExcuse('${e.id}')">✅ قبول</button>
@@ -10378,7 +11415,7 @@ function renderFounderNotifications() {
         `;
     });
 
-        const nameChanges = getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []);
+    const nameChanges = getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []).filter(n => !n.status || n.status === 'pending');
     nameChanges.forEach(n => {
         html += `
             <div style="border-bottom:1px solid var(--border); padding:8px;">
@@ -10391,8 +11428,8 @@ function renderFounderNotifications() {
         `;
     });
 
-    // ✅ كود الـ ID - خارج حلقة الأسماء (تم إصلاحه)
-    const idChanges = getStorage("phantom_id_change_requests", []);
+    // ✅ كود الـ ID - خارج حلقة الأسماء
+    const idChanges = getStorage("phantom_id_change_requests", []).filter(req => !req.status || req.status === 'pending');
     idChanges.forEach(req => {
         html += `
             <div style="border-bottom:1px solid var(--border); padding:8px;">
@@ -13082,25 +14119,26 @@ function showChangeIdForm() {
     document.getElementById("close-id-change").addEventListener("click", close);
     overlay.addEventListener("click", close);
 
-    document.getElementById("submit-id-change").addEventListener("click", () => {
+    document.getElementById("submit-id-change").addEventListener("click", async () => {
         const newId = document.getElementById("new-id-input").value.trim();
         if (!newId) { showToast("يرجى كتابة الـ ID الجديد.", "error"); return; }
         
-        const requests = getStorage("phantom_id_change_requests", []);
-        requests.push({
+        const newReq = {
             id: `idchange_${Date.now()}`,
             username: currentUser,
             newId: newId,
             date: new Date().toLocaleString("ar-EG"),
             status: 'pending'
-        });
-        setStorage("phantom_id_change_requests", requests);
+        };
+        await serverCreateIdChangeRequest(newReq);
         showToast("📨 تم إرسال الطلب للمؤسسين.", "success");
+        renderFounderNotifications();
+        if (typeof renderAdminInbox === 'function') renderAdminInbox();
         close();
     });
 }
 
-function handleIdChange(id, action) {
+async function handleIdChange(id, action) {
     let requests = getStorage("phantom_id_change_requests", []);
     const req = requests.find(r => r.id === id);
     if (!req) return;
@@ -13153,8 +14191,7 @@ function handleIdChange(id, action) {
         showToast(`❌ تم رفض طلب ${req.username}.`, "info");
     }
 
-    requests = requests.filter(r => r.id !== id);
-    setStorage("phantom_id_change_requests", requests);
+    await serverDeleteIdChangeRequest(id);
     renderAdminInbox();
     renderFounderNotifications();
     logAdminAction(`🆔 تغيير ID لـ ${username}`, username, 'info');
@@ -13237,11 +14274,10 @@ function renderComments() {
         `;
     }).join("");
 }
-function rejectNameChange(id) {
+async function rejectNameChange(id) {
     let requests = getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []);
     const request = requests.find(r => r.id === id);
-    requests = requests.filter(r => r.id !== id);
-    setStorage(PHANTOM_MEMORY.nameChangeRequestsKey, requests);
+    await serverDeleteNameChangeRequest(id);
     
     if (request) {
         addSystemUpdate("رفض تغيير اسم", `تم رفض طلب تغيير اسم العضو ${request.oldName}.`);
@@ -13269,11 +14305,11 @@ function closeClipModal() {
     if (overlay) overlay.remove();
 }
 
-function submitClipUrl() {
+async function submitClipUrl() {
     const url = document.getElementById("new-clip-url-input").value.trim();
     if (!url) { showToast("ضع رابط الفيديو.", "error"); return; }
-    const data = { videoUrl: url, uploadedBy: getCurrentUsername(), uploadedAt: Date.now(), likes: 0, likedBy: [] };
-    setClipsData(data);
+    const data = { videoUrl: url, uploadedBy: getCurrentUsername() || 'المؤسس', uploadedAt: Date.now(), likes: 0, likedBy: [] };
+    await serverCreateClip(data);
     setComments([]);
     closeClipModal();
     renderClips();
@@ -13325,7 +14361,7 @@ function closeCommentsSheet() {
     }
 }
 
-function submitComment() {
+async function submitComment() {
     const input = document.getElementById("comment-input");
     const text = input.value.trim();
     if (!text) return showToast("اكتب تعليقك أولاً.", "error");
@@ -13333,9 +14369,16 @@ function submitComment() {
     const username = getCurrentUsername();
     if (!username) return showToast("يجب تسجيل الدخول أولاً.", "error");
 
-    const newComments = getComments();
-    newComments.push({ id: Date.now(), username: username, text: text, timestamp: Date.now() });
-    setComments(newComments);
+    const clip = getClipsData();
+    const clipId = (clip && clip.id) ? clip.id : null;
+
+    const newComment = {
+        clip_id: clipId,
+        username: username,
+        text: text,
+        timestamp: Date.now()
+    };
+    await serverCreateClipComment(newComment);
 
     input.value = "";
     renderComments();
