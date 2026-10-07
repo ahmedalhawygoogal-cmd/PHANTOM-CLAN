@@ -3813,7 +3813,10 @@ html.layout-mode-mobile .main-header {
     box-sizing: border-box !important;
 }
 html.layout-mode-mobile .season-pill {
-    display: none !important;
+    display: inline-block !important;
+    font-size: 0.62rem !important;
+    padding: 1px 7px !important;
+    cursor: pointer !important;
 }
 html.layout-mode-mobile .dock-nav {
     max-width: 480px !important;
@@ -8285,7 +8288,11 @@ body.disable-animations *::after {
     }
 
     .season-pill {
-        display: none;
+        display: inline-block !important;
+        font-size: 0.6rem !important;
+        padding: 1px 6px !important;
+        white-space: nowrap !important;
+        cursor: pointer !important;
     }
 
     .header-actions {

@@ -2100,8 +2100,24 @@ function renderOnlineUsers() {
     const badge = getElement("online-count-badge");
     if (!container) return;
 
-    // استخدام القيمة الحية من Supabase Presence دون استخدام localStorage أو رقم ثابت
-    const list = Array.isArray(realtimeOnlineUsers) ? realtimeOnlineUsers : [];
+    // استخدام القائمة الحية الموحدة (Supabase Realtime Presence أولاً، مع السيرفر إن وجد)
+    let list = (Array.isArray(realtimeOnlineUsers) && realtimeOnlineUsers.length > 0)
+        ? realtimeOnlineUsers
+        : (Array.isArray(serverOnlineUsers) && serverOnlineUsers.length > 0 ? serverOnlineUsers : []);
+
+    // إذا كانت القائمة فارغة لكن المستخدم الحالي موجود ونشط، اعرض المستخدم الحالي على الأقل
+    const current = getPresenceCurrentUser();
+    if (list.length === 0 && current && current.username) {
+        list = [{
+            username: current.username,
+            userId: current.userId,
+            rank: current.rank,
+            avatar: "PH",
+            onlineAt: Date.now()
+        }];
+        realtimeOnlineUsers = list;
+    }
+
     const count = list.length;
 
     if (badge) badge.textContent = `${count} متواجد الآن`;
@@ -2127,8 +2143,9 @@ function renderOnlineUsers() {
 
 function renderChatOnlineCount() {
     const chatCounter = getElement("chat-online-counter");
-    // استخدام القيمة الحية من Supabase Presence
-    const list = Array.isArray(realtimeOnlineUsers) ? realtimeOnlineUsers : [];
+    const list = (Array.isArray(realtimeOnlineUsers) && realtimeOnlineUsers.length > 0)
+        ? realtimeOnlineUsers
+        : (Array.isArray(serverOnlineUsers) && serverOnlineUsers.length > 0 ? serverOnlineUsers : []);
     const count = list.length;
 
     if (chatCounter) {
@@ -8829,18 +8846,24 @@ async function sendPresenceHeartbeat() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, userId, rank, avatar: 'PH' })
         });
+        console.log(`[Presence Diagnostic] حالة استجابة /api/presence: ${res.status}`);
         if (res.ok) {
             const data = await res.json();
             if (data && Array.isArray(data.onlineUsers)) {
                 serverOnlineUsers = data.onlineUsers;
-                // إذا لم تكن قناة Realtime قد استلمت بعد، استخدام المتصلين بالسيرفر
-                if (!realtimeOnlineUsers || realtimeOnlineUsers.length === 0) {
-                    realtimeOnlineUsers = data.onlineUsers;
+                // دمج المتصلين لضمان ظهور الجميع
+                const map = new Map();
+                (realtimeOnlineUsers || []).forEach(u => { if (u && u.username) map.set(normalizeName(u.username), u); });
+                data.onlineUsers.forEach(u => { if (u && u.username && !map.has(normalizeName(u.username))) map.set(normalizeName(u.username), u); });
+                if (map.size > 0) {
+                    realtimeOnlineUsers = Array.from(map.values());
                 }
                 updateAllOnlineCounters();
                 renderArenaClanMembers();
                 renderPopularityClanMembers();
             }
+        } else {
+            console.warn(`[Presence Diagnostic] طلب /api/presence عاد برمز ${res.status} (الاعتماد المباشر قائم عبر Supabase Realtime).`);
         }
 
         // 📞 فحص ومزامنة المكالمات النشطة الحقيقية من السيرفر
@@ -8855,6 +8878,7 @@ async function sendPresenceHeartbeat() {
             }
         } catch (callErr) {}
     } catch (e) {
+        console.warn(`[Presence Diagnostic] تعذر الاتصال بـ /api/presence (${e.message || e}). المتواجدون يعملون عبر Supabase Realtime.`);
         // Fallback: keep local current user
         if (!serverOnlineUsers.some(u => normalizeName(u.username) === normalizeName(username))) {
             serverOnlineUsers.push({ username, userId, rank, avatar: 'PH', lastSeen: Date.now() });
