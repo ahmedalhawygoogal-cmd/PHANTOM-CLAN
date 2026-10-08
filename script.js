@@ -61,7 +61,37 @@ function showToast(message, type = "info") {
     }, 3500);
 }
 
+// 🌐 ذاكرة الحالة التفاعلية المشتركة (In-Memory Reactive State Cache)
+// قاعدة هندسية: عزل البيانات المشتركة في الذاكرة الحية المتزامنة لحظياً، وحصر localStorage في تفضيلات واجهة المستخدم فقط (Theme, Language, UI preferences)
+const _sharedMemoryStore = new Map();
+
+const SHARED_DATA_KEYS = new Set([
+    "phantom_server_members",
+    "phantom_custom_roster",
+    "phantom_user_points",
+    "phantom_hearts",
+    "phantom_attendance_records",
+    "phantom_complaints",
+    "phantom_excuses",
+    "phantom_rejoin_requests",
+    "phantom_name_change_requests",
+    "phantom_id_change_requests",
+    "phantom_warnings",
+    "phantom_server_warnings",
+    "phantom_banned_users",
+    "phantom_chat_messages",
+    "phantom_active_poll",
+    "phantom_events_list",
+    "phantom_clips_data",
+    "phantom_clips_comments",
+    "phantom_deleted_warnings",
+    "phantom_site_presence"
+]);
+
 function getStorage(key, fallback) {
+    if (SHARED_DATA_KEYS.has(key)) {
+        return _sharedMemoryStore.has(key) ? _sharedMemoryStore.get(key) : fallback;
+    }
     try {
         const value = localStorage.getItem(key);
         if (value === null) return fallback;
@@ -72,6 +102,10 @@ function getStorage(key, fallback) {
 }
 
 function setStorage(key, value) {
+    if (SHARED_DATA_KEYS.has(key)) {
+        _sharedMemoryStore.set(key, value);
+        return true;
+    }
     try {
         localStorage.setItem(key, JSON.stringify(value));
         return true;
@@ -81,6 +115,10 @@ function setStorage(key, value) {
 }
 
 function removeStorage(key) {
+    if (SHARED_DATA_KEYS.has(key)) {
+        _sharedMemoryStore.delete(key);
+        return true;
+    }
     try {
         localStorage.removeItem(key);
         return true;
@@ -1066,6 +1104,8 @@ async function serverCreateClipComment(commentData) {
 }
 
 let tablesRealtimeChannel = null;
+let matchmakingRealtimeChannel = null;
+
 function setupTablesRealtime() {
     const client = ensureSupabaseClient();
     if (!client) return;
@@ -1076,40 +1116,114 @@ function setupTablesRealtime() {
     try {
         tablesRealtimeChannel = client.channel('phantom_realtime_tables');
         tablesRealtimeChannel
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'excuses' }, async () => {
-                await serverGetExcuses();
-                renderFounderNotifications();
-                if (typeof renderAdminInbox === 'function') renderAdminInbox();
+            // 1. القلوب (Hearts) - تحديث فوري لكلا الطرفين (المرسل والمستلم) وتحديث عداد الملف الشخصي
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'hearts' }, async (payload) => {
+                await serverGetHearts();
+                renderHearts();
+                if (payload.eventType === 'INSERT' && payload.new) {
+                    const myName = getCurrentUsername();
+                    if (myName && normalizeName(payload.new.target) === normalizeName(myName)) {
+                        showToast(`❤️ أرسل لك ${escapeHTML(payload.new.from || 'عضو')} قلباً جديداً!`, 'info');
+                    }
+                    const profileNameEl = document.getElementById('profile-name');
+                    const profileHeartEl = document.getElementById('profile-hearts');
+                    if (profileNameEl && profileHeartEl && normalizeName(profileNameEl.textContent.trim()) === normalizeName(payload.new.target)) {
+                        const h = getStorage(PHANTOM_MEMORY.heartsKey, {});
+                        profileHeartEl.textContent = h[payload.new.target] || 0;
+                    }
+                }
             })
+            // 2. الأعضاء (Members) - إعادة فرز الصدارة وتحديث القوائم وتطبيق قرارات الإدارة فوراً
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'members' }, async (payload) => {
+                const updatedMembers = await serverGetMembers();
+                if (Array.isArray(updatedMembers)) {
+                    setStorage("phantom_server_members", updatedMembers);
+                }
+                renderLeaderboard();
+                if (typeof renderMembersTable === 'function') renderMembersTable();
+                if (typeof updateMembersCount === 'function') updateMembersCount();
+
+                const myName = getCurrentUsername();
+                if (myName && payload.new && normalizeName(payload.new.name) === normalizeName(myName)) {
+                    if (payload.new.rank && payload.new.rank !== getCurrentUserRank()) {
+                        showToast(`🎖️ تم تحديث رتبتك رسمياً في الكلان إلى: ${payload.new.rank}`, 'success');
+                    }
+                }
+                if (myName && payload.eventType === 'DELETE' && payload.old && normalizeName(payload.old.name) === normalizeName(myName)) {
+                    showToast('⚠️ تم إنهاء عضويتك واستبعادك من الكلان بواسطة الإدارة.', 'error');
+                    setTimeout(() => { if (typeof finalLogout === 'function') finalLogout(); }, 2000);
+                }
+            })
+            // 3. الصدارة (Leaderboard) - إعادة الفرز والعرض اللحظي فور تغير النقاط
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'leaderboard' }, async () => {
+                await serverGetLeaderboard();
+                renderLeaderboard();
+            })
+            // 4. الحضور والنقاط (Attendance Records) - ينعكس فوراً على جميع الأعضاء
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_records' }, async (payload) => {
+                await serverGetAttendanceRecords();
+                updateAttendanceRate();
+                renderLeaderboard();
+                renderAll();
+                const myName = getCurrentUsername();
+                if (payload.eventType === 'INSERT' && payload.new && myName && normalizeName(payload.new.member_name) === normalizeName(myName)) {
+                    showToast(`🎉 سجلت الإدارة حضورك في الروم ومنحتك +${payload.new.points_awarded || 30} نقطة!`, 'success');
+                }
+            })
+            // 5. الشكاوى (Complaints) - تظهر للإدارة وتُحدث فورياً
             .on('postgres_changes', { event: '*', schema: 'public', table: 'complaints' }, async () => {
                 await serverGetComplaints();
                 renderFounderNotifications();
                 if (typeof renderAdminInbox === 'function') renderAdminInbox();
             })
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'hearts' }, async () => {
-                await serverGetHearts();
-                renderHearts();
-            })
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_records' }, async () => {
-                await serverGetAttendanceRecords();
-                updateAttendanceRate();
-                renderAll();
-            })
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'name_change_requests' }, async () => {
-                await serverGetNameChangeRequests();
-                renderFounderNotifications();
-                if (typeof renderAdminInbox === 'function') renderAdminInbox();
-            })
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'id_change_requests' }, async () => {
-                await serverGetIdChangeRequests();
-                renderFounderNotifications();
-                if (typeof renderAdminInbox === 'function') renderAdminInbox();
-            })
+            // 6. طلبات الرجوع (Rejoin Requests) - تظهر للإدارة وتُحدث فورياً
             .on('postgres_changes', { event: '*', schema: 'public', table: 'rejoin_requests' }, async () => {
                 await serverGetRejoinRequests();
                 renderFounderNotifications();
                 if (typeof renderAdminInbox === 'function') renderAdminInbox();
             })
+            // 7. طلبات تغيير الاسم (Name Change Requests)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'name_change_requests' }, async () => {
+                await serverGetNameChangeRequests();
+                renderFounderNotifications();
+                if (typeof renderAdminInbox === 'function') renderAdminInbox();
+            })
+            // 8. طلبات تغيير المعرف (ID Change Requests)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'id_change_requests' }, async () => {
+                await serverGetIdChangeRequests();
+                renderFounderNotifications();
+                if (typeof renderAdminInbox === 'function') renderAdminInbox();
+            })
+            // 9. الأعذار (Excuses)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'excuses' }, async () => {
+                await serverGetExcuses();
+                renderFounderNotifications();
+                if (typeof renderAdminInbox === 'function') renderAdminInbox();
+            })
+            // 10. الإنذارات (Warnings) - إشعار فوري وتحديث الملف الشخصي
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'warnings' }, async (payload) => {
+                if (payload.eventType === 'INSERT' && payload.new) {
+                    const myName = getCurrentUsername();
+                    if (myName && normalizeName(payload.new.name) === normalizeName(myName)) {
+                        showToast(`⚠️ أصدرت الإدارة بحقك ${payload.new.type || 'إنذار'}: ${payload.new.reason || ''}`, 'error');
+                    }
+                }
+                renderFounderNotifications();
+                if (typeof renderAdminInbox === 'function') renderAdminInbox();
+            })
+            // 11. المحظورون (Banned Users) - تنفيذ الطرد اللحظي فور اتخاذ القرار
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'banned_users' }, async (payload) => {
+                await syncBannedUsers();
+                if (payload.eventType === 'INSERT' && payload.new) {
+                    const myName = getCurrentUsername();
+                    if (myName && normalizeName(payload.new.username) === normalizeName(myName)) {
+                        enforceBan(payload.new.username, payload.new.reason || 'قرار إداري');
+                    }
+                }
+                renderLeaderboard();
+                if (typeof renderMembersTable === 'function') renderMembersTable();
+            })
+            // 12. اللقطات والتعليقات (Clips & Comments)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'clips' }, async () => {
                 await serverGetClips();
                 renderClips();
@@ -1120,10 +1234,110 @@ function setupTablesRealtime() {
                 renderComments();
                 renderClips();
             })
-            .subscribe();
+            .subscribe((status, err) => {
+                if (status === 'SUBSCRIBED') {
+                    console.log("🟢 [Supabase Realtime] تم الاشتراك بنجاح في قنوات التحديث اللحظي لجميع الجداول بدون تحديث الصفحة.");
+                } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                    console.warn("🟡 [Supabase Realtime] انقطع اتصال القناة، جاري إعادة المحاولة تلقائياً...", status, err);
+                    setTimeout(() => {
+                        if (ensureSupabaseClient()) setupTablesRealtime();
+                    }, 3000);
+                }
+            });
     } catch (e) {
         console.warn("⚠️ [Realtime] setupTablesRealtime error:", e);
     }
+}
+
+// ⚔️ قناة التوفيق والمواجهات اللحظية (Matchmaking Realtime Channel) - إشعار ومزامنة الطرفين فوراً بدون استطلاع
+function setupMatchmakingRealtime() {
+    const client = ensureSupabaseClient();
+    if (!client) return;
+    if (matchmakingRealtimeChannel) {
+        try { client.removeChannel(matchmakingRealtimeChannel); } catch (_) {}
+        matchmakingRealtimeChannel = null;
+    }
+    try {
+        matchmakingRealtimeChannel = client.channel('phantom_matchmaking_realtime', {
+            config: { broadcast: { self: true } }
+        });
+
+        matchmakingRealtimeChannel
+            .on('broadcast', { event: 'challenge_invite' }, ({ payload }) => {
+                if (!payload) return;
+                const myName = getCurrentUsername();
+                if (!myName) return;
+                // إظهار إشعار التحدي فوراً إذا كان موجهاً للعضو أو للجميع
+                if (payload.challengerName !== myName && (payload.targetName === 'ALL' || normalizeName(payload.targetName) === normalizeName(myName))) {
+                    showTelegramBattleNotification(payload);
+                }
+            })
+            .on('broadcast', { event: 'match_found' }, ({ payload }) => {
+                if (!payload || !payload.challenge) return;
+                handleMatchFoundRealtime(payload.challenge);
+            })
+            .on('broadcast', { event: 'match_status_change' }, ({ payload }) => {
+                if (!payload) return;
+                handleMatchStatusChangeRealtime(payload);
+            })
+            .on('broadcast', { event: 'challenge_dismissed' }, ({ payload }) => {
+                if (!payload) return;
+                handleChallengeDismissedRealtime(payload);
+            })
+            .subscribe((status, err) => {
+                if (status === 'SUBSCRIBED') {
+                    console.log("🟢 [Supabase Realtime] قناة المطابقة والمواجهات المباشرة جاهزة (Matchmaking Broadcast Active).");
+                } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                    setTimeout(() => {
+                        if (ensureSupabaseClient()) setupMatchmakingRealtime();
+                    }, 3000);
+                }
+            });
+    } catch (e) {
+        console.warn("⚠️ [Realtime] setupMatchmakingRealtime error:", e);
+    }
+}
+
+function broadcastMatchEvent(event, payload) {
+    if (matchmakingRealtimeChannel) {
+        try {
+            matchmakingRealtimeChannel.send({
+                type: 'broadcast',
+                event: event,
+                payload: payload
+            });
+        } catch (e) {
+            console.warn("⚠️ [Realtime] فشل بث حدث المواجهة:", event, e);
+        }
+    }
+}
+
+function cleanupRealtimeSubscriptions() {
+    const client = ensureSupabaseClient();
+    if (!client) return;
+    if (tablesRealtimeChannel) {
+        try { client.removeChannel(tablesRealtimeChannel); } catch (_) {}
+        tablesRealtimeChannel = null;
+    }
+    if (matchmakingRealtimeChannel) {
+        try { client.removeChannel(matchmakingRealtimeChannel); } catch (_) {}
+        matchmakingRealtimeChannel = null;
+    }
+    if (chatRealtimeChannel) {
+        try { client.removeChannel(chatRealtimeChannel); } catch (_) {}
+        chatRealtimeChannel = null;
+    }
+    if (presenceChannel) {
+        try {
+            presenceChannel.untrack();
+            client.removeChannel(presenceChannel);
+        } catch (_) {}
+        presenceChannel = null;
+    }
+}
+if (typeof window !== "undefined") {
+    window.addEventListener('beforeunload', cleanupRealtimeSubscriptions);
+    window.addEventListener('pagehide', cleanupRealtimeSubscriptions);
 }
 
 async function checkServerConnection() {
@@ -4711,18 +4925,13 @@ async function giveHeart(targetName) {
     if (!from) { showToast("يجب تسجيل الدخول أولاً.", "error"); return; }
     if (from === targetName) { showToast("لا يمكنك إعطاء قلب لنفسك.", "error"); return; }
 
-    const hearts = getStorage(PHANTOM_MEMORY.heartsKey, {});
+    const hearts = getStorage(PHANTOM_MEMORY.heartsKey, { givenBy: {} });
     if (hearts.givenBy && hearts.givenBy[targetName] && hearts.givenBy[targetName].includes(from)) {
         showToast("لقد أعطيت قلبًا لهذا العضو مسبقًا (قلب واحد فقط).", "error");
         return;
     }
 
-    const res = await serverGiveHeart(from, targetName);
-    if (!res.success && res.duplicate) {
-        showToast("لقد أعطيت قلبًا لهذا العضو مسبقًا (قلب واحد فقط).", "error");
-        return;
-    }
-
+    // 💛 تحديث تفاؤلي فوري في الواجهة (Optimistic UI Update)
     if (!hearts.givenBy) hearts.givenBy = {};
     if (!hearts.givenBy[targetName]) hearts.givenBy[targetName] = [];
     if (!hearts.givenBy[targetName].includes(from)) hearts.givenBy[targetName].push(from);
@@ -4731,9 +4940,21 @@ async function giveHeart(targetName) {
 
     const profileHeartEl = document.getElementById('profile-hearts');
     if (profileHeartEl) profileHeartEl.textContent = hearts[targetName];
-
-    showToast(`💛 تم إعطاء قلب لـ ${targetName}.`, "success");
     renderHearts();
+    showToast(`💛 تم إعطاء قلب لـ ${targetName}.`, "success");
+
+    // إرسال للباك إند وتحديث المستلم في Supabase
+    const res = await serverGiveHeart(from, targetName);
+    if (!res.success && res.duplicate) {
+        // تراجع في حال كان مسجلاً مسبقاً (Rollback)
+        const idx = hearts.givenBy[targetName].indexOf(from);
+        if (idx !== -1) hearts.givenBy[targetName].splice(idx, 1);
+        hearts[targetName] = Math.max(0, (hearts[targetName] || 1) - 1);
+        setStorage(PHANTOM_MEMORY.heartsKey, hearts);
+        if (profileHeartEl) profileHeartEl.textContent = hearts[targetName];
+        renderHearts();
+        showToast("لقد أعطيت قلبًا لهذا العضو مسبقًا (قلب واحد فقط).", "error");
+    }
 }
 
 function renderHearts() {
@@ -4741,17 +4962,35 @@ function renderHearts() {
     const memberItems = document.querySelectorAll(".member-log-item");
     memberItems.forEach(item => {
         const name = item.querySelector("strong")?.textContent;
-        if (name && hearts[name]) {
+        if (name && hearts[name] !== undefined) {
             let heartSpan = item.querySelector(".heart-count");
             if (!heartSpan) {
                 heartSpan = document.createElement("span");
                 heartSpan.className = "heart-count";
                 heartSpan.style.cssText = "font-size:0.8rem; color:var(--red); margin-right:6px;";
-                item.querySelector("div").appendChild(heartSpan);
+                const titleDiv = item.querySelector("div");
+                if (titleDiv) titleDiv.appendChild(heartSpan);
             }
             heartSpan.textContent = `💛 ${hearts[name]}`;
         }
     });
+
+    // تحديث رقم القلوب في بطاقة الملف الشخصي إذا كانت مفتوحة
+    const profileNameEl = document.getElementById('profile-name');
+    const profileHeartEl = document.getElementById('profile-hearts');
+    if (profileNameEl && profileHeartEl) {
+        const currentProfileUser = profileNameEl.textContent.trim();
+        if (currentProfileUser && hearts[currentProfileUser] !== undefined) {
+            profileHeartEl.textContent = hearts[currentProfileUser];
+        }
+    }
+
+    // تحديث قلوب بطاقة تسجيل الخروج
+    const logoutHeartsEl = document.getElementById('logout-hearts');
+    const myName = getCurrentUsername();
+    if (logoutHeartsEl && myName && hearts[myName] !== undefined) {
+        logoutHeartsEl.textContent = hearts[myName];
+    }
 }
 
 function showComplaintForm(targetName) {
@@ -9027,7 +9266,7 @@ function showTelegramBattleNotification(challenge) {
             const targetChallenge = pendingBattleInvite || challenge;
             hideTelegramBattleNotification(false);
 
-            // إشعار السيرفر بقبول التحدي
+            // إشعار السيرفر وبث فوري لكلا الطرفين عبر Supabase Realtime
             fetch('/api/battles/join', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -9036,7 +9275,25 @@ function showTelegramBattleNotification(challenge) {
                     joinerName: getCurrentUsername(),
                     joinerId: getCurrentUserId()
                 })
-            }).catch(() => {});
+            }).then(r => r.json()).then(data => {
+                const activeChallenge = (data && data.challenge) ? data.challenge : {
+                    ...targetChallenge,
+                    status: 'active',
+                    acceptedBy: getCurrentUsername(),
+                    targetName: getCurrentUsername()
+                };
+                // 🚀 بث فوري للمباراة عبر Supabase Realtime ليعلم الطرفان في نفس اللحظة
+                broadcastMatchEvent('match_found', { challenge: activeChallenge });
+                broadcastMatchEvent('match_status_change', { challengeId: activeChallenge.id, status: 'active', challenge: activeChallenge });
+            }).catch(() => {
+                const activeChallenge = {
+                    ...targetChallenge,
+                    status: 'active',
+                    acceptedBy: getCurrentUsername(),
+                    targetName: getCurrentUsername()
+                };
+                broadcastMatchEvent('match_found', { challenge: activeChallenge });
+            });
 
             // التوجيه الفوري المباشر وفق نوع النشاط
             if (targetChallenge.type === 'call') {
@@ -9268,6 +9525,8 @@ function sendDirectArenaChallenge(targetName) {
     }).then(res => res.json()).then(data => {
         if (data.success && data.challenge) {
             currentArenaChallengeId = data.challenge.id;
+            // 🚀 بث فوري لإشعار التحدي المباشر عبر Supabase Realtime ليتلقاه الخصم فوراً
+            broadcastMatchEvent('challenge_invite', data.challenge);
             trackArenaDirectChallenge(data.challenge.id, targetName, timeLeft);
         }
     }).catch(() => {});
@@ -9275,13 +9534,13 @@ function sendDirectArenaChallenge(targetName) {
     showToast(`🚀 تم إرسال إشعار التحدي إلى ${targetName}!`, 'info');
 }
 
-// متابعة حالة قبول التحدي المباشر في الساحة
+// متابعة حالة قبول التحدي المباشر في الساحة عبر المؤقت المرئي والـ Realtime
 function trackArenaDirectChallenge(challengeId, targetName, initialTime = 25) {
     if (arenaDirectSearchInterval) clearInterval(arenaDirectSearchInterval);
     let timeLeft = initialTime;
     const lobby = document.getElementById('arena-search-lobby');
 
-    arenaDirectSearchInterval = setInterval(async () => {
+    arenaDirectSearchInterval = setInterval(() => {
         timeLeft--;
         if (timeLeft > 0) {
             const percent = Math.max(0, (timeLeft / 25) * 100);
@@ -9291,29 +9550,6 @@ function trackArenaDirectChallenge(challengeId, targetName, initialTime = 25) {
                 if (subEl) subEl.textContent = `بانتظار قبول النزال: ${timeLeft} ثانية (الرهان: ${phantomArenaState.stake ? phantomArenaState.stake + ' نقطة' : 'نزال شرف'})`;
                 if (barEl) barEl.style.width = `${percent}%`;
             }
-
-            try {
-                const res = await fetch(`/api/battles/state/${challengeId}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data && data.challenge && data.challenge.status === 'active') {
-                        clearInterval(arenaDirectSearchInterval);
-                        arenaDirectSearchInterval = null;
-                        cancelMatching();
-
-                        phantomArenaState.mode = 'duel';
-                        phantomArenaState.challengeId = challengeId;
-                        phantomArenaState.opponent = {
-                            name: targetName,
-                            avatar: '⚔️',
-                            sub: `مبارزة حقيقية مباشرة · رهان: ${phantomArenaState.stake} نقطة`
-                        };
-                        showToast(`🔥 قبل ${targetName} التحدي! النزال يبدأ الآن...`, 'success');
-                        launchVersusCountdown();
-                        return;
-                    }
-                }
-            } catch (e) {}
         } else {
             clearInterval(arenaDirectSearchInterval);
             arenaDirectSearchInterval = null;
@@ -9451,6 +9687,8 @@ function sendDirectPopularityChallenge(targetName) {
     }).then(res => res.json()).then(data => {
         if (data.success && data.challenge) {
             currentPopularityChallengeId = data.challenge.id;
+            // 🚀 بث فوري لإشعار معركة الشعبية عبر Supabase Realtime
+            broadcastMatchEvent('challenge_invite', data.challenge);
             trackPopularityDirectChallenge(data.challenge.id, targetName, timeLeft);
         }
     }).catch(() => {});
@@ -9464,26 +9702,13 @@ function trackPopularityDirectChallenge(challengeId, targetName, initialTime = 2
     const lobby = document.getElementById('popularity-search-lobby');
     const username = getCurrentUsername() || 'المحارب';
 
-    popularityDirectSearchInterval = setInterval(async () => {
+    popularityDirectSearchInterval = setInterval(() => {
         timeLeft--;
         if (timeLeft > 0) {
             if (lobby && lobby.style.display !== 'none') {
                 const subEl = lobby.querySelector('div[style*="monospace"]');
                 if (subEl) subEl.textContent = `بانتظار قبول التحدي: ${timeLeft} ثانية`;
             }
-
-            try {
-                const res = await fetch(`/api/battles/state/${challengeId}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data && data.challenge && data.challenge.status === 'active') {
-                        clearInterval(popularityDirectSearchInterval);
-                        popularityDirectSearchInterval = null;
-                        cancelPopularitySearch();
-                        startLivePopularityBattle(username, targetName, challengeId);
-                    }
-                }
-            } catch (e) {}
         } else {
             clearInterval(popularityDirectSearchInterval);
             popularityDirectSearchInterval = null;
@@ -9578,14 +9803,11 @@ function startInstantPopularityMatch(opponentName) {
     showToast(`⚔️ انطلقت معركة الشعبية 1v1 بين ${username} و ${opponent}!`, 'success');
 }
 
-// بدء دوريات استطلاع التواجد والإشعارات عند تحميل الصفحة
+// تهيئة التواجد وقنوات التحديث اللحظي عند تحميل الصفحة بدون أي استطلاع دوري
 document.addEventListener('DOMContentLoaded', () => {
     sendPresenceHeartbeat();
-    if (!presenceHeartbeatInterval) {
-        presenceHeartbeatInterval = setInterval(sendPresenceHeartbeat, 8000);
-    }
-    if (!challengePollingInterval) {
-        challengePollingInterval = setInterval(pollIncomingChallenges, 3500);
+    if (typeof setupMatchmakingRealtime === 'function') {
+        setupMatchmakingRealtime();
     }
     // فحص إعادة الاتصال بمكالمة Agora عند Refresh بالخطأ إذا كانت الغرفة ما زالت نشطة
     setTimeout(checkAgoraAutoReconnectOnRefresh, 1500);
@@ -10515,6 +10737,8 @@ function startPopularityBattle() {
     }).then(res => res.json()).then(joinData => {
         if (joinData.matched && joinData.challenge) {
             cancelPopularityMatchmaking();
+            // 🚀 بث فوري للطرف الآخر عبر Supabase Realtime ليدخل المواجهة فوراً
+            broadcastMatchEvent('match_found', { challenge: joinData.challenge });
             const opp = joinData.challenge.challengerName === username ? joinData.challenge.targetName : joinData.challenge.challengerName;
             showToast(`🔥 تم التوفيق مع ${opp}! تبدأ معركة الشعبية الآن...`, 'success');
             startLivePopularityBattle(username, opp, joinData.challenge.id);
@@ -10522,26 +10746,10 @@ function startPopularityBattle() {
     }).catch(() => {});
 
     if (popularityMatchmakingInterval) clearInterval(popularityMatchmakingInterval);
-    popularityMatchmakingInterval = setInterval(async () => {
+    popularityMatchmakingInterval = setInterval(() => {
         timeLeft--;
         if (timeLeft > 0) {
             renderPopLobby();
-            // فحص حالة الطابور من السيرفر
-            try {
-                const res = await fetch(`/api/battles/queue/status?type=popularity&username=${encodeURIComponent(username)}&userId=${encodeURIComponent(getCurrentUserId())}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data && data.matched && data.challenge) {
-                        clearInterval(popularityMatchmakingInterval);
-                        popularityMatchmakingInterval = null;
-                        if (lobby) lobby.style.display = 'none';
-                        const opp = data.challenge.challengerName === username ? data.challenge.targetName : data.challenge.challengerName;
-                        showToast(`🔥 انضم ${opp} إلى معركة الشعبية!`, 'success');
-                        startLivePopularityBattle(username, opp, data.challenge.id);
-                        return;
-                    }
-                }
-            } catch (e) {}
         } else {
             clearInterval(popularityMatchmakingInterval);
             popularityMatchmakingInterval = null;
@@ -10877,42 +11085,19 @@ function startMatching() {
                 avatar: '⚔️',
                 sub: `منافس حقيقي من قائمة الانتظار · رهان: ${phantomArenaState.stake} نقطة`
             };
+            // 🚀 بث فوري للمنافس في الطابور عبر Supabase Realtime
+            broadcastMatchEvent('match_found', { challenge: joinData.challenge });
             showToast(`🔥 تم التوفيق مع ${opp}! يبدأ النزال الآن...`, 'success');
             launchVersusCountdown();
         }
     }).catch(() => {});
 
     if (arenaSearchInterval) clearInterval(arenaSearchInterval);
-    arenaSearchInterval = setInterval(async () => {
+    arenaSearchInterval = setInterval(() => {
         timeLeft--;
         if (timeLeft > 0) {
             renderSearchLobby();
             ArenaAudio.playTone(380, 'sine', 0.05, 0.08);
-
-            // استعلام حالة الطابور عن منافس حقيقي دخل الساحة
-            try {
-                const res = await fetch(`/api/battles/queue/status?type=arena&username=${encodeURIComponent(username)}&userId=${encodeURIComponent(userId)}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data && data.matched && data.challenge) {
-                        clearInterval(arenaSearchInterval);
-                        arenaSearchInterval = null;
-                        cancelMatching();
-
-                        const opp = data.challenge.challengerName === username ? data.challenge.targetName : data.challenge.challengerName;
-                        phantomArenaState.mode = 'duel';
-                        phantomArenaState.challengeId = data.challenge.id;
-                        phantomArenaState.opponent = {
-                            name: opp,
-                            avatar: '⚔️',
-                            sub: `منافس حقيقي من قائمة الانتظار · رهان: ${phantomArenaState.stake} نقطة`
-                        };
-                        showToast(`🔥 انضم ${opp} إلى ساحة النزال! يبدأ النزال الآن...`, 'success');
-                        launchVersusCountdown();
-                        return;
-                    }
-                }
-            } catch (e) {}
         } else {
             clearInterval(arenaSearchInterval);
             arenaSearchInterval = null;
