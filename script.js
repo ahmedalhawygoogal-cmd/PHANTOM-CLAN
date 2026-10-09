@@ -5826,6 +5826,22 @@ function startCallWithMode(mode) {
 }
 window.startCallWithMode = startCallWithMode;
 
+const CALL_AVATAR_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.4 0-8 2.2-8 5v1.5A1.5 1.5 0 0 0 5.5 22h13a1.5 1.5 0 0 0 1.5-1.5V19c0-2.8-3.6-5-8-5z"/></svg>';
+const CALL_MIC_ON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>';
+const CALL_MIC_OFF_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="4" y1="4" x2="20" y2="20"/></svg>';
+const CALL_MIC_BTN_ON_SVG = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
+const CALL_MIC_BTN_OFF_SVG = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2"/><path d="M19 10v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
+const CALL_CAM_ON_SVG = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16V8a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2z"/><polygon points="16 12 22 8 22 16 16 12"/></svg>';
+const CALL_CAM_OFF_SVG = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16V8a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2z"/><polygon points="16 12 22 8 22 16 16 12"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
+const CALL_VIDEO_TYPE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17 10.5V7a2 2 0 0 0-2-2H5A2 2 0 0 0 3 7v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3.5l4 4v-11l-4 4z"/></svg>';
+const CALL_AUDIO_TYPE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zm7 9a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-2.06A9 9 0 0 0 21 12h-2z"/></svg>';
+
+function getCallScreenTypeLabel(mode) {
+    if (mode === 'agora') return 'Agora الصوتية';
+    if (mode === 'meet') return 'Google Meet';
+    return 'مكالمة الفيديو';
+}
+
 function openFullCallView(mode, callData = {}) {
     activeCallMode = mode;
     activeCallId = callData.id || activeCallId || ('call_' + mode + '_' + Date.now());
@@ -5834,72 +5850,35 @@ function openFullCallView(mode, callData = {}) {
     activeCallChannel = callData.channelName || activeCallChannel || (mode === 'agora' ? AGORA_CHANNEL : 'direct_hq');
     isCallViewMinimized = false;
 
-    // إظهار صفحة المكالمة الكاملة وإخفاء الشريط العائم
     const overlay = document.getElementById('full-page-call-overlay');
     const floatBar = document.getElementById('floating-ongoing-call-bar');
     if (overlay) overlay.style.display = 'flex';
     if (floatBar) floatBar.style.display = 'none';
 
-    // تحديث عناصر الشريط العلوي
     const roomTitle = document.getElementById('call-room-title');
     const typeBadge = document.getElementById('call-type-badge');
+    const typeIcon = document.getElementById('call-type-icon');
     const statusPill = document.getElementById('call-connection-status');
     const hostEl = document.getElementById('call-host-name-display');
     const topicEl = document.getElementById('call-topic-display');
-    const agoraStage = document.getElementById('call-agora-mode-stage');
-    const directStage = document.getElementById('call-direct-mode-stage');
     const camBtn = document.getElementById('fullcall-cam-btn');
     const agoraChannelTag = document.getElementById('agora-display-channel');
 
-    if (roomTitle) roomTitle.textContent = activeCallTopic;
+    if (roomTitle) roomTitle.textContent = 'مكالمة فيديو جماعية';
     if (hostEl) hostEl.textContent = activeCallHost;
     if (topicEl) topicEl.textContent = activeCallTopic;
-
-    if (mode === 'agora') {
-        if (typeBadge) {
-            typeBadge.textContent = getCallTypeLabel('agora');
-            typeBadge.className = 'call-type-pill';
-        }
-        if (agoraStage) agoraStage.style.display = 'flex';
-        if (directStage) directStage.style.display = 'none';
-        if (camBtn) camBtn.style.display = 'none';
-        if (agoraChannelTag) agoraChannelTag.textContent = activeCallChannel;
-    } else if (mode === 'meet') {
-        if (typeBadge) {
-            typeBadge.textContent = getCallTypeLabel('meet');
-            typeBadge.className = 'call-type-pill';
-        }
-        if (agoraStage) agoraStage.style.display = 'none';
-        if (directStage) directStage.style.display = 'flex';
-        if (camBtn) camBtn.style.display = 'none';
-    } else {
-        if (typeBadge) {
-            typeBadge.textContent = getCallTypeLabel('direct');
-            typeBadge.className = 'call-type-pill';
-        }
-        if (agoraStage) agoraStage.style.display = 'none';
-        if (directStage) directStage.style.display = 'flex';
-        if (camBtn) camBtn.style.display = 'inline-flex';
+    if (typeBadge) {
+        typeBadge.textContent = getCallScreenTypeLabel(mode);
+        typeBadge.className = 'call-type-pill';
     }
+    if (typeIcon) typeIcon.innerHTML = mode === 'agora' ? CALL_AUDIO_TYPE_SVG : CALL_VIDEO_TYPE_SVG;
+    if (camBtn) camBtn.style.display = 'flex';
+    if (agoraChannelTag) agoraChannelTag.textContent = activeCallChannel;
 
     if (statusPill) {
-        if (mode === 'agora') {
-            if (isAgoraJoined) {
-                statusPill.textContent = '🟢 متصل';
-                statusPill.className = 'call-status-pill status-connected';
-            } else {
-                statusPill.textContent = '⏳ جاري الاتصال...';
-                statusPill.className = 'call-status-pill status-connecting';
-            }
-        } else {
-            if (inAppMediaStream) {
-                statusPill.textContent = '🟢 متصل';
-                statusPill.className = 'call-status-pill status-connected';
-            } else {
-                statusPill.textContent = '⏳ جاري الاتصال...';
-                statusPill.className = 'call-status-pill status-connecting';
-            }
-        }
+        const connected = mode === 'agora' ? isAgoraJoined : !!inAppMediaStream;
+        statusPill.textContent = connected ? 'متصل' : 'جاري الاتصال';
+        statusPill.className = connected ? 'call-status-pill status-connected' : 'call-status-pill status-connecting';
     }
 
     // بدء عداد وقت المكالمة
@@ -5968,12 +5947,20 @@ function maximizeCallView() {
 }
 window.maximizeCallView = maximizeCallView;
 
+function formatCallDuration(elapsedSec) {
+    const hrs = Math.floor(elapsedSec / 3600);
+    const mins = Math.floor((elapsedSec % 3600) / 60);
+    const secs = elapsedSec % 60;
+    if (hrs > 0) {
+        return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
 function updateCallTimer() {
     if (!activeCallStartTime) return;
     const elapsedSec = Math.floor((Date.now() - activeCallStartTime) / 1000);
-    const mins = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
-    const secs = String(elapsedSec % 60).padStart(2, '0');
-    const timeStr = `${mins}:${secs}`;
+    const timeStr = formatCallDuration(elapsedSec);
     const timerEl = document.getElementById('call-timer');
     if (timerEl) timerEl.textContent = timeStr;
     const metaEl = document.getElementById('floating-call-meta');
@@ -5997,6 +5984,7 @@ async function handleFullCallToggleCam() {
     if (activeCallMode === 'direct') {
         await toggleInAppCam();
         updateFullCallButtonsUI();
+        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
     }
 }
 window.handleFullCallToggleCam = handleFullCallToggleCam;
@@ -6010,15 +5998,9 @@ function updateFullCallButtonsUI() {
     const myMicBadge = document.getElementById('call-my-mic-status-badge');
 
     if (fullMicBtn) {
-        if (!isMuted) {
-            fullMicBtn.className = 'call-ctl-btn mic-btn mic-active';
-            if (fullMicIcon) fullMicIcon.textContent = '🎙️';
-            if (fullMicLabel) fullMicLabel.textContent = 'المايك: شغال';
-        } else {
-            fullMicBtn.className = 'call-ctl-btn mic-btn mic-muted';
-            if (fullMicIcon) fullMicIcon.textContent = '🔇';
-            if (fullMicLabel) fullMicLabel.textContent = 'المايك: مكتوم';
-        }
+        fullMicBtn.className = isMuted ? 'call-ctl-btn mic-btn mic-muted' : 'call-ctl-btn mic-btn mic-active';
+        if (fullMicIcon) fullMicIcon.innerHTML = isMuted ? CALL_MIC_BTN_OFF_SVG : CALL_MIC_BTN_ON_SVG;
+        if (fullMicLabel) fullMicLabel.textContent = 'كتم';
     }
 
     if (floatMicBtn) {
@@ -6028,25 +6010,23 @@ function updateFullCallButtonsUI() {
     }
 
     if (myMicBadge) {
-        myMicBadge.textContent = !isMuted ? '🎙️ المايك الخاص بك: شغال' : '🔇 المايك الخاص بك: مكتوم';
-        myMicBadge.style.color = !isMuted ? '#00ff88' : '#ef4444';
-        myMicBadge.style.borderColor = !isMuted ? 'rgba(0, 255, 136, 0.3)' : 'rgba(239, 68, 68, 0.3)';
+        myMicBadge.textContent = !isMuted ? 'المايك: شغال' : 'المايك: مكتوم';
     }
 
     const fullCamBtn = document.getElementById('fullcall-cam-btn');
     const fullCamIcon = document.getElementById('fullcall-cam-icon');
     const fullCamLabel = document.getElementById('fullcall-cam-label');
+    const camOff = activeCallMode === 'agora' ? true : isInAppCamOff;
     if (fullCamBtn) {
-        if (!isInAppCamOff) {
-            if (fullCamIcon) fullCamIcon.textContent = '📹';
-            if (fullCamLabel) fullCamLabel.textContent = 'الكاميرا: شغال';
-            fullCamBtn.style.color = '#fff';
-            fullCamBtn.style.borderColor = 'rgba(0, 242, 254, 0.3)';
+        fullCamBtn.className = camOff ? 'call-ctl-btn cam-btn cam-off' : 'call-ctl-btn cam-btn';
+        if (fullCamIcon) fullCamIcon.innerHTML = camOff ? CALL_CAM_OFF_SVG : CALL_CAM_ON_SVG;
+        if (fullCamLabel) fullCamLabel.textContent = 'إيقاف الفيديو';
+        if (activeCallMode === 'agora') {
+            fullCamBtn.disabled = true;
+            fullCamBtn.style.opacity = '0.55';
         } else {
-            if (fullCamIcon) fullCamIcon.textContent = '🚫';
-            if (fullCamLabel) fullCamLabel.textContent = 'الكاميرا: معطلة';
-            fullCamBtn.style.color = '#ef4444';
-            fullCamBtn.style.borderColor = '#ef4444';
+            fullCamBtn.disabled = false;
+            fullCamBtn.style.opacity = '1';
         }
     }
 }
@@ -6096,53 +6076,127 @@ async function handleFullCallEnd() {
 }
 window.handleFullCallEnd = handleFullCallEnd;
 
-function updateFullCallParticipantsUI() {
-    const container = document.getElementById('call-participants-list');
-    const countEl = document.getElementById('call-participants-count');
-    if (!container) return;
+function getCallParticipantName(user) {
+    if (!user) return 'عضو';
+    return user.name || user.username || user.displayName || (user.uid != null ? `عضو ${user.uid}` : 'عضو');
+}
 
+function collectCallParticipants() {
     const myName = (typeof getCurrentUsername === 'function' ? getCurrentUsername() : null) || 'أنت';
     const isMuted = activeCallMode === 'agora' ? isAgoraMicMuted : isInAppMicMuted;
-    const participants = [];
-
-    // المشارك المحلي (المستخدم الحالي)
-    participants.push({
+    const camOn = activeCallMode === 'direct' && !isInAppCamOff;
+    const list = [{
+        id: 'local',
         name: myName,
-        isHost: activeCallHost ? (typeof normalizeName === 'function' ? normalizeName(myName) === normalizeName(activeCallHost) : myName === activeCallHost) : true,
         isMe: true,
-        isMuted: isMuted,
-        isSpeaking: !isMuted
-    });
-
-    if (activeCallMode === 'agora' && typeof agoraRemoteUsers !== 'undefined' && agoraRemoteUsers instanceof Map) {
+        isMuted,
+        hasVideo: camOn
+    }];
+    if (typeof agoraRemoteUsers !== 'undefined' && agoraRemoteUsers instanceof Map) {
         agoraRemoteUsers.forEach((user, uid) => {
-            const hasAudio = user.hasAudio;
-            participants.push({
-                name: `عضو (${uid})`,
-                isHost: false,
+            list.push({
+                id: String(uid),
+                name: getCallParticipantName(user),
                 isMe: false,
-                isMuted: !hasAudio,
-                isSpeaking: hasAudio
+                isMuted: !user.hasAudio,
+                hasVideo: activeCallMode !== 'agora' && !!(user.hasVideo && user.videoTrack),
+                user
             });
         });
     }
+    return list;
+}
 
+function ensureCallTile(grid, participant) {
+    const tileId = `call-tile-${participant.id}`;
+    let tile = document.getElementById(tileId);
+    if (!tile) {
+        tile = document.createElement('div');
+        tile.id = tileId;
+        tile.className = 'call-tile' + (participant.isMe ? ' is-local' : '');
+        tile.innerHTML = `
+            <div class="call-tile-media" id="call-tile-media-${participant.id}"></div>
+            <div class="call-tile-placeholder" id="call-tile-ph-${participant.id}">
+                <div class="call-tile-avatar">${CALL_AVATAR_SVG}</div>
+            </div>
+            <div class="call-tile-badge">
+                <span class="call-tile-mic ${participant.isMuted ? '' : 'is-on'}" id="call-tile-mic-${participant.id}">${participant.isMuted ? CALL_MIC_OFF_SVG : CALL_MIC_ON_SVG}</span>
+                <span class="call-tile-name">${escapeHTML(participant.name)}</span>
+            </div>
+        `;
+        grid.appendChild(tile);
+    }
+    const nameEl = tile.querySelector('.call-tile-name');
+    if (nameEl) nameEl.textContent = participant.name;
+    const micEl = document.getElementById(`call-tile-mic-${participant.id}`);
+    if (micEl) {
+        micEl.className = 'call-tile-mic' + (participant.isMuted ? '' : ' is-on');
+        micEl.innerHTML = participant.isMuted ? CALL_MIC_OFF_SVG : CALL_MIC_ON_SVG;
+    }
+    const ph = document.getElementById(`call-tile-ph-${participant.id}`);
+    const media = document.getElementById(`call-tile-media-${participant.id}`);
+    const showVideo = participant.hasVideo && activeCallMode !== 'agora';
+    if (ph) ph.style.display = showVideo ? 'none' : 'flex';
+    if (media) media.style.display = showVideo ? 'block' : 'none';
+    return { tile, media };
+}
+
+function attachLocalVideoToTile(mediaEl) {
+    if (!mediaEl) return;
+    let videoEl = mediaEl.querySelector('video');
+    if (!videoEl) {
+        videoEl = document.createElement('video');
+        videoEl.id = 'inapp-clan-video';
+        videoEl.autoplay = true;
+        videoEl.playsInline = true;
+        videoEl.muted = true;
+        videoEl.setAttribute('autoplay', '');
+        videoEl.setAttribute('playsinline', '');
+        videoEl.setAttribute('muted', '');
+        mediaEl.innerHTML = '';
+        mediaEl.appendChild(videoEl);
+    }
+    if (inAppMediaStream && videoEl.srcObject !== inAppMediaStream) {
+        videoEl.srcObject = inAppMediaStream;
+    }
+    if (!isInAppCamOff) videoEl.play().catch(() => {});
+}
+
+function updateFullCallParticipantsUI() {
+    const grid = document.getElementById('call-participants-grid');
+    const countEl = document.getElementById('call-participants-count');
+    const participants = collectCallParticipants();
     if (countEl) countEl.textContent = String(participants.length);
+    if (!grid) return;
 
-    container.innerHTML = participants.map(p => `
-        <div class="participant-card ${p.isHost ? 'is-host' : ''} ${p.isSpeaking ? 'is-speaking' : ''}">
-            <div class="participant-name-block">
-                <div class="participant-avatar-badge">${p.isHost ? '👑' : '👤'}</div>
-                <div class="participant-user-name" title="${p.name}">
-                    ${p.name} ${p.isMe ? '<small style="color:#94a3b8;">(أنت)</small>' : ''}
-                </div>
-            </div>
-            <div class="participant-status-icons">
-                <span>${!p.isMuted ? '🎙️' : '🔇'}</span>
-                ${p.isSpeaking ? '<span style="color:#00ff88; font-size:0.75rem;">🔊</span>' : ''}
-            </div>
-        </div>
-    `).join('');
+    const keep = new Set();
+    participants.forEach((p) => {
+        keep.add(`call-tile-${p.id}`);
+        const { media } = ensureCallTile(grid, p);
+        if (p.isMe && p.hasVideo) {
+            attachLocalVideoToTile(media);
+        } else if (!p.isMe && p.hasVideo && p.user && p.user.videoTrack && media) {
+            const playerId = `call-tile-player-${p.id}`;
+            let player = document.getElementById(playerId);
+            if (!player) {
+                media.innerHTML = '';
+                player = document.createElement('div');
+                player.id = playerId;
+                player.style.width = '100%';
+                player.style.height = '100%';
+                media.appendChild(player);
+                try { p.user.videoTrack.play(player); } catch (_) {}
+            }
+        }
+    });
+    Array.from(grid.children).forEach((child) => {
+        if (!keep.has(child.id)) child.remove();
+    });
+
+    const list = document.getElementById('call-participants-list');
+    if (list) {
+        list.innerHTML = participants.map(p => `<div>${escapeHTML(p.name)}</div>`).join('');
+    }
 }
 window.updateFullCallParticipantsUI = updateFullCallParticipantsUI;
 
@@ -6595,13 +6649,13 @@ function setupAgoraClientEvents() {
                 user.audioTrack.play();
             }
 
+            agoraRemoteUsers.set(user.uid, user);
             if (mediaType === "video" && user.videoTrack) {
                 renderRemoteUserVideoTile(user);
             }
-
-            agoraRemoteUsers.set(user.uid, user);
             updateCallParticipantsUI();
             updateAgoraUsersUI();
+            if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
         } catch (subErr) {
             console.error(`[Agora] Error subscribing to user ${user.uid}:`, subErr);
         }
@@ -6615,18 +6669,27 @@ function setupAgoraClientEvents() {
         }
         if (!user.hasAudio && !user.hasVideo) {
             agoraRemoteUsers.delete(user.uid);
+        } else {
+            agoraRemoteUsers.set(user.uid, user);
         }
         updateCallParticipantsUI();
         updateAgoraUsersUI();
+        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
     });
 
     // 3. التعامل مع خروج المشارك من القناة
+    agoraClient.on("user-joined", (user) => {
+        agoraRemoteUsers.set(user.uid, user);
+        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
+    });
+
     agoraClient.on("user-left", (user) => {
         console.log(`[Agora] User ${user.uid} left the channel`);
         removeRemoteUserVideoTile(user.uid);
         agoraRemoteUsers.delete(user.uid);
         updateCallParticipantsUI();
         updateAgoraUsersUI();
+        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
     });
 
     // 4. التجديد التلقائي للتوكن قبل انتهائه
@@ -6653,24 +6716,17 @@ function setupAgoraClientEvents() {
 }
 
 function renderRemoteUserVideoTile(user) {
+    if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
     const remoteContainer = document.getElementById("remote-video-tiles");
     if (!remoteContainer) return;
-
     let tile = document.getElementById(`remote-tile-${user.uid}`);
     if (!tile) {
         tile = document.createElement("div");
         tile.id = `remote-tile-${user.uid}`;
         tile.className = "video-tile remote-tile";
-        tile.innerHTML = `
-            <div id="remote-player-${user.uid}" class="video-container" style="width:100%; height:100%;"></div>
-            <div class="video-tile-name-badge">
-                <span id="remote-tile-name-${user.uid}">عضو PHANTOM #${user.uid}</span>
-                <span id="remote-mic-${user.uid}">🎙️</span>
-            </div>
-        `;
+        tile.innerHTML = `<div id="remote-player-${user.uid}" class="video-container" style="width:100%; height:100%;"></div>`;
         remoteContainer.appendChild(tile);
     }
-
     const playerContainer = document.getElementById(`remote-player-${user.uid}`);
     if (playerContainer && user.videoTrack) {
         playerContainer.innerHTML = '';
@@ -6681,6 +6737,9 @@ function renderRemoteUserVideoTile(user) {
 function removeRemoteUserVideoTile(uid) {
     const tile = document.getElementById(`remote-tile-${uid}`);
     if (tile) tile.remove();
+    const gridTile = document.getElementById(`call-tile-${uid}`);
+    if (gridTile) gridTile.remove();
+    if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
 }
 
 function updateCallParticipantsUI() {
@@ -6801,13 +6860,8 @@ async function startInAppCall(callIdOverride, hostOverride, roomNameOverride) {
             videoEl.style.height = '100%';
             videoEl.style.objectFit = 'cover';
             videoEl.srcObject = inAppMediaStream;
-
-            if (hasVideo) {
-                videoEl.style.display = 'block';
-                videoEl.play().catch(() => {});
-            } else {
-                videoEl.style.display = 'none';
-            }
+            videoEl.style.display = hasVideo ? 'block' : 'none';
+            if (hasVideo) videoEl.play().catch(() => {});
             localContainer.appendChild(videoEl);
         }
 
@@ -6836,6 +6890,7 @@ async function startInAppCall(callIdOverride, hostOverride, roomNameOverride) {
             hostName: actualHost,
             topic: actualRoom
         });
+        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
 
         if (!callIdOverride) {
             insertActiveCallRow('direct', actualRoom).then((row) => {
@@ -6913,6 +6968,9 @@ async function toggleInAppMic() {
     if (typeof updateFullCallButtonsUI === 'function') {
         updateFullCallButtonsUI();
     }
+    if (typeof updateFullCallParticipantsUI === 'function') {
+        updateFullCallParticipantsUI();
+    }
     showToast(isInAppMicMuted ? "🔇 تم كتم المايك" : "🎙️ تم تشغيل المايك", "info");
 }
 
@@ -6976,6 +7034,9 @@ async function toggleInAppCam() {
     if (typeof updateFullCallButtonsUI === 'function') {
         updateFullCallButtonsUI();
     }
+    if (typeof updateFullCallParticipantsUI === 'function') {
+        updateFullCallParticipantsUI();
+    }
     showToast(isInAppCamOff ? "🚫 تم إيقاف الكاميرا" : "📹 تم تشغيل الكاميرا بنجاح", "info");
 }
 
@@ -6995,6 +7056,8 @@ async function endInAppCall() {
     if (localContainer) {
         localContainer.innerHTML = '<video id="inapp-clan-video" autoplay playsinline muted style="width:100%; height:100%; object-fit:cover; display:none;"></video>';
     }
+    const callGridEnd = document.getElementById('call-participants-grid');
+    if (callGridEnd) callGridEnd.innerHTML = '';
 
     const placeholder = document.getElementById('inapp-video-placeholder');
     const liveBadge = document.getElementById('inapp-live-badge');
@@ -7401,6 +7464,7 @@ async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, room
         }
 
         updateAgoraUsersUI();
+        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
         showToast("🎉 تم الاتصال بغرفة Agora بنجاح!", "success");
 
         // 💾 حفظ بيانات جلسة Agora الحالية في sessionStorage لإعادة الاتصال التلقائي عند Refresh بالخطأ
@@ -7513,6 +7577,8 @@ async function leaveAgoraRoom() {
     isAgoraJoined = false;
     isAgoraMicMuted = false;
     agoraRemoteUsers.clear();
+    const callGrid = document.getElementById('call-participants-grid');
+    if (callGrid) callGrid.innerHTML = '';
     try { sessionStorage.removeItem('phantom_active_agora_session'); } catch (_) {}
 
     const statusPill = document.getElementById('call-connection-status');
@@ -7604,17 +7670,15 @@ function updateAgoraUsersUI() {
     const count = agoraRemoteUsers.size + (isAgoraJoined ? 1 : 0);
     const usersList = document.getElementById("agora-users-list");
     const badge = document.getElementById("agora-members-badge");
+    const countEl = document.getElementById("call-participants-count");
+    if (countEl) countEl.textContent = String(Math.max(1, count));
     if (badge) {
-        badge.textContent = `🟢 متصل بالروم (${count} في الغرفة)`;
+        badge.textContent = `متصل بالروم (${count} في الغرفة)`;
     }
     if (usersList) {
-        if (count > 1) {
-            usersList.style.display = "block";
-            usersList.textContent = `👥 المتصلين بالروم: ${count} أعضاء`;
-        } else {
-            usersList.style.display = "none";
-        }
+        usersList.textContent = count > 1 ? `${count} أعضاء` : '';
     }
+    if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
 }
 
 window.openAndJoinCall = function(tabTarget) {

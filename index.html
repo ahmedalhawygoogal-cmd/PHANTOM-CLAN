@@ -2570,95 +2570,55 @@
      📞 FULL-PAGE CALL VIEW (صفحة المكالمة الكاملة لجميع أنواع المكالمات)
      ======================================================== -->
 <div id="full-page-call-overlay" class="full-page-call-overlay" style="display:none;">
-    <!-- 1. الشريط العلوي -->
     <header class="call-top-bar">
-        <button id="call-minimize-btn" class="call-btn-minimize" type="button" onclick="minimizeCallView()" title="تصغير المكالمة والرجوع للموقع">
-            <span style="font-size:1.2rem; line-height:1;">⌄</span>
-            <span>تصغير المكالمة</span>
+        <button id="call-back-btn" class="call-icon-btn call-back-btn" type="button" onclick="minimizeCallView()" title="رجوع">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
         </button>
-
         <div class="call-header-center">
-            <h2 id="call-room-title" class="call-room-title">غرفة Agora الصوتية</h2>
-            <div class="call-header-badges">
-                <span id="call-type-badge" class="call-type-pill">🎙️ مكالمة Agora التكتيكية</span>
-                <span id="call-connection-status" class="call-status-pill status-connected">🟢 متصل</span>
-                <span id="call-timer" class="call-timer-pill">00:00</span>
-            </div>
+            <h2 id="call-room-title" class="call-room-title">مكالمة فيديو جماعية</h2>
+            <div id="call-header-subtitle" class="call-header-subtitle"><span id="call-participants-count">1</span> مشاركون • <span id="call-timer">00:00</span></div>
         </div>
-
-        <div class="call-header-right">
-            <div id="call-ping-badge" class="call-ping-badge">📡 28ms</div>
-        </div>
+        <button id="call-minimize-btn" class="call-icon-btn call-minimize-icon-btn" type="button" onclick="minimizeCallView()" title="تصغير المكالمة">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="16" height="14" rx="3"/><path d="M8 13h8"/></svg>
+        </button>
     </header>
 
-    <!-- 2. المنطقة الرئيسية -->
+    <div class="call-info-banner">
+        <div class="call-type-chip">
+            <span id="call-type-icon" class="call-type-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17 10.5V7a2 2 0 0 0-2-2H5A2 2 0 0 0 3 7v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3.5l4 4v-11l-4 4z"/></svg>
+            </span>
+            <span id="call-type-badge" class="call-type-pill">مكالمة الفيديو</span>
+        </div>
+        <div class="call-info-divider"></div>
+        <div class="call-host-chip">
+            <span id="call-host-name-display" class="host-name">عضو الكلان</span>
+            <span class="call-host-crown" title="منشئ المكالمة">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="#f5c542"><path d="M3 17h18l-1.5-9-5 4.5L12 6l-2.5 6.5L4.5 8 3 17zm0 2h18v2H3v-2z"/></svg>
+            </span>
+        </div>
+    </div>
+
     <main class="call-main-area">
-        <!-- معلومات المنشئ والغرفة -->
-        <div class="call-info-banner">
-            <div class="call-host-info">
-                <span class="label">👑 منشئ المكالمة:</span>
-                <span id="call-host-name-display" class="host-name">أحمد الحاوي</span>
-            </div>
-            <div class="call-topic-info">
-                <span class="label">🎯 الغرفة:</span>
-                <span id="call-topic-display" class="topic-name">PHANTOM-OPS</span>
-            </div>
-        </div>
+        <div id="call-participants-grid" class="call-participants-grid"></div>
 
-        <!-- أ. مرحلة Agora (صوتية فقط مع حلقة نابضة ومؤثرات صوتية عالية الدقة) -->
-        <div id="call-agora-mode-stage" class="call-stage agora-stage" style="display:flex;">
-            <div class="agora-stage-visualizer-container" style="text-align:center;">
-                <div id="agora-audio-avatar-ring" class="agora-avatar-glow-ring">
-                    <div class="agora-avatar-inner">
-                        <span id="agora-avatar-icon">🎙️</span>
-                    </div>
-                </div>
-                <div class="agora-room-channel-tag">
-                    <span>القناة الصوتية: </span>
-                    <strong id="agora-display-channel">phantom_hq</strong>
-                </div>
-                <div id="agora-live-speaking-indicator" class="agora-speaking-indicator">
-                    <span>✨ خوادم Agora الصوتية فائقة النقاء ومنخفضة الكمون</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- ب. مرحلة الاتصال المباشر (شبكة الفيديو المحلية وكاميرات المشتركين) -->
-        <div id="call-direct-mode-stage" class="call-stage direct-stage" style="display:none;">
-            <div id="direct-call-video-grid" class="direct-video-grid">
-                <!-- الكاميرا المحلية للمستخدم -->
-                <div id="direct-local-video-card" class="direct-video-card local-card">
-                    <div id="local-video-container" class="direct-video-media" style="width:100%; height:100%;">
-                        <video id="inapp-clan-video" autoplay playsinline muted style="width:100%; height:100%; object-fit:cover; display:none;"></video>
-                    </div>
-                    <div id="inapp-video-placeholder" class="direct-video-placeholder">
-                        <span class="avatar-placeholder">🎙️📹</span>
-                        <span id="inapp-status-text" style="font-size:0.9rem; color:#e2e8f0; font-weight:700;">المكالمة المباشرة جاهزة داخل المقر</span>
-                        <small style="color:#64748b; font-size:0.75rem;">تواصل بصوت وصورة مباشرة مع السكواد</small>
-                    </div>
-                    <div class="video-card-overlay-badge">
-                        <span id="local-tile-user-name">أنت</span>
-                        <span id="local-mic-status-icon">🎙️</span>
-                    </div>
-                </div>
-                <!-- حاوية كاميرات المشتركين الآخرين -->
-                <div id="remote-video-tiles" class="direct-remote-container" style="display:contents;"></div>
-            </div>
-        </div>
-
-        <!-- ج. بطاقات قائمة المشاركين الحاليين وحالتهم -->
-        <section class="call-participants-section">
-            <div class="participants-header">
-                <h3>👥 المشاركون في المكالمة (<span id="call-participants-count">1</span>)</h3>
-                <span id="call-my-mic-status-badge" class="my-mic-badge">🎙️ المايك الخاص بك: شغال</span>
-            </div>
-            <div id="call-participants-list" class="call-participants-cards">
-                <!-- ديناميكي: يتم ملؤه تلقائياً للمشاركين -->
-            </div>
-        </section>
-
-        <!-- عناصر توافقية مخفية للحفاظ على استقرار الرموز القديمة -->
         <div style="display:none;">
+            <span id="call-connection-status"></span>
+            <span id="call-topic-display"></span>
+            <span id="call-ping-badge"></span>
+            <span id="call-my-mic-status-badge"></span>
+            <div id="call-agora-mode-stage"></div>
+            <div id="call-direct-mode-stage"></div>
+            <div id="direct-call-video-grid"></div>
+            <div id="direct-local-video-card"></div>
+            <div id="local-video-container"><video id="inapp-clan-video" autoplay playsinline muted></video></div>
+            <div id="inapp-video-placeholder"><span id="inapp-status-text"></span></div>
+            <div id="remote-video-tiles"></div>
+            <div id="call-participants-list"></div>
+            <div id="agora-audio-avatar-ring"></div>
+            <span id="agora-avatar-icon"></span>
+            <strong id="agora-display-channel"></strong>
+            <div id="agora-live-speaking-indicator"></div>
             <div id="agora-avatar-visualizer"></div>
             <div id="agora-status-text"></div>
             <div id="agora-members-badge"></div>
@@ -2673,34 +2633,36 @@
             <button id="inapp-start-btn" onclick="startInAppCall()"></button>
             <button id="inapp-end-btn" onclick="endInAppCall()"></button>
             <div id="inapp-live-badge"></div>
+            <span id="local-tile-user-name"></span>
+            <span id="local-mic-status-icon"></span>
         </div>
     </main>
 
-    <!-- 3. الشريط السفلي للتحكم (واضح وكبير بما يكفي للمس السريع على الهاتف) -->
     <footer class="call-bottom-controls">
         <div class="controls-inner-cluster">
-            <!-- زر كتم / تشغيل المايك -->
-            <button id="fullcall-mic-btn" class="call-ctl-btn mic-btn mic-active" type="button" onclick="handleFullCallToggleMic()" title="كتم أو تشغيل المايك">
-                <span class="ctl-icon" id="fullcall-mic-icon">🎙️</span>
-                <span class="ctl-label" id="fullcall-mic-label">المايك: شغال</span>
+            <button id="fullcall-mic-btn" class="call-ctl-btn mic-btn mic-active" type="button" onclick="handleFullCallToggleMic()" title="كتم">
+                <span class="ctl-circle" id="fullcall-mic-circle">
+                    <span class="ctl-icon" id="fullcall-mic-icon">
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                    </span>
+                </span>
+                <span class="ctl-label" id="fullcall-mic-label">كتم</span>
             </button>
-
-            <!-- زر الكاميرا (يظهر فقط في الاتصال المباشر) -->
-            <button id="fullcall-cam-btn" class="call-ctl-btn cam-btn" type="button" onclick="handleFullCallToggleCam()" title="تشغيل أو إيقاف الكاميرا" style="display:none;">
-                <span class="ctl-icon" id="fullcall-cam-icon">📹</span>
-                <span class="ctl-label" id="fullcall-cam-label">الكاميرا: شغال</span>
+            <button id="fullcall-cam-btn" class="call-ctl-btn cam-btn" type="button" onclick="handleFullCallToggleCam()" title="إيقاف الفيديو">
+                <span class="ctl-circle" id="fullcall-cam-circle">
+                    <span class="ctl-icon" id="fullcall-cam-icon">
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16V8a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2z"/><polygon points="16 12 22 8 22 16 16 12"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+                    </span>
+                </span>
+                <span class="ctl-label" id="fullcall-cam-label">إيقاف الفيديو</span>
             </button>
-
-            <!-- زر التصغير والرجوع للموقع مع استمرار المكالمة -->
-            <button id="fullcall-minimize-footer-btn" class="call-ctl-btn minimize-btn" type="button" onclick="minimizeCallView()" title="متابعة تصفح المقر دون قطع الصوت">
-                <span class="ctl-icon">⛶</span>
-                <span class="ctl-label">تصغير وتصفح</span>
-            </button>
-
-            <!-- زر إنهاء المكالمة ومغادرة الغرفة -->
-            <button id="fullcall-end-btn" class="call-ctl-btn end-btn" type="button" onclick="handleFullCallEnd()" title="إنهاء المكالمة ومغادرة الغرفة">
-                <span class="ctl-icon">🔴</span>
-                <span class="ctl-label">إنهاء المكالمة</span>
+            <button id="fullcall-end-btn" class="call-ctl-btn end-btn" type="button" onclick="handleFullCallEnd()" title="إنهاء">
+                <span class="ctl-circle end-circle">
+                    <span class="ctl-icon" id="fullcall-end-icon">
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1.1-.3 1.2.4 2.5.6 3.8.6.6 0 1 .4 1 .1V21c0 .6-.4 1-1 1C10.6 22 2 13.4 2 2.9 2 2.4 2.4 2 3 2h3.5c.6 0 1 .4 1 1 0 1.3.2 2.6.6 3.8.1.4 0 .8-.3 1.1L6.6 10.8z"/></svg>
+                    </span>
+                </span>
+                <span class="ctl-label">إنهاء</span>
             </button>
         </div>
     </footer>
