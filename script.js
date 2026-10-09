@@ -5356,142 +5356,150 @@ function showNameChangeForm() {
 }
 
 async function approveNameChange(id) {
-    let requests = getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []);
-    const request = requests.find(r => r.id === id);
-    if (!request) {
-        showToast("⚠️ الطلب غير موجود.", "error");
+    const client = ensureSupabaseClient();
+    if (!client) {
+        showToast("⚠️ خطأ في الاتصال بقاعدة البيانات.", "error");
         return;
     }
 
-    const oldName = request.oldName;
-    const newName = request.newName;
+    try {
+        // 1. جلب طلب تغيير الاسم من جدول name_change_requests في Supabase باستخدام معرف الطلب id
+        const { data: request, error: reqError } = await client
+            .from('name_change_requests')
+            .select('*')
+            .eq('id', id)
+            .single();
 
-    // 1. التحقق من أن الاسم الجديد غير موجود في الكلان
-    const roster = getFullRoster();
-    if (roster.some(m => normalizeName(m.name) === normalizeName(newName))) {
-        showToast(`⚠️ الاسم "${newName}" موجود بالفعل في الكلان.`, "error");
-        return;
-    }
-
-    // 2. التحقق من أن الاسم الجديد ليس مطروداً
-    const banned = getBannedUsers();
-    if (banned[newName]) {
-        showToast(`⚠️ الاسم "${newName}" مطرود من الكلان.`, "error");
-        return;
-    }
-
-    // 3. تحديث هوية المستخدم في localStorage (إذا كان هو المستخدم الحالي)
-    const currentUser = getCurrentUsername();
-    if (normalizeName(currentUser) === normalizeName(oldName)) {
-        const identity = getSavedIdentity();
-        if (identity) {
-            identity.username = newName;
-            setStorage(PHANTOM_MEMORY.identityKey, identity);
+        if (reqError || !request) {
+            showToast("⚠️ الطلب غير موجود أو تم التعامل معه مسبقاً.", "error");
+            return;
         }
-        localStorage.setItem("phantom_active_username", newName);
-        updateCurrentUser(newName);
-    }
 
-    // 4. تحديث قائمة الأعضاء المحلية (phantom_custom_roster)
-    let customRoster = getStorage("phantom_custom_roster", []);
-    customRoster = customRoster.map(m => {
-        if (m && normalizeName(m.name) === normalizeName(oldName)) {
-            m.name = newName;
+        const oldName = request.oldName;
+        const newName = request.newName;
+
+        if (!newName || !oldName) {
+            showToast("⚠️ بيانات الطلب غير مكتملة.", "error");
+            return;
         }
-        return m;
-    });
-    setStorage("phantom_custom_roster", customRoster);
 
-    // 5. حذف القديم وإضافة الجديد في قائمة السيرفر المحلية
-    let serverMembers = getStorage("phantom_server_members", []);
-    serverMembers = serverMembers.filter(m => !(m && m.name && normalizeName(m.name) === normalizeName(oldName)));
-    const oldMember = roster.find(m => normalizeName(m.name) === normalizeName(oldName));
-    if (oldMember) {
-        const newMember = { ...oldMember, name: newName, userId: oldMember.userId, gameId: oldMember.gameId };
-        serverMembers.push(newMember);
-    }
-    setStorage("phantom_server_members", serverMembers);
+        // 2. التحقق من أن الاسم الجديد غير موجود لدى أي عضو آخر في جدول members
+        const { data: existingNewMember, error: checkError } = await client
+            .from('members')
+            .select('id, name')
+            .eq('name', newName)
+            .maybeSingle();
 
-    // 6. نقل النقاط
-    const points = getLocalPoints();
-    if (points[oldName] !== undefined) {
-        points[newName] = (points[newName] || 0) + points[oldName];
-        delete points[oldName];
-        setLocalPoints(points);
-    }
-
-    // 7. نقل الحضور
-    const attendance = getStorage(PHANTOM_MEMORY.attendanceRecordsKey, {});
-    if (attendance[oldName] !== undefined) {
-        attendance[newName] = (attendance[newName] || 0) + attendance[oldName];
-        delete attendance[oldName];
-        setStorage(PHANTOM_MEMORY.attendanceRecordsKey, attendance);
-    }
-
-    // 8. نقل القلوب
-    const hearts = getStorage(PHANTOM_MEMORY.heartsKey, {});
-    if (hearts[oldName] !== undefined) {
-        hearts[newName] = (hearts[newName] || 0) + hearts[oldName];
-        delete hearts[oldName];
-        setStorage(PHANTOM_MEMORY.heartsKey, hearts);
-    }
-
-    // 9. نقل الإنذارات
-    let warnings = getStorage("phantom_warnings", []);
-    warnings = warnings.map(w => {
-        if (w.name && normalizeName(w.name) === normalizeName(oldName)) {
-            w.name = newName;
+        if (checkError && checkError.code !== 'PGRST116') {
+            console.warn("⚠️ [Supabase] check newName error:", checkError);
         }
-        return w;
-    });
-    setStorage("phantom_warnings", warnings);
 
-    // 10. تحديث في Supabase (حذف القديم وإضافة الجديد)
-    if (supabaseClient) {
+        if (existingNewMember) {
+            showToast(`⚠️ الاسم "${newName}" مستخدم بالفعل في الكلان.`, "error");
+            return;
+        }
+
+        // 3. جلب العضو الحالي من جدول members في Supabase للحصول على الـ ID الفريد
+        let targetMember = null;
+        if (request.memberId) {
+            const { data: byMemberId } = await client
+                .from('members')
+                .select('*')
+                .eq('id', request.memberId)
+                .maybeSingle();
+            if (byMemberId) targetMember = byMemberId;
+        }
+
+        if (!targetMember && request.userId) {
+            const { data: byUserId } = await client
+                .from('members')
+                .select('*')
+                .eq('userId', request.userId)
+                .maybeSingle();
+            if (byUserId) targetMember = byUserId;
+        }
+
+        if (!targetMember) {
+            const { data: byName } = await client
+                .from('members')
+                .select('*')
+                .eq('name', oldName)
+                .maybeSingle();
+            if (byName) targetMember = byName;
+        }
+
+        if (!targetMember) {
+            showToast(`⚠️ تعذر العثور على العضو "${oldName}" في قاعدة البيانات.`, "error");
+            return;
+        }
+
+        const memberId = targetMember.id;
+
+        // 4. تحديث جدول members فقط باستخدام الـ ID الفريد (بدون أي INSERT إطلاقاً)
+        const { error: updateMemberError } = await client
+            .from('members')
+            .update({ name: newName })
+            .eq('id', memberId);
+
+        if (updateMemberError) {
+            console.error("❌ [Supabase] فشل تحديث اسم العضو في جدول members:", updateMemberError);
+            showToast("⚠️ فشل تحديث اسم العضو في السيرفر.", "error");
+            return;
+        }
+
+        console.log(`✅ [Supabase] تم تحديث اسم العضو بنجاح (ID: ${memberId}) من "${oldName}" إلى "${newName}"`);
+
+        // تحديث الجداول المرتبطة التي تستخدم اسم العضو
+        try { await client.from('warnings').update({ name: newName }).eq('name', oldName); } catch (e) {}
+        try { await client.from('attendance_records').update({ member_name: newName }).eq('member_name', oldName); } catch (e) {}
+        try { await client.from('excuses').update({ member_name: newName }).eq('member_name', oldName); } catch (e) {}
+
+        // 5. تحديث جدول leaderboard باسم العضو الجديد باستخدام الـ ID أو الاسم المطابق
         try {
-            await supabaseClient.from('members').delete().eq('name', oldName);
-            await supabaseClient.from('leaderboard').delete().eq('name', oldName);
-            await supabaseClient.from('warnings').delete().eq('name', oldName);
-            
-            await supabaseClient.from('members').insert([{ 
-                name: newName, 
-                rank: oldMember?.rank || 'عضو', 
-                userId: oldMember?.userId, 
-                gameId: oldMember?.gameId 
-            }]);
-            
-            if (warnings.some(w => w.name === newName)) {
-                const warningsToInsert = warnings.filter(w => w.name === newName).map(w => ({ 
-                    name: newName, 
-                    type: w.type, 
-                    reason: w.reason 
-                }));
-                await supabaseClient.from('warnings').insert(warningsToInsert);
-            }
-        } catch (e) {
-            console.warn("⚠️ فشل تحديث البيانات في السيرفر:", e);
+            await client
+                .from('leaderboard')
+                .update({ name: newName })
+                .eq('name', oldName);
+        } catch (leadErr) {
+            console.warn("⚠️ [Supabase] update leaderboard error:", leadErr);
         }
+
+        // 6. حذف الطلب المكتمل من جدول name_change_requests في Supabase
+        const { error: deleteReqError } = await client
+            .from('name_change_requests')
+            .delete()
+            .eq('id', id);
+
+        if (deleteReqError) {
+            console.warn("⚠️ [Supabase] فشل حذف طلب تغيير الاسم بعد اعتماده:", deleteReqError);
+        }
+
+        // 7. تحديث واجهة المستخدم فوراً وإشعار النجاح (بجانب التحديث اللحظي عبر Realtime)
+        showToast(`✅ تم اعتماد تغيير اسم العضو إلى "${newName}" بنجاح.`, "success");
+        if (typeof addSystemUpdate === 'function') {
+            addSystemUpdate("تغيير اسم", `تم تغيير اسم ${oldName} إلى ${newName} بموافقة المؤسسين.`, true);
+        }
+        if (typeof logAdminAction === 'function') {
+            logAdminAction(`📝 تغيير اسم ${oldName} إلى ${newName}`, newName, 'info');
+        }
+
+        // إعادة جلب أحدث الأعضاء من السيرفر وإعادة رسم الواجهة
+        if (typeof serverGetMembers === 'function') {
+            await serverGetMembers();
+        }
+        if (typeof renderAll === 'function') {
+            renderAll();
+        }
+        if (typeof renderFounderNotifications === 'function') {
+            renderFounderNotifications();
+        }
+        if (typeof renderAdminInbox === 'function') {
+            renderAdminInbox();
+        }
+    } catch (err) {
+        console.error("❌ [approveNameChange] حدث خطأ غير متوقع:", err);
+        showToast("⚠️ حدث خطأ أثناء تنفيذ اعتماد تغيير الاسم.", "error");
     }
-
-    // 11. حذف الطلب
-    await serverDeleteNameChangeRequest(id);
-
-    // ✅ 12. نقل حالة التسجيل (Onboarding) للاسم الجديد حتى لا تظهر شاشة الرقم السري
-    let onboardingData = getStorage(PHANTOM_MEMORY.onboardingKey, {});
-    if (onboardingData[oldName] !== undefined) {
-        onboardingData[newName] = onboardingData[oldName];
-        delete onboardingData[oldName];
-        setStorage(PHANTOM_MEMORY.onboardingKey, onboardingData);
-    }
-
-    // 13. إعادة رسم الواجهة
-    addSystemUpdate("تغيير اسم", `تم تغيير اسم ${oldName} إلى ${newName} بموافقة المؤسسين.`, true);
-    showToast(`✅ تم تغيير اسم ${oldName} إلى ${newName}.`, "success");
-    renderAll();
-    renderFounderNotifications();
-    if (typeof renderAdminInbox === 'function') renderAdminInbox();
-    populateAdminSelects();
-    logAdminAction(`📝 تغيير اسم ${oldName} إلى ${newName}`, newName, 'info');
 }
 /* ========================================================
    28. نظام Clips
