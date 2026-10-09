@@ -85,7 +85,8 @@ const SHARED_DATA_KEYS = new Set([
     "phantom_clips_data",
     "phantom_clips_comments",
     "phantom_deleted_warnings",
-    "phantom_site_presence"
+    "phantom_site_presence",
+    "phantom_suggestions"
 ]);
 
 function getStorage(key, fallback) {
@@ -290,7 +291,7 @@ function enforceBan(username, reason = "مطرود من الكلان") {
 }
 
 function getRejoinRequests() {
-    return getStorage("phantom_rejoin_requests", []);
+    return asList(getStorage("phantom_rejoin_requests", []));
 }
 
 function setRejoinRequests(data) {
@@ -658,15 +659,16 @@ async function serverGetExcuses() {
     if (client) {
         try {
             const { data, error } = await client.from('excuses').select('*').order('created_at', { ascending: false });
-            if (!error && Array.isArray(data)) {
-                setStorage(PHANTOM_MEMORY.excusesKey, data);
-                return data;
+            if (!error && data != null) {
+                const list = asList(data);
+                setStorage(PHANTOM_MEMORY.excusesKey, list);
+                return list;
             }
         } catch (e) {
             console.warn("⚠️ [Supabase] serverGetExcuses error:", e);
         }
     }
-    return getStorage(PHANTOM_MEMORY.excusesKey, []);
+    return asList(getStorage(PHANTOM_MEMORY.excusesKey, []));
 }
 
 async function serverCreateExcuse(excuseData) {
@@ -723,15 +725,16 @@ async function serverGetComplaints() {
     if (client) {
         try {
             const { data, error } = await client.from('complaints').select('*').order('created_at', { ascending: false });
-            if (!error && Array.isArray(data)) {
-                setStorage(PHANTOM_MEMORY.complaintsKey, data);
-                return data;
+            if (!error && data != null) {
+                const list = asList(data);
+                setStorage(PHANTOM_MEMORY.complaintsKey, list);
+                return list;
             }
         } catch (e) {
             console.warn("⚠️ [Supabase] serverGetComplaints error:", e);
         }
     }
-    return getStorage(PHANTOM_MEMORY.complaintsKey, []);
+    return asList(getStorage(PHANTOM_MEMORY.complaintsKey, []));
 }
 
 async function serverCreateComplaint(complaintData) {
@@ -863,15 +866,16 @@ async function serverGetNameChangeRequests() {
     if (client) {
         try {
             const { data, error } = await client.from('name_change_requests').select('*').order('created_at', { ascending: false });
-            if (!error && Array.isArray(data)) {
-                setStorage(PHANTOM_MEMORY.nameChangeRequestsKey, data);
-                return data;
+            if (!error && data != null) {
+                const list = asList(data);
+                setStorage(PHANTOM_MEMORY.nameChangeRequestsKey, list);
+                return list;
             }
         } catch (e) {
             console.warn("⚠️ [Supabase] serverGetNameChangeRequests error:", e);
         }
     }
-    return getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []);
+    return asList(getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []));
 }
 
 async function serverCreateNameChangeRequest(requestData) {
@@ -910,15 +914,16 @@ async function serverGetIdChangeRequests() {
     if (client) {
         try {
             const { data, error } = await client.from('id_change_requests').select('*').order('created_at', { ascending: false });
-            if (!error && Array.isArray(data)) {
-                setStorage("phantom_id_change_requests", data);
-                return data;
+            if (!error && data != null) {
+                const list = asList(data);
+                setStorage("phantom_id_change_requests", list);
+                return list;
             }
         } catch (e) {
             console.warn("⚠️ [Supabase] serverGetIdChangeRequests error:", e);
         }
     }
-    return getStorage("phantom_id_change_requests", []);
+    return asList(getStorage("phantom_id_change_requests", []));
 }
 
 async function serverCreateIdChangeRequest(requestData) {
@@ -957,15 +962,16 @@ async function serverGetRejoinRequests() {
     if (client) {
         try {
             const { data, error } = await client.from('rejoin_requests').select('*').order('created_at', { ascending: false });
-            if (!error && Array.isArray(data)) {
-                setStorage("phantom_rejoin_requests", data);
-                return data;
+            if (!error && data != null) {
+                const list = asList(data);
+                setStorage("phantom_rejoin_requests", list);
+                return list;
             }
         } catch (e) {
             console.warn("⚠️ [Supabase] serverGetRejoinRequests error:", e);
         }
     }
-    return getStorage("phantom_rejoin_requests", []);
+    return asList(getStorage("phantom_rejoin_requests", []));
 }
 
 async function serverCreateRejoinRequest(requestData) {
@@ -980,6 +986,86 @@ async function serverCreateRejoinRequest(requestData) {
     const requests = getStorage("phantom_rejoin_requests", []);
     requests.unshift(requestData);
     setStorage("phantom_rejoin_requests", requests);
+    return true;
+}
+
+function asList(val) {
+    if (Array.isArray(val)) return val;
+    if (val && typeof val === 'object') return [val];
+    return [];
+}
+
+function appendRealtimeItem(storageKey, row) {
+    if (!row) return;
+    let list = asList(getStorage(storageKey, []));
+    if (list.some(item => item && String(item.id) === String(row.id))) return;
+    list.unshift(row);
+    setStorage(storageKey, list);
+}
+
+function patchRealtimeItem(storageKey, row) {
+    if (!row) return;
+    let list = asList(getStorage(storageKey, []));
+    const idx = list.findIndex(item => item && String(item.id) === String(row.id));
+    if (idx >= 0) list[idx] = { ...list[idx], ...row };
+    else list.unshift(row);
+    setStorage(storageKey, list);
+}
+
+function removeRealtimeItem(storageKey, row) {
+    if (!row) return;
+    let list = asList(getStorage(storageKey, []));
+    setStorage(storageKey, list.filter(item => !item || String(item.id) !== String(row.id)));
+}
+
+function handleInboxRealtime(storageKey, payload) {
+    if (!payload) return;
+    if (payload.eventType === 'INSERT') appendRealtimeItem(storageKey, payload.new);
+    else if (payload.eventType === 'UPDATE') patchRealtimeItem(storageKey, payload.new);
+    else if (payload.eventType === 'DELETE') removeRealtimeItem(storageKey, payload.old || payload.new);
+}
+
+async function serverGetSuggestions() {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { data, error } = await client.from('suggestions').select('*').order('created_at', { ascending: false });
+            if (!error && data != null) {
+                const list = asList(data);
+                setStorage("phantom_suggestions", list);
+                return list;
+            }
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverGetSuggestions error:", e);
+        }
+    }
+    return asList(getStorage("phantom_suggestions", []));
+}
+
+async function serverCreateSuggestion(suggestionData) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            await client.from('suggestions').insert([suggestionData]);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverCreateSuggestion error:", e);
+        }
+    }
+    appendRealtimeItem("phantom_suggestions", suggestionData);
+    return true;
+}
+
+async function serverUpdateSuggestionStatus(id, newStatus) {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            await client.from('suggestions').update({ status: newStatus }).eq('id', id);
+        } catch (e) {
+            console.warn("⚠️ [Supabase] serverUpdateSuggestionStatus error:", e);
+        }
+    }
+    let suggestions = asList(getStorage("phantom_suggestions", []));
+    setStorage("phantom_suggestions", suggestions.map(s => s.id === id ? { ...s, status: newStatus } : s));
     return true;
 }
 
@@ -1171,34 +1257,38 @@ function setupTablesRealtime() {
                 }
             })
             // 5. الشكاوى (Complaints) - تظهر للإدارة وتُحدث فورياً
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'complaints' }, async () => {
-                await serverGetComplaints();
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'complaints' }, async (payload) => {
+                handleInboxRealtime(PHANTOM_MEMORY.complaintsKey, payload);
                 renderFounderNotifications();
                 if (typeof renderAdminInbox === 'function') renderAdminInbox();
             })
             // 6. طلبات الرجوع (Rejoin Requests) - تظهر للإدارة وتُحدث فورياً
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'rejoin_requests' }, async () => {
-                await serverGetRejoinRequests();
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'rejoin_requests' }, async (payload) => {
+                handleInboxRealtime("phantom_rejoin_requests", payload);
                 renderFounderNotifications();
                 if (typeof renderAdminInbox === 'function') renderAdminInbox();
             })
             // 7. طلبات تغيير الاسم (Name Change Requests)
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'name_change_requests' }, async () => {
-                await serverGetNameChangeRequests();
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'name_change_requests' }, async (payload) => {
+                handleInboxRealtime(PHANTOM_MEMORY.nameChangeRequestsKey, payload);
                 renderFounderNotifications();
                 if (typeof renderAdminInbox === 'function') renderAdminInbox();
             })
             // 8. طلبات تغيير المعرف (ID Change Requests)
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'id_change_requests' }, async () => {
-                await serverGetIdChangeRequests();
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'id_change_requests' }, async (payload) => {
+                handleInboxRealtime("phantom_id_change_requests", payload);
                 renderFounderNotifications();
                 if (typeof renderAdminInbox === 'function') renderAdminInbox();
             })
             // 9. الأعذار (Excuses)
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'excuses' }, async () => {
-                await serverGetExcuses();
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'excuses' }, async (payload) => {
+                handleInboxRealtime(PHANTOM_MEMORY.excusesKey, payload);
                 renderFounderNotifications();
                 if (typeof renderAdminInbox === 'function') renderAdminInbox();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'suggestions' }, async (payload) => {
+                handleInboxRealtime("phantom_suggestions", payload);
+                if (typeof renderSuggestions === 'function') renderSuggestions();
             })
             // 10. الإنذارات (Warnings) - إشعار فوري وتحديث الملف الشخصي
             .on('postgres_changes', { event: '*', schema: 'public', table: 'warnings' }, async (payload) => {
@@ -1567,6 +1657,7 @@ if (Array.isArray(warnings)) {
             serverGetNameChangeRequests(),
             serverGetIdChangeRequests(),
             serverGetRejoinRequests(),
+            serverGetSuggestions(),
             serverGetClips()
         ]);
         const currentClip = getStorage(PHANTOM_MEMORY.clipsKey, null);
@@ -2977,11 +3068,11 @@ function renderAdminInbox() {
     if (!container) return;
     
     let html = '';
-    const complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []).filter(c => !c.status || c.status === 'pending');
+    const complaints = asList(getStorage(PHANTOM_MEMORY.complaintsKey, [])).filter(c => !c.status || c.status === 'pending');
     const rejoinRequests = getRejoinRequests().filter(r => !r.status || r.status === 'pending');
-    const excuses = getStorage(PHANTOM_MEMORY.excusesKey, []).filter(e => !e.status || e.status === 'pending');
-    const nameChanges = getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []).filter(n => !n.status || n.status === 'pending');
-    const idChanges = getStorage("phantom_id_change_requests", []).filter(i => !i.status || i.status === 'pending');
+    const excuses = asList(getStorage(PHANTOM_MEMORY.excusesKey, [])).filter(e => !e.status || e.status === 'pending');
+    const nameChanges = asList(getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, [])).filter(n => !n.status || n.status === 'pending');
+    const idChanges = asList(getStorage("phantom_id_change_requests", [])).filter(i => !i.status || i.status === 'pending');
 
     const allRequests = [
         ...complaints.map(c => ({...c, type: 'شكوى'})),
@@ -14806,15 +14897,14 @@ function closeSuggestionModal() {
     document.getElementById('suggestion-reason').value = '';
 }
 
-function submitSuggestion() {
+async function submitSuggestion() {
     const name = document.getElementById('suggestion-name').value.trim();
     const details = document.getElementById('suggestion-details').value.trim();
     const reason = document.getElementById('suggestion-reason').value.trim();
 
     if (!name || !details || !reason) { showToast("أكمل جميع الحقول أولاً.", "error"); return; }
 
-    const suggestions = getStorage("phantom_suggestions", []);
-    suggestions.push({
+    const newSugg = {
         id: `sugg_${Date.now()}`,
         from: getCurrentUsername(),
         name: name,
@@ -14822,8 +14912,9 @@ function submitSuggestion() {
         reason: reason,
         date: new Date().toLocaleString("ar-EG"),
         status: 'pending'
-    });
-    setStorage("phantom_suggestions", suggestions);
+    };
+    await serverCreateSuggestion(newSugg);
+    if (typeof renderSuggestions === 'function') renderSuggestions();
 
     showToast("✅ تم إرسال الاقتراح للقيادة.", "success");
     closeSuggestionModal();
@@ -14833,34 +14924,47 @@ function renderSuggestions() {
     const container = document.getElementById("suggestions-container");
     if (!container) return;
 
-    const suggestions = getStorage("phantom_suggestions", []);
+    const suggestions = asList(getStorage("phantom_suggestions", []));
 
     if (!suggestions.length) {
         container.innerHTML = `<div style="text-align:center; padding:10px; color:var(--muted);">لا توجد اقتراحات حالياً.</div>`;
         return;
     }
 
-    container.innerHTML = suggestions.map(s => `
+    container.innerHTML = suggestions.map(s => {
+        const status = s.status || 'pending';
+        let statusHtml = '';
+        if (status === 'pending') {
+            statusHtml = `
+                    <button class="btn-accept" onclick="handleSuggestion('${s.id}', 'accept')">جيد</button>
+                    <button class="btn-reject" onclick="handleSuggestion('${s.id}', 'reject')">غير مفيد حالياً</button>
+            `;
+        } else if (status === 'approved') {
+            statusHtml = `<span style="color:var(--green); font-size:0.8rem; text-align:center; flex:1;">مقبول</span>`;
+        } else if (status === 'rejected') {
+            statusHtml = `<span style="color:var(--red); font-size:0.8rem; text-align:center; flex:1;">مرفوض</span>`;
+        } else {
+            statusHtml = `<span style="color:var(--muted); font-size:0.8rem; text-align:center; flex:1;">${escapeHTML(status)}</span>`;
+        }
+        return `
         <div class="suggestion-item">
             <div class="s-title">💡 ${escapeHTML(s.name)}</div>
             <div style="color:var(--text); margin-top:4px;">📝 ${escapeHTML(s.details)}</div>
             <div class="s-reason">🗣️ ليه: ${escapeHTML(s.reason)}</div>
             <div style="font-size:0.7rem; color:var(--muted); margin-top:4px;">👤 ${escapeHTML(s.from)} — ${escapeHTML(s.date)}</div>
             <div class="suggestion-actions">
-                ${s.status === 'pending' ? `
-                    <button class="btn-accept" onclick="handleSuggestion('${s.id}', 'accept')">جيد</button>
-                    <button class="btn-reject" onclick="handleSuggestion('${s.id}', 'reject')">غير مفيد حالياً</button>
-                ` : `<span style="color:var(--green); font-size:0.8rem; text-align:center; flex:1;">✅ تمت المعالجة</span>`}
+                ${statusHtml}
             </div>
         </div>
-    `).join("");
+    `;
+    }).join("");
 }
 
-function handleSuggestion(id, action) {
-    let suggestions = getStorage("phantom_suggestions", []);
+async function handleSuggestion(id, action) {
+    let suggestions = asList(getStorage("phantom_suggestions", []));
     const sugg = suggestions.find(s => s.id === id);
-    suggestions = suggestions.map(s => s.id === id ? { ...s, status: action === 'accept' ? 'accepted' : 'rejected' } : s);
-    setStorage("phantom_suggestions", suggestions);
+    const newStatus = action === 'accept' ? 'approved' : 'rejected';
+    await serverUpdateSuggestionStatus(id, newStatus);
 
     if (action === 'accept') {
         addSystemUpdate("✅ اقتراح مقبول", `تم قبول اقتراح "${sugg.name}" من ${sugg.from}.`, true);
