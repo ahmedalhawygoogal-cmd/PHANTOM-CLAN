@@ -223,7 +223,7 @@
                 </div>
                 <div id="chat-call-header-group" class="chat-call-header-group" style="margin-right:auto; display:flex; align-items:center; gap:6px; position:relative;">
                     <button id="voice-call-btn" class="icon-btn-call" type="button" onclick="handleVoiceCallBtnClick()" style="background:transparent; border:none; color:var(--cyan); font-size:1.25rem; cursor:pointer; padding:6px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; transition:0.2s;" title="بدء مكالمة">📞</button>
-                    <button id="chat-call-join-btn" class="chat-call-join-btn-header" type="button" onclick="toggleActiveCallsDropdown(event)" title="لا توجد مكالمات نشطة حالياً" disabled>
+                    <button id="chat-call-join-btn" class="chat-call-join-btn-header" type="button" onclick="handleJoinCallClick(event)" title="انضمام لمكالمة نشطة">
                         انضمام
                     </button>
                     <span id="chat-call-ended-status" class="chat-call-ended-status" style="display:none; font-size:0.75rem; color:#ef4444; font-weight:700;">انتهت المكالمة</span>
@@ -2711,6 +2711,7 @@
     <div class="floating-call-left">
         <span class="floating-pulse-dot">🟢</span>
         <div class="floating-call-details">
+            <span id="floating-call-type-badge" class="floating-call-type-badge" style="font-size:0.7rem; font-weight:900; color:#00f2fe; letter-spacing:0.3px;">Agora voice</span>
             <span id="floating-call-title" class="floating-call-title">مكالمة جارية: Agora</span>
             <span id="floating-call-meta" class="floating-call-meta">المنشئ: عضو الكلان • 00:00</span>
         </div>
@@ -2811,6 +2812,16 @@
                 </button>
             </div>
         </div>
+    </div>
+</div>
+
+<div id="join-calls-modal" class="call-type-chooser-modal" style="display:none;" onclick="if(event.target===this) closeJoinCallsModal()">
+    <div class="chooser-card">
+        <div class="chooser-header">
+            <h3>انضمام لمكالمة نشطة</h3>
+            <button type="button" class="chooser-close" onclick="closeJoinCallsModal()">✕</button>
+        </div>
+        <div id="join-calls-modal-list"></div>
     </div>
 </div>
 <!-- ⚙️ نافذة الإعدادات -->

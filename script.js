@@ -1666,6 +1666,8 @@ if (Array.isArray(warnings)) {
         }
 
         setupTablesRealtime();
+        setupActiveCallsRealtime();
+        fetchAndSyncActiveCalls();
     } catch (error) {
         console.warn("[PHANTOM] Server data sync fallback activated.");
     }
@@ -5768,6 +5770,8 @@ function setupVoiceCalls() {
     if (voiceCallBtn) {
         voiceCallBtn.addEventListener("click", handleVoiceCallBtnClick);
     }
+    setupActiveCallsRealtime();
+    fetchAndSyncActiveCalls();
 }
 
 function handleVoiceCallBtnClick() {
@@ -5853,16 +5857,24 @@ function openFullCallView(mode, callData = {}) {
 
     if (mode === 'agora') {
         if (typeBadge) {
-            typeBadge.textContent = '🎙️ مكالمة Agora التكتيكية';
+            typeBadge.textContent = getCallTypeLabel('agora');
             typeBadge.className = 'call-type-pill';
         }
         if (agoraStage) agoraStage.style.display = 'flex';
         if (directStage) directStage.style.display = 'none';
         if (camBtn) camBtn.style.display = 'none';
         if (agoraChannelTag) agoraChannelTag.textContent = activeCallChannel;
+    } else if (mode === 'meet') {
+        if (typeBadge) {
+            typeBadge.textContent = getCallTypeLabel('meet');
+            typeBadge.className = 'call-type-pill';
+        }
+        if (agoraStage) agoraStage.style.display = 'none';
+        if (directStage) directStage.style.display = 'flex';
+        if (camBtn) camBtn.style.display = 'none';
     } else {
         if (typeBadge) {
-            typeBadge.textContent = '📱 اتصال مباشر (صوت وفيديو)';
+            typeBadge.textContent = getCallTypeLabel('direct');
             typeBadge.className = 'call-type-pill';
         }
         if (agoraStage) agoraStage.style.display = 'none';
@@ -5931,11 +5943,13 @@ function minimizeCallView() {
         floatBar.style.display = 'flex';
         const titleEl = document.getElementById('floating-call-title');
         const metaEl = document.getElementById('floating-call-meta');
+        const typeEl = document.getElementById('floating-call-type-badge');
+        if (typeEl) typeEl.textContent = getCallTypeLabel(activeCallMode);
         if (titleEl) {
-            titleEl.textContent = activeCallMode === 'agora' ? `🎙️ مكالمة Agora: ${activeCallTopic || 'PHANTOM'}` : `📱 اتصال مباشر: ${activeCallTopic || 'المقر'}`;
+            titleEl.textContent = getCallBarTitle(activeCallMode, activeCallTopic);
         }
         if (metaEl) {
-            metaEl.textContent = `المنشئ: ${activeCallHost || 'عضو الكلان'}`;
+            metaEl.textContent = `المنشئ: ${activeCallHost || 'عضو الكلان'} • ${getCallTypeLabel(activeCallMode)}`;
         }
     }
     showToast("⛶ تم تصغير المكالمة، الصوت مستمر أثناء التصفح.", "info");
@@ -6076,6 +6090,7 @@ async function handleFullCallEnd() {
         body: JSON.stringify({ callId: endingCallId, hostName: user })
     }).catch(() => {});
 
+    leaveActiveCallRow();
     showToast("🔴 تم إنهاء المكالمة ومغادرة الغرفة.", "info");
     fetchAndSyncActiveCalls();
 }
@@ -6131,27 +6146,193 @@ function updateFullCallParticipantsUI() {
 }
 window.updateFullCallParticipantsUI = updateFullCallParticipantsUI;
 
-// 📜 دوال القائمة المنسدلة للمكالمات النشطة
-function toggleActiveCallsDropdown(event) {
+function getCallTypeLabel(mode) {
+    if (mode === 'agora') return 'Agora voice';
+    if (mode === 'meet') return 'Google Meet';
+    return 'Direct A/V';
+}
+
+function getCallBarTitle(mode, topic) {
+    if (mode === 'agora') return `Agora voice: ${topic || 'PHANTOM'}`;
+    if (mode === 'meet') return `Google Meet: ${topic || 'Meet'}`;
+    return `Direct A/V: ${topic || 'المقر'}`;
+}
+
+function normalizeActiveCallRow(row) {
+    if (!row) return null;
+    const callType = row.call_type || row.mode || (row.details && row.details.mode) || 'direct';
+    const participants = (typeof row.participants === 'number')
+        ? row.participants
+        : (Array.isArray(row.participants) ? row.participants.length : 1);
+    return {
+        ...row,
+        id: row.id,
+        call_type: callType,
+        mode: callType,
+        creator_name: row.creator_name || row.hostName || row.challengerName || 'عضو الكلان',
+        creator_id: row.creator_id || row.hostId || '',
+        channel_name: row.channel_name || row.channelName || (row.details && row.details.channelName) || '',
+        participants,
+        hostName: row.creator_name || row.hostName || row.challengerName || 'عضو الكلان',
+        roomName: row.channel_name || row.roomName || row.topic || ''
+    };
+}
+
+let myActiveCallRowId = null;
+let activeCallsRealtimeChannel = null;
+
+async function serverGetActiveCalls() {
+    const client = ensureSupabaseClient();
+    if (!client) return [];
+    try {
+        const { data, error } = await client.from('active_calls').select('*').order('created_at', { ascending: false });
+        if (error || data == null) return [];
+        return asList(data).map(normalizeActiveCallRow).filter(Boolean);
+    } catch (e) {
+        console.warn("⚠️ [Supabase] serverGetActiveCalls error:", e);
+        return [];
+    }
+}
+
+async function insertActiveCallRow(callType, channelName) {
+    const client = ensureSupabaseClient();
+    const username = (typeof getCurrentUsername === 'function' ? getCurrentUsername() : null) || 'عضو PHANTOM';
+    const userId = (typeof getCurrentUserId === 'function' ? getCurrentUserId() : null) || username;
+    const payload = {
+        creator_id: String(userId),
+        creator_name: username,
+        call_type: callType,
+        channel_name: channelName || '',
+        participants: 1
+    };
+    if (!client) return null;
+    try {
+        const { data, error } = await client.from('active_calls').insert([payload]).select();
+        if (!error && Array.isArray(data) && data[0]) {
+            myActiveCallRowId = data[0].id;
+            return data[0];
+        }
+    } catch (e) {
+        console.warn("⚠️ [Supabase] insertActiveCallRow error:", e);
+    }
+    return null;
+}
+
+async function incrementActiveCallParticipants(callId) {
+    const client = ensureSupabaseClient();
+    if (!client || callId == null) return;
+    try {
+        const { data } = await client.from('active_calls').select('participants').eq('id', callId).maybeSingle();
+        const next = Math.max(1, (data && data.participants ? data.participants : 1) + 1);
+        await client.from('active_calls').update({ participants: next }).eq('id', callId);
+        myActiveCallRowId = callId;
+    } catch (e) {
+        console.warn("⚠️ [Supabase] incrementActiveCallParticipants error:", e);
+    }
+}
+
+async function leaveActiveCallRow() {
+    const client = ensureSupabaseClient();
+    const callId = myActiveCallRowId || activeCallId;
+    myActiveCallRowId = null;
+    if (!client || callId == null) return;
+    try {
+        const { data } = await client.from('active_calls').select('participants').eq('id', callId).maybeSingle();
+        if (!data) return;
+        const next = (data.participants || 1) - 1;
+        if (next <= 0) {
+            await client.from('active_calls').delete().eq('id', callId);
+        } else {
+            await client.from('active_calls').update({ participants: next }).eq('id', callId);
+        }
+    } catch (e) {
+        console.warn("⚠️ [Supabase] leaveActiveCallRow error:", e);
+    }
+}
+
+function setupActiveCallsRealtime() {
+    const client = ensureSupabaseClient();
+    if (!client) return;
+    if (activeCallsRealtimeChannel) {
+        try { client.removeChannel(activeCallsRealtimeChannel); } catch (_) {}
+        activeCallsRealtimeChannel = null;
+    }
+    try {
+        activeCallsRealtimeChannel = client.channel('active_calls_realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'active_calls' }, async () => {
+                await fetchAndSyncActiveCalls();
+                const modal = document.getElementById('join-calls-modal');
+                if (modal && modal.style.display === 'flex') renderJoinCallsModal();
+            })
+            .subscribe();
+    } catch (e) {
+        console.warn("⚠️ [Realtime] setupActiveCallsRealtime error:", e);
+    }
+}
+
+function handleJoinCallClick(event) {
     if (event) {
         event.preventDefault();
         event.stopPropagation();
     }
-    const joinBtn = document.getElementById('chat-call-join-btn');
-    if (joinBtn && joinBtn.disabled) return;
-
-    const dropdown = document.getElementById('active-calls-dropdown');
-    if (!dropdown) return;
-
-    const isVisible = dropdown.style.display === 'block';
-    if (isVisible) {
-        closeActiveCallsDropdown();
-    } else {
-        openActiveCallsDropdown();
+    const calls = Array.isArray(allActiveServerCalls) ? allActiveServerCalls : [];
+    if (!calls.length) {
+        showToast("No active calls", "info");
+        return;
     }
+    openJoinCallsModal();
 }
-window.toggleActiveCallsDropdown = toggleActiveCallsDropdown;
-window.handleChatCallJoinClick = toggleActiveCallsDropdown;
+window.handleJoinCallClick = handleJoinCallClick;
+window.toggleActiveCallsDropdown = handleJoinCallClick;
+window.handleChatCallJoinClick = handleJoinCallClick;
+
+function openJoinCallsModal() {
+    const modal = document.getElementById('join-calls-modal');
+    if (!modal) {
+        openActiveCallsDropdown();
+        return;
+    }
+    renderJoinCallsModal();
+    modal.style.display = 'flex';
+}
+window.openJoinCallsModal = openJoinCallsModal;
+
+function closeJoinCallsModal() {
+    const modal = document.getElementById('join-calls-modal');
+    if (modal) modal.style.display = 'none';
+}
+window.closeJoinCallsModal = closeJoinCallsModal;
+
+function renderJoinCallsModal() {
+    const container = document.getElementById('join-calls-modal-list');
+    if (!container) return;
+    const calls = Array.isArray(allActiveServerCalls) ? allActiveServerCalls : [];
+    if (!calls.length) {
+        container.innerHTML = '<div class="empty-calls-notice" style="text-align:center; padding:16px 10px; color:#94a3b8; font-size:0.85rem; font-weight:700;">No active calls</div>';
+        return;
+    }
+    container.innerHTML = calls.map(c => {
+        const type = c.call_type || c.mode || 'direct';
+        const typeLabel = getCallTypeLabel(type);
+        const host = c.creator_name || c.hostName || 'عضو الكلان';
+        const count = (typeof c.participants === 'number') ? c.participants : 1;
+        return `
+            <div class="active-call-item" style="background:rgba(255,255,255,0.05); border:1px solid rgba(0, 242, 254, 0.25); border-radius:10px; padding:10px 12px; display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;">
+                <div style="flex:1; display:flex; flex-direction:column; gap:4px;">
+                    <span style="font-size:0.9rem; font-weight:900; color:#fff;">${escapeHTML(host)}</span>
+                    <span style="font-size:0.75rem; color:#00f2fe; font-weight:800;">${escapeHTML(typeLabel)}</span>
+                    <span style="font-size:0.75rem; color:#94a3b8;">${count} participants</span>
+                </div>
+                <button type="button" onclick="joinSpecificCall('${c.id}')" style="padding:7px 15px; background:linear-gradient(135deg, #00f2fe, #00ff88); border:none; color:#050a14; font-weight:900; font-size:0.82rem; border-radius:8px; cursor:pointer;">Join</button>
+            </div>
+        `;
+    }).join('');
+}
+window.renderJoinCallsModal = renderJoinCallsModal;
+
+function toggleActiveCallsDropdown(event) {
+    handleJoinCallClick(event);
+}
 
 function openActiveCallsDropdown() {
     const dropdown = document.getElementById('active-calls-dropdown');
@@ -6197,11 +6378,11 @@ function renderActiveCallsDropdown(calls) {
     });
 
     container.innerHTML = sorted.map(c => {
-        const host = c.hostName || c.challengerName || 'عضو الكلان';
-        const mode = (c.mode === 'agora' || (c.details && c.details.mode === 'agora')) ? 'agora' : 'direct';
-        const modeLabel = mode === 'agora' ? '🎙️ Agora (صوت)' : '📱 اتصال مباشر (صوت وفيديو)';
-        const room = c.roomName || c.topic || (c.details && c.details.topic) || (mode === 'agora' ? 'غرفة Agora الصوتية' : 'مكالمة المقر المباشرة');
-        const pCount = (Array.isArray(c.participants) && c.participants.length > 0) ? c.participants.length : 1;
+        const host = c.creator_name || c.hostName || c.challengerName || 'عضو الكلان';
+        const mode = c.call_type || c.mode || ((c.details && c.details.mode) ? c.details.mode : 'direct');
+        const modeLabel = getCallTypeLabel(mode);
+        const room = c.channel_name || c.roomName || c.topic || (c.details && c.details.topic) || modeLabel;
+        const pCount = (typeof c.participants === 'number') ? c.participants : ((Array.isArray(c.participants) && c.participants.length > 0) ? c.participants.length : 1);
         const callId = c.id;
 
         return `
@@ -6230,8 +6411,9 @@ window.renderActiveCallsDropdown = renderActiveCallsDropdown;
 
 async function joinSpecificCall(callId) {
     closeActiveCallsDropdown();
-    let call = allActiveServerCalls.find(c => c.id === callId);
-    if (!call && currentActiveCallData && currentActiveCallData.id === callId) {
+    closeJoinCallsModal();
+    let call = allActiveServerCalls.find(c => String(c.id) === String(callId));
+    if (!call && currentActiveCallData && String(currentActiveCallData.id) === String(callId)) {
         call = currentActiveCallData;
     }
     if (!call) {
@@ -6240,15 +6422,18 @@ async function joinSpecificCall(callId) {
         return;
     }
 
-    const host = call.hostName || call.challengerName || 'عضو الكلان';
-    const mode = (call.mode === 'agora' || (call.details && call.details.mode === 'agora')) ? 'agora' : 'direct';
-    const room = call.roomName || call.topic || (call.details && call.details.topic) || (mode === 'agora' ? 'غرفة Agora الصوتية' : 'مكالمة المقر المباشرة');
-    const channel = call.channelName || (call.details && call.details.channelName) || AGORA_CHANNEL;
+    const host = call.creator_name || call.hostName || call.challengerName || 'عضو الكلان';
+    const mode = call.call_type || call.mode || ((call.details && call.details.mode === 'agora') ? 'agora' : 'direct');
+    const room = call.channel_name || call.roomName || call.topic || (call.details && call.details.topic) || getCallTypeLabel(mode);
+    const channel = call.channel_name || call.channelName || (call.details && call.details.channelName) || AGORA_CHANNEL;
 
     showToast(`📞 جاري الانضمام لمكالمة ${host}...`, "info");
 
     if (mode === 'agora') {
         await joinAgoraRoom(channel, call.id, host, room);
+    } else if (mode === 'meet') {
+        if (channel) window.open(channel, '_blank', 'noopener');
+        openFullCallView('meet', { id: call.id, hostName: host, topic: room, channelName: channel });
     } else {
         await startInAppCall(call.id, host, room);
     }
@@ -6257,22 +6442,32 @@ window.joinSpecificCall = joinSpecificCall;
 
 async function fetchAndSyncActiveCalls() {
     try {
+        const supabaseCalls = await serverGetActiveCalls();
+        if (supabaseCalls.length) {
+            updateActiveCallsSync(supabaseCalls, supabaseCalls[0]);
+            return;
+        }
         const res = await fetch('/api/calls/active');
-        if (!res.ok) return;
+        if (!res.ok) {
+            updateActiveCallsSync([], null);
+            return;
+        }
         const data = await res.json();
         const activeCallsList = Array.isArray(data.activeCalls) ? data.activeCalls : (data.activeCall ? [data.activeCall] : []);
-        updateActiveCallsSync(activeCallsList, data.activeCall);
-    } catch (_) {}
+        updateActiveCallsSync(activeCallsList.map(normalizeActiveCallRow), data.activeCall);
+    } catch (_) {
+        updateActiveCallsSync(allActiveServerCalls || [], null);
+    }
 }
 window.fetchAndSyncActiveCalls = fetchAndSyncActiveCalls;
 
 function updateActiveCallsSync(callsList, primaryCall) {
     allActiveServerCalls = Array.isArray(callsList) ? callsList.filter(c => {
-        const isAct = (c.status === 'active' || c.active) && c.status !== 'ended' && c.status !== 'cancelled';
-        const mode = c.mode || (c.details && c.details.mode);
-        // استبعاد أي مكالمة خارجية مثل Google Meet أو مكالمة منتهية
-        return isAct && (mode === 'agora' || mode === 'direct' || mode === 'inapp');
-    }) : [];
+        if (!c) return false;
+        if (c.status === 'ended' || c.status === 'cancelled') return false;
+        const mode = c.call_type || c.mode || (c.details && c.details.mode);
+        return mode === 'agora' || mode === 'direct' || mode === 'inapp' || mode === 'meet';
+    }).map(normalizeActiveCallRow) : [];
     const joinBtn = document.getElementById('chat-call-join-btn');
     const endedStatus = document.getElementById('chat-call-ended-status');
     const banner = document.getElementById('clan-active-call-banner');
@@ -6282,18 +6477,17 @@ function updateActiveCallsSync(callsList, primaryCall) {
     if (banner) banner.style.display = 'none';
 
     if (allActiveServerCalls.length === 0) {
-        // لا توجد مكالمات نشطة: زر "انضمام" معطل تماماً وبدون أي أنيميشن أو توهج
         if (joinBtn) {
-            joinBtn.disabled = true;
-            joinBtn.style.opacity = '0.45';
-            joinBtn.style.cursor = 'not-allowed';
-            joinBtn.style.background = 'rgba(255,255,255,0.05)';
-            joinBtn.style.borderColor = 'rgba(255,255,255,0.12)';
-            joinBtn.style.color = '#64748b';
+            joinBtn.disabled = false;
+            joinBtn.style.opacity = '1';
+            joinBtn.style.cursor = 'pointer';
+            joinBtn.style.background = 'rgba(255,255,255,0.08)';
+            joinBtn.style.borderColor = 'rgba(255,255,255,0.2)';
+            joinBtn.style.color = '#e2e8f0';
             joinBtn.style.boxShadow = 'none';
             joinBtn.style.animation = 'none';
             joinBtn.style.transform = 'none';
-            joinBtn.title = 'لا توجد مكالمات نشطة حالياً';
+            joinBtn.title = 'انضمام لمكالمة نشطة';
         }
         const dot = document.getElementById('voice-live-dot');
         if (dot) dot.remove();
@@ -6644,6 +6838,10 @@ async function startInAppCall(callIdOverride, hostOverride, roomNameOverride) {
         });
 
         if (!callIdOverride) {
+            insertActiveCallRow('direct', actualRoom).then((row) => {
+                if (row && row.id) activeCallId = row.id;
+                fetchAndSyncActiveCalls();
+            });
             fetch('/api/calls/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -6657,6 +6855,8 @@ async function startInAppCall(callIdOverride, hostOverride, roomNameOverride) {
                 })
             }).then(() => fetchAndSyncActiveCalls()).catch(() => {});
         } else {
+            myActiveCallRowId = actualCallId;
+            incrementActiveCallParticipants(actualCallId);
             fetch('/api/calls/join', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -7229,6 +7429,10 @@ async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, room
         }
 
         if (!callIdOverride) {
+            insertActiveCallRow('agora', activeChannel).then((row) => {
+                if (row && row.id) activeCallId = row.id;
+                fetchAndSyncActiveCalls();
+            });
             fetch('/api/calls/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -7243,6 +7447,8 @@ async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, room
                 })
             }).then(() => fetchAndSyncActiveCalls()).catch(() => {});
         } else {
+            myActiveCallRowId = actualCallId;
+            incrementActiveCallParticipants(actualCallId);
             fetch('/api/calls/join', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -7500,6 +7706,7 @@ async function handleCreateNewMeetCall() {
                 if (codeEl) codeEl.textContent = `Google Meet الرسمي: جاهز للبدء الفوري بنقرة واحدة`;
                 if (joinBtn) joinBtn.href = currentGoogleMeetUri;
 
+                insertActiveCallRow('meet', currentGoogleMeetUri).then(() => fetchAndSyncActiveCalls());
                 showToast("🎉 تم تجهيز رابط Google Meet الرسمي بنجاح!", "success");
                 return;
             }
@@ -7521,6 +7728,7 @@ async function handleCreateNewMeetCall() {
         if (codeEl) codeEl.textContent = `الكود: ${currentGoogleMeetCode} | ${currentGoogleMeetUri}`;
         if (joinBtn) joinBtn.href = currentGoogleMeetUri;
 
+        insertActiveCallRow('meet', currentGoogleMeetUri).then(() => fetchAndSyncActiveCalls());
         showToast("🎉 تم إنشاء رابط مكالمة Google Meet بنجاح!", "success");
     } catch (err) {
         console.warn("[Google Meet] Fallback to direct launcher:", err && err.message);
@@ -7537,6 +7745,7 @@ async function handleCreateNewMeetCall() {
         if (codeEl) codeEl.textContent = `Google Meet الرسمي: جاهز للبدء الفوري بنقرة واحدة`;
         if (joinBtn) joinBtn.href = currentGoogleMeetUri;
 
+        insertActiveCallRow('meet', currentGoogleMeetUri).then(() => fetchAndSyncActiveCalls());
         showToast("📹 تم تجهيز رابط مكالمة Google Meet بنجاح!", "info");
     }
 }
