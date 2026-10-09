@@ -1065,7 +1065,7 @@ async function serverUpdateSuggestionStatus(id, newStatus) {
         }
     }
     let suggestions = asList(getStorage("phantom_suggestions", []));
-    setStorage("phantom_suggestions", suggestions.map(s => s.id === id ? { ...s, status: newStatus } : s));
+    setStorage("phantom_suggestions", suggestions.map(s => String(s.id) === String(id) ? { ...s, status: newStatus } : s));
     return true;
 }
 
@@ -14920,33 +14920,8 @@ async function submitSuggestion() {
     closeSuggestionModal();
 }
 
-function renderSuggestions() {
-    const container = document.getElementById("suggestions-container");
-    if (!container) return;
-
-    const suggestions = asList(getStorage("phantom_suggestions", []));
-
-    if (!suggestions.length) {
-        container.innerHTML = `<div style="text-align:center; padding:10px; color:var(--muted);">لا توجد اقتراحات حالياً.</div>`;
-        return;
-    }
-
-    container.innerHTML = suggestions.map(s => {
-        const status = s.status || 'pending';
-        let statusHtml = '';
-        if (status === 'pending') {
-            statusHtml = `
-                    <button class="btn-accept" onclick="handleSuggestion('${s.id}', 'accept')">جيد</button>
-                    <button class="btn-reject" onclick="handleSuggestion('${s.id}', 'reject')">غير مفيد حالياً</button>
-            `;
-        } else if (status === 'approved') {
-            statusHtml = `<span style="color:var(--green); font-size:0.8rem; text-align:center; flex:1;">مقبول</span>`;
-        } else if (status === 'rejected') {
-            statusHtml = `<span style="color:var(--red); font-size:0.8rem; text-align:center; flex:1;">مرفوض</span>`;
-        } else {
-            statusHtml = `<span style="color:var(--muted); font-size:0.8rem; text-align:center; flex:1;">${escapeHTML(status)}</span>`;
-        }
-        return `
+function suggestionCardHtml(s, statusHtml) {
+    return `
         <div class="suggestion-item">
             <div class="s-title">💡 ${escapeHTML(s.name)}</div>
             <div style="color:var(--text); margin-top:4px;">📝 ${escapeHTML(s.details)}</div>
@@ -14957,12 +14932,44 @@ function renderSuggestions() {
             </div>
         </div>
     `;
+}
+
+function renderSuggestions() {
+    const container = document.getElementById("suggestions-container");
+    if (!container) return;
+
+    const suggestions = asList(getStorage("phantom_suggestions", []));
+    const pending = suggestions.filter(s => !s.status || s.status === 'pending');
+    const processed = suggestions.filter(s => s.status === 'approved' || s.status === 'rejected');
+
+    if (!pending.length && !processed.length) {
+        container.innerHTML = `<div style="text-align:center; padding:10px; color:var(--muted);">لا توجد اقتراحات حالياً.</div>`;
+        return;
+    }
+
+    const pendingHtml = pending.length
+        ? pending.map(s => suggestionCardHtml(s, `
+                    <button class="btn-accept" onclick="handleSuggestion('${s.id}', 'accept')">جيد</button>
+                    <button class="btn-reject" onclick="handleSuggestion('${s.id}', 'reject')">غير مفيد حالياً</button>
+            `)).join("")
+        : `<div style="text-align:center; padding:10px; color:var(--muted);">لا توجد اقتراحات معلّقة.</div>`;
+
+    const processedHtml = processed.map(s => {
+        const statusHtml = s.status === 'approved'
+            ? `<span style="color:var(--green); font-size:0.8rem; text-align:center; flex:1;">مقبول</span>`
+            : `<span style="color:var(--red); font-size:0.8rem; text-align:center; flex:1;">مرفوض</span>`;
+        return suggestionCardHtml(s, statusHtml);
     }).join("");
+
+    container.innerHTML = `
+        ${pendingHtml}
+        ${processed.length ? `<div style="margin-top:16px; padding-top:10px; border-top:1px solid var(--border); color:var(--muted); font-size:0.8rem;">المعالجة</div>${processedHtml}` : ''}
+    `;
 }
 
 async function handleSuggestion(id, action) {
     let suggestions = asList(getStorage("phantom_suggestions", []));
-    const sugg = suggestions.find(s => s.id === id);
+    const sugg = suggestions.find(s => String(s.id) === String(id));
     const newStatus = action === 'accept' ? 'approved' : 'rejected';
     await serverUpdateSuggestionStatus(id, newStatus);
 
