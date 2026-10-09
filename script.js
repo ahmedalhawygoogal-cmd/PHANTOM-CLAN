@@ -6034,7 +6034,8 @@ window.updateFullCallButtonsUI = updateFullCallButtonsUI;
 
 async function handleFullCallEnd() {
     const endingMode = activeCallMode;
-    const endingCallId = activeCallId;
+    const endingCallId = myActiveCallRowId != null ? myActiveCallRowId : activeCallId;
+    if (!endingMode && endingCallId == null) return;
     const user = (typeof getCurrentUsername === 'function' ? getCurrentUsername() : null) || 'عضو الكلان';
 
     if (activeCallTimerInterval) {
@@ -6046,6 +6047,8 @@ async function handleFullCallEnd() {
         activeCallHeartbeatInterval = null;
     }
     activeCallStartTime = null;
+
+    const leaveResult = await leaveActiveCallRow(endingCallId);
 
     if (endingMode === 'agora') {
         await leaveAgoraRoom();
@@ -6064,15 +6067,23 @@ async function handleFullCallEnd() {
     if (overlay) overlay.style.display = 'none';
     if (floatBar) floatBar.style.display = 'none';
 
-    fetch('/api/calls/end', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ callId: endingCallId, hostName: user })
-    }).catch(() => {});
+    const leavePayload = { callId: endingCallId, username: user, hostName: user };
+    if (leaveResult && leaveResult.ended) {
+        fetch('/api/calls/end', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(leavePayload)
+        }).catch(() => {});
+    } else {
+        fetch('/api/calls/leave', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(leavePayload)
+        }).catch(() => {});
+    }
 
-    leaveActiveCallRow();
-    showToast("🔴 تم إنهاء المكالمة ومغادرة الغرفة.", "info");
-    fetchAndSyncActiveCalls();
+    showToast("تم مغادرة المكالمة.", "info");
+    await fetchAndSyncActiveCalls();
 }
 window.handleFullCallEnd = handleFullCallEnd;
 
@@ -6241,7 +6252,7 @@ async function serverGetActiveCalls() {
     try {
         const { data, error } = await client.from('active_calls').select('*').order('created_at', { ascending: false });
         if (error || data == null) return [];
-        return asList(data).map(normalizeActiveCallRow).filter(Boolean);
+        return asList(data).map(normalizeActiveCallRow).filter((row) => row && Number(row.participants) > 0);
     } catch (e) {
         console.warn("⚠️ [Supabase] serverGetActiveCalls error:", e);
         return [];
@@ -6264,6 +6275,7 @@ async function insertActiveCallRow(callType, channelName) {
         const { data, error } = await client.from('active_calls').insert([payload]).select();
         if (!error && Array.isArray(data) && data[0]) {
             myActiveCallRowId = data[0].id;
+            activeCallId = data[0].id;
             return data[0];
         }
     } catch (e) {
@@ -6272,35 +6284,48 @@ async function insertActiveCallRow(callType, channelName) {
     return null;
 }
 
+function resolveActiveCallRowId(preferredId) {
+    const raw = preferredId != null ? preferredId : (myActiveCallRowId != null ? myActiveCallRowId : activeCallId);
+    if (raw == null || raw === '') return null;
+    if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+    const asNum = Number(raw);
+    if (Number.isFinite(asNum) && String(raw).trim() !== '' && !String(raw).startsWith('call_')) return asNum;
+    return raw;
+}
+
 async function incrementActiveCallParticipants(callId) {
     const client = ensureSupabaseClient();
-    if (!client || callId == null) return;
+    const id = resolveActiveCallRowId(callId);
+    if (!client || id == null) return;
     try {
-        const { data } = await client.from('active_calls').select('participants').eq('id', callId).maybeSingle();
-        const next = Math.max(1, (data && data.participants ? data.participants : 1) + 1);
-        await client.from('active_calls').update({ participants: next }).eq('id', callId);
-        myActiveCallRowId = callId;
+        const { data } = await client.from('active_calls').select('id, participants').eq('id', id).maybeSingle();
+        if (!data) return;
+        const next = Math.max(1, (Number(data.participants) || 1) + 1);
+        await client.from('active_calls').update({ participants: next }).eq('id', data.id);
+        myActiveCallRowId = data.id;
     } catch (e) {
         console.warn("⚠️ [Supabase] incrementActiveCallParticipants error:", e);
     }
 }
 
-async function leaveActiveCallRow() {
+async function leaveActiveCallRow(callIdOverride) {
     const client = ensureSupabaseClient();
-    const callId = myActiveCallRowId || activeCallId;
+    const id = resolveActiveCallRowId(callIdOverride);
     myActiveCallRowId = null;
-    if (!client || callId == null) return;
+    if (!client || id == null) return { ended: false, remaining: 0 };
     try {
-        const { data } = await client.from('active_calls').select('participants').eq('id', callId).maybeSingle();
-        if (!data) return;
-        const next = (data.participants || 1) - 1;
+        const { data } = await client.from('active_calls').select('id, participants').eq('id', id).maybeSingle();
+        if (!data) return { ended: true, remaining: 0 };
+        const next = Math.max(0, (Number(data.participants) || 1) - 1);
         if (next <= 0) {
-            await client.from('active_calls').delete().eq('id', callId);
-        } else {
-            await client.from('active_calls').update({ participants: next }).eq('id', callId);
+            await client.from('active_calls').delete().eq('id', data.id);
+            return { ended: true, remaining: 0 };
         }
+        await client.from('active_calls').update({ participants: next }).eq('id', data.id);
+        return { ended: false, remaining: next };
     } catch (e) {
         console.warn("⚠️ [Supabase] leaveActiveCallRow error:", e);
+        return { ended: false, remaining: 0 };
     }
 }
 
@@ -6315,8 +6340,7 @@ function setupActiveCallsRealtime() {
         activeCallsRealtimeChannel = client.channel('active_calls_realtime')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'active_calls' }, async () => {
                 await fetchAndSyncActiveCalls();
-                const modal = document.getElementById('join-calls-modal');
-                if (modal && modal.style.display === 'flex') renderJoinCallsModal();
+                renderJoinCallsModal();
             })
             .subscribe();
     } catch (e) {
@@ -6487,7 +6511,11 @@ async function joinSpecificCall(callId) {
         await joinAgoraRoom(channel, call.id, host, room);
     } else if (mode === 'meet') {
         if (channel) window.open(channel, '_blank', 'noopener');
+        myActiveCallRowId = call.id;
+        activeCallId = call.id;
+        await incrementActiveCallParticipants(call.id);
         openFullCallView('meet', { id: call.id, hostName: host, topic: room, channelName: channel });
+        fetchAndSyncActiveCalls();
     } else {
         await startInAppCall(call.id, host, room);
     }
@@ -6496,7 +6524,12 @@ window.joinSpecificCall = joinSpecificCall;
 
 async function fetchAndSyncActiveCalls() {
     try {
+        const client = ensureSupabaseClient();
         const supabaseCalls = await serverGetActiveCalls();
+        if (client) {
+            updateActiveCallsSync(supabaseCalls, supabaseCalls[0] || null);
+            return;
+        }
         if (supabaseCalls.length) {
             updateActiveCallsSync(supabaseCalls, supabaseCalls[0]);
             return;
@@ -6510,7 +6543,7 @@ async function fetchAndSyncActiveCalls() {
         const activeCallsList = Array.isArray(data.activeCalls) ? data.activeCalls : (data.activeCall ? [data.activeCall] : []);
         updateActiveCallsSync(activeCallsList.map(normalizeActiveCallRow), data.activeCall);
     } catch (_) {
-        updateActiveCallsSync(allActiveServerCalls || [], null);
+        updateActiveCallsSync([], null);
     }
 }
 window.fetchAndSyncActiveCalls = fetchAndSyncActiveCalls;
@@ -6519,6 +6552,7 @@ function updateActiveCallsSync(callsList, primaryCall) {
     allActiveServerCalls = Array.isArray(callsList) ? callsList.filter(c => {
         if (!c) return false;
         if (c.status === 'ended' || c.status === 'cancelled') return false;
+        if (Number(c.participants) <= 0) return false;
         const mode = c.call_type || c.mode || (c.details && c.details.mode);
         return mode === 'agora' || mode === 'direct' || mode === 'inapp' || mode === 'meet';
     }).map(normalizeActiveCallRow) : [];
@@ -6911,7 +6945,8 @@ async function startInAppCall(callIdOverride, hostOverride, roomNameOverride) {
             }).then(() => fetchAndSyncActiveCalls()).catch(() => {});
         } else {
             myActiveCallRowId = actualCallId;
-            incrementActiveCallParticipants(actualCallId);
+            activeCallId = actualCallId;
+            incrementActiveCallParticipants(actualCallId).then(() => fetchAndSyncActiveCalls());
             fetch('/api/calls/join', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -7081,7 +7116,6 @@ async function endInAppCall() {
     if (shareBtn) shareBtn.style.display = 'none';
     if (endBtn) endBtn.style.display = 'none';
 
-    fetch('/api/calls/end', { method: 'POST' }).catch(() => {});
     showToast("🔴 انتهت المكالمة المباشرة.", "info");
 }
 
@@ -7512,7 +7546,8 @@ async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, room
             }).then(() => fetchAndSyncActiveCalls()).catch(() => {});
         } else {
             myActiveCallRowId = actualCallId;
-            incrementActiveCallParticipants(actualCallId);
+            activeCallId = actualCallId;
+            incrementActiveCallParticipants(actualCallId).then(() => fetchAndSyncActiveCalls());
             fetch('/api/calls/join', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -7623,7 +7658,6 @@ async function leaveAgoraRoom() {
         updateFullCallButtonsUI();
     }
 
-    fetch('/api/calls/end', { method: 'POST' }).catch(() => {});
     showToast("🔴 غادرت غرفة Agora الصوتية.", "info");
 }
 
@@ -7770,7 +7804,13 @@ async function handleCreateNewMeetCall() {
                 if (codeEl) codeEl.textContent = `Google Meet الرسمي: جاهز للبدء الفوري بنقرة واحدة`;
                 if (joinBtn) joinBtn.href = currentGoogleMeetUri;
 
-                insertActiveCallRow('meet', currentGoogleMeetUri).then(() => fetchAndSyncActiveCalls());
+                insertActiveCallRow('meet', currentGoogleMeetUri).then((row) => {
+                    if (row && row.id) {
+                        myActiveCallRowId = row.id;
+                        activeCallId = row.id;
+                    }
+                    fetchAndSyncActiveCalls();
+                });
                 showToast("🎉 تم تجهيز رابط Google Meet الرسمي بنجاح!", "success");
                 return;
             }
@@ -7792,7 +7832,13 @@ async function handleCreateNewMeetCall() {
         if (codeEl) codeEl.textContent = `الكود: ${currentGoogleMeetCode} | ${currentGoogleMeetUri}`;
         if (joinBtn) joinBtn.href = currentGoogleMeetUri;
 
-        insertActiveCallRow('meet', currentGoogleMeetUri).then(() => fetchAndSyncActiveCalls());
+        insertActiveCallRow('meet', currentGoogleMeetUri).then((row) => {
+            if (row && row.id) {
+                myActiveCallRowId = row.id;
+                activeCallId = row.id;
+            }
+            fetchAndSyncActiveCalls();
+        });
         showToast("🎉 تم إنشاء رابط مكالمة Google Meet بنجاح!", "success");
     } catch (err) {
         console.warn("[Google Meet] Fallback to direct launcher:", err && err.message);
@@ -7809,7 +7855,13 @@ async function handleCreateNewMeetCall() {
         if (codeEl) codeEl.textContent = `Google Meet الرسمي: جاهز للبدء الفوري بنقرة واحدة`;
         if (joinBtn) joinBtn.href = currentGoogleMeetUri;
 
-        insertActiveCallRow('meet', currentGoogleMeetUri).then(() => fetchAndSyncActiveCalls());
+        insertActiveCallRow('meet', currentGoogleMeetUri).then((row) => {
+            if (row && row.id) {
+                myActiveCallRowId = row.id;
+                activeCallId = row.id;
+            }
+            fetchAndSyncActiveCalls();
+        });
         showToast("📹 تم تجهيز رابط مكالمة Google Meet بنجاح!", "info");
     }
 }
@@ -7859,8 +7911,7 @@ function joinVoiceRoom() {
 }
 
 function leaveVoiceRoom() {
-    endInAppCall();
-    closeGoogleMeetModal();
+    handleFullCallEnd();
     const panel = document.getElementById("voice-room-panel");
     if (panel) panel.style.display = "none";
     const username = (typeof getCurrentUsername === "function" ? getCurrentUsername() : null) || "عضو PHANTOM";
