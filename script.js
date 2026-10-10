@@ -6048,7 +6048,11 @@ async function handleFullCallEnd() {
     }
     activeCallStartTime = null;
 
+    console.log('[active_calls] End Call clicked, id=', endingCallId, 'mode=', endingMode);
     const leaveResult = await leaveActiveCallRow(endingCallId);
+    if (leaveResult && leaveResult.ended) {
+        await deleteActiveCallRow(endingCallId);
+    }
 
     if (endingMode === 'agora') {
         await leaveAgoraRoom();
@@ -6308,26 +6312,127 @@ async function incrementActiveCallParticipants(callId) {
     }
 }
 
+async function deleteActiveCallRow(callId) {
+    const client = ensureSupabaseClient();
+    const id = resolveActiveCallRowId(callId);
+    console.log('[active_calls] Trying to delete row id=', id);
+    if (!client || id == null) {
+        console.warn('[active_calls] delete skipped: missing client or id', { hasClient: !!client, id });
+        return false;
+    }
+    try {
+        const { data, error } = await client.from('active_calls').delete().eq('id', id).select();
+        if (error) {
+            console.error('[active_calls] delete FAILED', error);
+            return false;
+        }
+        console.log('[active_calls] delete SUCCESS', data);
+        removeActiveCallFromLocalList(id);
+        return true;
+    } catch (e) {
+        console.error('[active_calls] delete EXCEPTION', e);
+        return false;
+    }
+}
+
 async function leaveActiveCallRow(callIdOverride) {
     const client = ensureSupabaseClient();
     const id = resolveActiveCallRowId(callIdOverride);
+    console.log('[active_calls] leave start, id=', id, 'myActiveCallRowId=', myActiveCallRowId, 'activeCallId=', activeCallId);
+    const savedId = id;
     myActiveCallRowId = null;
-    if (!client || id == null) return { ended: false, remaining: 0 };
-    try {
-        const { data } = await client.from('active_calls').select('id, participants').eq('id', id).maybeSingle();
-        if (!data) return { ended: true, remaining: 0 };
-        const next = Math.max(0, (Number(data.participants) || 1) - 1);
-        if (next <= 0) {
-            await client.from('active_calls').delete().eq('id', data.id);
-            return { ended: true, remaining: 0 };
-        }
-        await client.from('active_calls').update({ participants: next }).eq('id', data.id);
-        return { ended: false, remaining: next };
-    } catch (e) {
-        console.warn("⚠️ [Supabase] leaveActiveCallRow error:", e);
+    if (!client || id == null) {
+        console.warn('[active_calls] leave aborted: missing client or id');
         return { ended: false, remaining: 0 };
     }
+    try {
+        const { data, error: selectError } = await client.from('active_calls').select('id, participants').eq('id', id).maybeSingle();
+        if (selectError) console.error('[active_calls] select before leave FAILED', selectError);
+        const remainingOthers = data ? Math.max(0, (Number(data.participants) || 1) - 1) : 0;
+        if (!data || remainingOthers <= 0) {
+            const deleted = await deleteActiveCallRow(data ? data.id : id);
+            return { ended: true, remaining: 0, deleted };
+        }
+        const { error: updateError } = await client.from('active_calls').update({ participants: remainingOthers }).eq('id', data.id);
+        if (updateError) {
+            console.error('[active_calls] decrement FAILED', updateError);
+            await deleteActiveCallRow(data.id);
+            return { ended: true, remaining: 0 };
+        }
+        console.log('[active_calls] decremented participants to', remainingOthers);
+        return { ended: false, remaining: remainingOthers };
+    } catch (e) {
+        console.error('[active_calls] leaveActiveCallRow error', e);
+        await deleteActiveCallRow(savedId);
+        return { ended: true, remaining: 0 };
+    }
 }
+
+function removeActiveCallFromLocalList(deletedId) {
+    if (deletedId == null) return;
+    allActiveServerCalls = (allActiveServerCalls || []).filter((c) => c && String(c.id) !== String(deletedId));
+    updateActiveCallsSync(allActiveServerCalls, allActiveServerCalls[0] || null);
+    renderJoinCallsModal();
+}
+
+async function purgeStaleActiveCalls() {
+    const client = ensureSupabaseClient();
+    if (!client) return;
+    const cutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    try {
+        const { data, error } = await client.from('active_calls').select('id, created_at').lt('created_at', cutoff);
+        if (error) {
+            console.error('[active_calls] stale select FAILED', error);
+            return;
+        }
+        const rows = asList(data);
+        for (const row of rows) {
+            if (myActiveCallRowId != null && String(row.id) === String(myActiveCallRowId)) continue;
+            console.log('[active_calls] deleting stale row', row.id, row.created_at);
+            const { error: delError } = await client.from('active_calls').delete().eq('id', row.id);
+            if (delError) console.error('[active_calls] stale delete FAILED', row.id, delError);
+            else {
+                console.log('[active_calls] stale delete SUCCESS', row.id);
+                removeActiveCallFromLocalList(row.id);
+            }
+        }
+    } catch (e) {
+        console.error('[active_calls] purgeStaleActiveCalls error', e);
+    }
+}
+
+function cleanupActiveCallOnUnload() {
+    const id = resolveActiveCallRowId();
+    if (id == null) return;
+    const local = (allActiveServerCalls || []).find((c) => c && String(c.id) === String(id));
+    const participants = local ? Number(local.participants) || 1 : 1;
+    const headers = {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal'
+    };
+    const url = SUPABASE_URL + '/rest/v1/active_calls?id=eq.' + encodeURIComponent(id);
+    if (participants <= 1) {
+        console.log('[active_calls] beforeunload DELETE', id);
+        fetch(url, { method: 'DELETE', headers, keepalive: true }).catch((e) => {
+            console.error('[active_calls] beforeunload delete failed', e);
+        });
+    } else {
+        console.log('[active_calls] beforeunload decrement', id, participants - 1);
+        fetch(url, {
+            method: 'PATCH',
+            headers,
+            keepalive: true,
+            body: JSON.stringify({ participants: Math.max(0, participants - 1) })
+        }).catch((e) => {
+            console.error('[active_calls] beforeunload decrement failed', e);
+        });
+    }
+    myActiveCallRowId = null;
+}
+
+let staleActiveCallsInterval = null;
 
 function setupActiveCallsRealtime() {
     const client = ensureSupabaseClient();
@@ -6338,6 +6443,11 @@ function setupActiveCallsRealtime() {
     }
     try {
         activeCallsRealtimeChannel = client.channel('active_calls_realtime')
+            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'active_calls' }, (payload) => {
+                const deletedId = payload && payload.old ? payload.old.id : null;
+                console.log('[active_calls] Realtime DELETE', deletedId, payload);
+                removeActiveCallFromLocalList(deletedId);
+            })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'active_calls' }, async () => {
                 await fetchAndSyncActiveCalls();
                 renderJoinCallsModal();
@@ -6346,6 +6456,19 @@ function setupActiveCallsRealtime() {
     } catch (e) {
         console.warn("⚠️ [Realtime] setupActiveCallsRealtime error:", e);
     }
+    if (typeof window !== 'undefined' && !window.__activeCallUnloadBound) {
+        window.__activeCallUnloadBound = true;
+        window.addEventListener('beforeunload', cleanupActiveCallOnUnload);
+        window.addEventListener('pagehide', cleanupActiveCallOnUnload);
+    }
+    if (staleActiveCallsInterval) {
+        clearInterval(staleActiveCallsInterval);
+        staleActiveCallsInterval = null;
+    }
+    staleActiveCallsInterval = setInterval(() => {
+        purgeStaleActiveCalls();
+    }, 60000);
+    purgeStaleActiveCalls();
 }
 
 function handleJoinCallClick(event) {
