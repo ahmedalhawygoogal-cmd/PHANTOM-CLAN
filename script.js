@@ -291,7 +291,7 @@ function enforceBan(username, reason = "مطرود من الكلان") {
 }
 
 function getRejoinRequests() {
-    return asList(getStorage("phantom_rejoin_requests", []));
+    return getStorage("phantom_rejoin_requests", []);
 }
 
 function setRejoinRequests(data) {
@@ -659,16 +659,15 @@ async function serverGetExcuses() {
     if (client) {
         try {
             const { data, error } = await client.from('excuses').select('*').order('created_at', { ascending: false });
-            if (!error && data != null) {
-                const list = asList(data);
-                setStorage(PHANTOM_MEMORY.excusesKey, list);
-                return list;
+            if (!error && Array.isArray(data)) {
+                setStorage(PHANTOM_MEMORY.excusesKey, data);
+                return data;
             }
         } catch (e) {
             console.warn("⚠️ [Supabase] serverGetExcuses error:", e);
         }
     }
-    return asList(getStorage(PHANTOM_MEMORY.excusesKey, []));
+    return getStorage(PHANTOM_MEMORY.excusesKey, []);
 }
 
 async function serverCreateExcuse(excuseData) {
@@ -725,16 +724,15 @@ async function serverGetComplaints() {
     if (client) {
         try {
             const { data, error } = await client.from('complaints').select('*').order('created_at', { ascending: false });
-            if (!error && data != null) {
-                const list = asList(data);
-                setStorage(PHANTOM_MEMORY.complaintsKey, list);
-                return list;
+            if (!error && Array.isArray(data)) {
+                setStorage(PHANTOM_MEMORY.complaintsKey, data);
+                return data;
             }
         } catch (e) {
             console.warn("⚠️ [Supabase] serverGetComplaints error:", e);
         }
     }
-    return asList(getStorage(PHANTOM_MEMORY.complaintsKey, []));
+    return getStorage(PHANTOM_MEMORY.complaintsKey, []);
 }
 
 async function serverCreateComplaint(complaintData) {
@@ -866,16 +864,15 @@ async function serverGetNameChangeRequests() {
     if (client) {
         try {
             const { data, error } = await client.from('name_change_requests').select('*').order('created_at', { ascending: false });
-            if (!error && data != null) {
-                const list = asList(data);
-                setStorage(PHANTOM_MEMORY.nameChangeRequestsKey, list);
-                return list;
+            if (!error && Array.isArray(data)) {
+                setStorage(PHANTOM_MEMORY.nameChangeRequestsKey, data);
+                return data;
             }
         } catch (e) {
             console.warn("⚠️ [Supabase] serverGetNameChangeRequests error:", e);
         }
     }
-    return asList(getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []));
+    return getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []);
 }
 
 async function serverCreateNameChangeRequest(requestData) {
@@ -914,16 +911,15 @@ async function serverGetIdChangeRequests() {
     if (client) {
         try {
             const { data, error } = await client.from('id_change_requests').select('*').order('created_at', { ascending: false });
-            if (!error && data != null) {
-                const list = asList(data);
-                setStorage("phantom_id_change_requests", list);
-                return list;
+            if (!error && Array.isArray(data)) {
+                setStorage("phantom_id_change_requests", data);
+                return data;
             }
         } catch (e) {
             console.warn("⚠️ [Supabase] serverGetIdChangeRequests error:", e);
         }
     }
-    return asList(getStorage("phantom_id_change_requests", []));
+    return getStorage("phantom_id_change_requests", []);
 }
 
 async function serverCreateIdChangeRequest(requestData) {
@@ -962,16 +958,15 @@ async function serverGetRejoinRequests() {
     if (client) {
         try {
             const { data, error } = await client.from('rejoin_requests').select('*').order('created_at', { ascending: false });
-            if (!error && data != null) {
-                const list = asList(data);
-                setStorage("phantom_rejoin_requests", list);
-                return list;
+            if (!error && Array.isArray(data)) {
+                setStorage("phantom_rejoin_requests", data);
+                return data;
             }
         } catch (e) {
             console.warn("⚠️ [Supabase] serverGetRejoinRequests error:", e);
         }
     }
-    return asList(getStorage("phantom_rejoin_requests", []));
+    return getStorage("phantom_rejoin_requests", []);
 }
 
 async function serverCreateRejoinRequest(requestData) {
@@ -986,86 +981,6 @@ async function serverCreateRejoinRequest(requestData) {
     const requests = getStorage("phantom_rejoin_requests", []);
     requests.unshift(requestData);
     setStorage("phantom_rejoin_requests", requests);
-    return true;
-}
-
-function asList(val) {
-    if (Array.isArray(val)) return val;
-    if (val && typeof val === 'object') return [val];
-    return [];
-}
-
-function appendRealtimeItem(storageKey, row) {
-    if (!row) return;
-    let list = asList(getStorage(storageKey, []));
-    if (list.some(item => item && String(item.id) === String(row.id))) return;
-    list.unshift(row);
-    setStorage(storageKey, list);
-}
-
-function patchRealtimeItem(storageKey, row) {
-    if (!row) return;
-    let list = asList(getStorage(storageKey, []));
-    const idx = list.findIndex(item => item && String(item.id) === String(row.id));
-    if (idx >= 0) list[idx] = { ...list[idx], ...row };
-    else list.unshift(row);
-    setStorage(storageKey, list);
-}
-
-function removeRealtimeItem(storageKey, row) {
-    if (!row) return;
-    let list = asList(getStorage(storageKey, []));
-    setStorage(storageKey, list.filter(item => !item || String(item.id) !== String(row.id)));
-}
-
-function handleInboxRealtime(storageKey, payload) {
-    if (!payload) return;
-    if (payload.eventType === 'INSERT') appendRealtimeItem(storageKey, payload.new);
-    else if (payload.eventType === 'UPDATE') patchRealtimeItem(storageKey, payload.new);
-    else if (payload.eventType === 'DELETE') removeRealtimeItem(storageKey, payload.old || payload.new);
-}
-
-async function serverGetSuggestions() {
-    const client = ensureSupabaseClient();
-    if (client) {
-        try {
-            const { data, error } = await client.from('suggestions').select('*').order('created_at', { ascending: false });
-            if (!error && data != null) {
-                const list = asList(data);
-                setStorage("phantom_suggestions", list);
-                return list;
-            }
-        } catch (e) {
-            console.warn("⚠️ [Supabase] serverGetSuggestions error:", e);
-        }
-    }
-    return asList(getStorage("phantom_suggestions", []));
-}
-
-async function serverCreateSuggestion(suggestionData) {
-    const client = ensureSupabaseClient();
-    if (client) {
-        try {
-            await client.from('suggestions').insert([suggestionData]);
-        } catch (e) {
-            console.warn("⚠️ [Supabase] serverCreateSuggestion error:", e);
-        }
-    }
-    appendRealtimeItem("phantom_suggestions", suggestionData);
-    return true;
-}
-
-async function serverUpdateSuggestionStatus(id, newStatus) {
-    const client = ensureSupabaseClient();
-    if (client) {
-        try {
-            await client.from('suggestions').update({ status: newStatus }).eq('id', id);
-        } catch (e) {
-            console.warn("⚠️ [Supabase] serverUpdateSuggestionStatus error:", e);
-        }
-    }
-    let suggestions = asList(getStorage("phantom_suggestions", []));
-    setStorage("phantom_suggestions", suggestions.map(s => String(s.id) === String(id) ? { ...s, status: newStatus } : s));
     return true;
 }
 
@@ -1192,6 +1107,26 @@ async function serverCreateClipComment(commentData) {
 let tablesRealtimeChannel = null;
 let matchmakingRealtimeChannel = null;
 
+function updateOrAppendSharedArray(storageKey, newOrUpdatedItem) {
+    if (!newOrUpdatedItem) return;
+    const list = getStorage(storageKey, []);
+    const itemId = newOrUpdatedItem.id;
+    const existingIndex = list.findIndex(item => String(item.id) === String(itemId));
+    if (existingIndex !== -1) {
+        list[existingIndex] = { ...list[existingIndex], ...newOrUpdatedItem };
+    } else {
+        list.unshift(newOrUpdatedItem);
+    }
+    setStorage(storageKey, list);
+}
+
+function removeFromSharedArray(storageKey, itemId) {
+    if (!itemId) return;
+    let list = getStorage(storageKey, []);
+    list = list.filter(item => String(item.id) !== String(itemId));
+    setStorage(storageKey, list);
+}
+
 function setupTablesRealtime() {
     const client = ensureSupabaseClient();
     if (!client) return;
@@ -1256,39 +1191,75 @@ function setupTablesRealtime() {
                     showToast(`🎉 سجلت الإدارة حضورك في الروم ومنحتك +${payload.new.points_awarded || 30} نقطة!`, 'success');
                 }
             })
-            // 5. الشكاوى (Complaints) - تظهر للإدارة وتُحدث فورياً
+            // 5. الشكاوى (Complaints) - تظهر للإدارة وتُحدث فورياً مع دعم الإضافة التراكمية
             .on('postgres_changes', { event: '*', schema: 'public', table: 'complaints' }, async (payload) => {
-                handleInboxRealtime(PHANTOM_MEMORY.complaintsKey, payload);
+                if (payload.eventType === 'INSERT') {
+                    updateOrAppendSharedArray(PHANTOM_MEMORY.complaintsKey, payload.new);
+                } else if (payload.eventType === 'UPDATE') {
+                    updateOrAppendSharedArray(PHANTOM_MEMORY.complaintsKey, payload.new);
+                } else if (payload.eventType === 'DELETE' && payload.old) {
+                    removeFromSharedArray(PHANTOM_MEMORY.complaintsKey, payload.old.id);
+                } else {
+                    await serverGetComplaints();
+                }
                 renderFounderNotifications();
                 if (typeof renderAdminInbox === 'function') renderAdminInbox();
             })
             // 6. طلبات الرجوع (Rejoin Requests) - تظهر للإدارة وتُحدث فورياً
             .on('postgres_changes', { event: '*', schema: 'public', table: 'rejoin_requests' }, async (payload) => {
-                handleInboxRealtime("phantom_rejoin_requests", payload);
+                if (payload.eventType === 'INSERT') {
+                    updateOrAppendSharedArray("phantom_rejoin_requests", payload.new);
+                } else if (payload.eventType === 'UPDATE') {
+                    updateOrAppendSharedArray("phantom_rejoin_requests", payload.new);
+                } else if (payload.eventType === 'DELETE' && payload.old) {
+                    removeFromSharedArray("phantom_rejoin_requests", payload.old.id);
+                } else {
+                    await serverGetRejoinRequests();
+                }
                 renderFounderNotifications();
                 if (typeof renderAdminInbox === 'function') renderAdminInbox();
             })
             // 7. طلبات تغيير الاسم (Name Change Requests)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'name_change_requests' }, async (payload) => {
-                handleInboxRealtime(PHANTOM_MEMORY.nameChangeRequestsKey, payload);
+                if (payload.eventType === 'INSERT') {
+                    updateOrAppendSharedArray(PHANTOM_MEMORY.nameChangeRequestsKey, payload.new);
+                } else if (payload.eventType === 'UPDATE') {
+                    updateOrAppendSharedArray(PHANTOM_MEMORY.nameChangeRequestsKey, payload.new);
+                } else if (payload.eventType === 'DELETE' && payload.old) {
+                    removeFromSharedArray(PHANTOM_MEMORY.nameChangeRequestsKey, payload.old.id);
+                } else {
+                    await serverGetNameChangeRequests();
+                }
                 renderFounderNotifications();
                 if (typeof renderAdminInbox === 'function') renderAdminInbox();
             })
             // 8. طلبات تغيير المعرف (ID Change Requests)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'id_change_requests' }, async (payload) => {
-                handleInboxRealtime("phantom_id_change_requests", payload);
+                if (payload.eventType === 'INSERT') {
+                    updateOrAppendSharedArray("phantom_id_change_requests", payload.new);
+                } else if (payload.eventType === 'UPDATE') {
+                    updateOrAppendSharedArray("phantom_id_change_requests", payload.new);
+                } else if (payload.eventType === 'DELETE' && payload.old) {
+                    removeFromSharedArray("phantom_id_change_requests", payload.old.id);
+                } else {
+                    await serverGetIdChangeRequests();
+                }
                 renderFounderNotifications();
                 if (typeof renderAdminInbox === 'function') renderAdminInbox();
             })
             // 9. الأعذار (Excuses)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'excuses' }, async (payload) => {
-                handleInboxRealtime(PHANTOM_MEMORY.excusesKey, payload);
+                if (payload.eventType === 'INSERT') {
+                    updateOrAppendSharedArray(PHANTOM_MEMORY.excusesKey, payload.new);
+                } else if (payload.eventType === 'UPDATE') {
+                    updateOrAppendSharedArray(PHANTOM_MEMORY.excusesKey, payload.new);
+                } else if (payload.eventType === 'DELETE' && payload.old) {
+                    removeFromSharedArray(PHANTOM_MEMORY.excusesKey, payload.old.id);
+                } else {
+                    await serverGetExcuses();
+                }
                 renderFounderNotifications();
                 if (typeof renderAdminInbox === 'function') renderAdminInbox();
-            })
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'suggestions' }, async (payload) => {
-                handleInboxRealtime("phantom_suggestions", payload);
-                if (typeof renderSuggestions === 'function') renderSuggestions();
             })
             // 10. الإنذارات (Warnings) - إشعار فوري وتحديث الملف الشخصي
             .on('postgres_changes', { event: '*', schema: 'public', table: 'warnings' }, async (payload) => {
@@ -1323,6 +1294,17 @@ function setupTablesRealtime() {
                 await serverGetClipComments(clip?.id);
                 renderComments();
                 renderClips();
+            })
+            // 13. الاقتراحات (Suggestions) - تحديث لحظي لصندوق الاقتراحات
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'suggestions' }, async (payload) => {
+                if (payload.eventType === 'INSERT') {
+                    updateOrAppendSharedArray("phantom_suggestions", payload.new);
+                } else if (payload.eventType === 'UPDATE') {
+                    updateOrAppendSharedArray("phantom_suggestions", payload.new);
+                } else if (payload.eventType === 'DELETE' && payload.old) {
+                    removeFromSharedArray("phantom_suggestions", payload.old.id);
+                }
+                renderSuggestions();
             })
             .subscribe((status, err) => {
                 if (status === 'SUBSCRIBED') {
@@ -1514,7 +1496,7 @@ const PHANTOM_MEMORY = {
        commentsKey: "phantom_clips_comments",
     onboardingKey: "phantom_onboarding_completed",
     deletedWarningsKey: "phantom_deleted_warnings",
-
+    suggestionsKey: "phantom_suggestions"
 };
 
 
@@ -1657,8 +1639,8 @@ if (Array.isArray(warnings)) {
             serverGetNameChangeRequests(),
             serverGetIdChangeRequests(),
             serverGetRejoinRequests(),
-            serverGetSuggestions(),
-            serverGetClips()
+            serverGetClips(),
+            serverGetSuggestions()
         ]);
         const currentClip = getStorage(PHANTOM_MEMORY.clipsKey, null);
         if (currentClip && currentClip.id) {
@@ -1666,8 +1648,6 @@ if (Array.isArray(warnings)) {
         }
 
         setupTablesRealtime();
-        setupActiveCallsRealtime();
-        fetchAndSyncActiveCalls();
     } catch (error) {
         console.warn("[PHANTOM] Server data sync fallback activated.");
     }
@@ -3070,11 +3050,11 @@ function renderAdminInbox() {
     if (!container) return;
     
     let html = '';
-    const complaints = asList(getStorage(PHANTOM_MEMORY.complaintsKey, [])).filter(c => !c.status || c.status === 'pending');
+    const complaints = getStorage(PHANTOM_MEMORY.complaintsKey, []).filter(c => !c.status || c.status === 'pending');
     const rejoinRequests = getRejoinRequests().filter(r => !r.status || r.status === 'pending');
-    const excuses = asList(getStorage(PHANTOM_MEMORY.excusesKey, [])).filter(e => !e.status || e.status === 'pending');
-    const nameChanges = asList(getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, [])).filter(n => !n.status || n.status === 'pending');
-    const idChanges = asList(getStorage("phantom_id_change_requests", [])).filter(i => !i.status || i.status === 'pending');
+    const excuses = getStorage(PHANTOM_MEMORY.excusesKey, []).filter(e => !e.status || e.status === 'pending');
+    const nameChanges = getStorage(PHANTOM_MEMORY.nameChangeRequestsKey, []).filter(n => !n.status || n.status === 'pending');
+    const idChanges = getStorage("phantom_id_change_requests", []).filter(i => !i.status || i.status === 'pending');
 
     const allRequests = [
         ...complaints.map(c => ({...c, type: 'شكوى'})),
@@ -5770,8 +5750,6 @@ function setupVoiceCalls() {
     if (voiceCallBtn) {
         voiceCallBtn.addEventListener("click", handleVoiceCallBtnClick);
     }
-    setupActiveCallsRealtime();
-    fetchAndSyncActiveCalls();
 }
 
 function handleVoiceCallBtnClick() {
@@ -5826,22 +5804,6 @@ function startCallWithMode(mode) {
 }
 window.startCallWithMode = startCallWithMode;
 
-const CALL_AVATAR_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.4 0-8 2.2-8 5v1.5A1.5 1.5 0 0 0 5.5 22h13a1.5 1.5 0 0 0 1.5-1.5V19c0-2.8-3.6-5-8-5z"/></svg>';
-const CALL_MIC_ON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>';
-const CALL_MIC_OFF_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="4" y1="4" x2="20" y2="20"/></svg>';
-const CALL_MIC_BTN_ON_SVG = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
-const CALL_MIC_BTN_OFF_SVG = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2"/><path d="M19 10v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
-const CALL_CAM_ON_SVG = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16V8a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2z"/><polygon points="16 12 22 8 22 16 16 12"/></svg>';
-const CALL_CAM_OFF_SVG = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16V8a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2z"/><polygon points="16 12 22 8 22 16 16 12"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
-const CALL_VIDEO_TYPE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17 10.5V7a2 2 0 0 0-2-2H5A2 2 0 0 0 3 7v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3.5l4 4v-11l-4 4z"/></svg>';
-const CALL_AUDIO_TYPE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zm7 9a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-2.06A9 9 0 0 0 21 12h-2z"/></svg>';
-
-function getCallScreenTypeLabel(mode) {
-    if (mode === 'agora') return 'Agora الصوتية';
-    if (mode === 'meet') return 'Google Meet';
-    return 'مكالمة الفيديو';
-}
-
 function openFullCallView(mode, callData = {}) {
     activeCallMode = mode;
     activeCallId = callData.id || activeCallId || ('call_' + mode + '_' + Date.now());
@@ -5850,35 +5812,64 @@ function openFullCallView(mode, callData = {}) {
     activeCallChannel = callData.channelName || activeCallChannel || (mode === 'agora' ? AGORA_CHANNEL : 'direct_hq');
     isCallViewMinimized = false;
 
+    // إظهار صفحة المكالمة الكاملة وإخفاء الشريط العائم
     const overlay = document.getElementById('full-page-call-overlay');
     const floatBar = document.getElementById('floating-ongoing-call-bar');
     if (overlay) overlay.style.display = 'flex';
     if (floatBar) floatBar.style.display = 'none';
 
+    // تحديث عناصر الشريط العلوي
     const roomTitle = document.getElementById('call-room-title');
     const typeBadge = document.getElementById('call-type-badge');
-    const typeIcon = document.getElementById('call-type-icon');
     const statusPill = document.getElementById('call-connection-status');
     const hostEl = document.getElementById('call-host-name-display');
     const topicEl = document.getElementById('call-topic-display');
+    const agoraStage = document.getElementById('call-agora-mode-stage');
+    const directStage = document.getElementById('call-direct-mode-stage');
     const camBtn = document.getElementById('fullcall-cam-btn');
     const agoraChannelTag = document.getElementById('agora-display-channel');
 
-    if (roomTitle) roomTitle.textContent = 'مكالمة فيديو جماعية';
+    if (roomTitle) roomTitle.textContent = activeCallTopic;
     if (hostEl) hostEl.textContent = activeCallHost;
     if (topicEl) topicEl.textContent = activeCallTopic;
-    if (typeBadge) {
-        typeBadge.textContent = getCallScreenTypeLabel(mode);
-        typeBadge.className = 'call-type-pill';
+
+    if (mode === 'agora') {
+        if (typeBadge) {
+            typeBadge.textContent = '🎙️ مكالمة Agora التكتيكية';
+            typeBadge.className = 'call-type-pill';
+        }
+        if (agoraStage) agoraStage.style.display = 'flex';
+        if (directStage) directStage.style.display = 'none';
+        if (camBtn) camBtn.style.display = 'none';
+        if (agoraChannelTag) agoraChannelTag.textContent = activeCallChannel;
+    } else {
+        if (typeBadge) {
+            typeBadge.textContent = '📱 اتصال مباشر (صوت وفيديو)';
+            typeBadge.className = 'call-type-pill';
+        }
+        if (agoraStage) agoraStage.style.display = 'none';
+        if (directStage) directStage.style.display = 'flex';
+        if (camBtn) camBtn.style.display = 'inline-flex';
     }
-    if (typeIcon) typeIcon.innerHTML = mode === 'agora' ? CALL_AUDIO_TYPE_SVG : CALL_VIDEO_TYPE_SVG;
-    if (camBtn) camBtn.style.display = 'flex';
-    if (agoraChannelTag) agoraChannelTag.textContent = activeCallChannel;
 
     if (statusPill) {
-        const connected = mode === 'agora' ? isAgoraJoined : !!inAppMediaStream;
-        statusPill.textContent = connected ? 'متصل' : 'جاري الاتصال';
-        statusPill.className = connected ? 'call-status-pill status-connected' : 'call-status-pill status-connecting';
+        if (mode === 'agora') {
+            if (isAgoraJoined) {
+                statusPill.textContent = '🟢 متصل';
+                statusPill.className = 'call-status-pill status-connected';
+            } else {
+                statusPill.textContent = '⏳ جاري الاتصال...';
+                statusPill.className = 'call-status-pill status-connecting';
+            }
+        } else {
+            if (inAppMediaStream) {
+                statusPill.textContent = '🟢 متصل';
+                statusPill.className = 'call-status-pill status-connected';
+            } else {
+                statusPill.textContent = '⏳ جاري الاتصال...';
+                statusPill.className = 'call-status-pill status-connecting';
+            }
+        }
     }
 
     // بدء عداد وقت المكالمة
@@ -5922,13 +5913,11 @@ function minimizeCallView() {
         floatBar.style.display = 'flex';
         const titleEl = document.getElementById('floating-call-title');
         const metaEl = document.getElementById('floating-call-meta');
-        const typeEl = document.getElementById('floating-call-type-badge');
-        if (typeEl) typeEl.textContent = getCallTypeLabel(activeCallMode);
         if (titleEl) {
-            titleEl.textContent = getCallBarTitle(activeCallMode, activeCallTopic);
+            titleEl.textContent = activeCallMode === 'agora' ? `🎙️ مكالمة Agora: ${activeCallTopic || 'PHANTOM'}` : `📱 اتصال مباشر: ${activeCallTopic || 'المقر'}`;
         }
         if (metaEl) {
-            metaEl.textContent = `المنشئ: ${activeCallHost || 'عضو الكلان'} • ${getCallTypeLabel(activeCallMode)}`;
+            metaEl.textContent = `المنشئ: ${activeCallHost || 'عضو الكلان'}`;
         }
     }
     showToast("⛶ تم تصغير المكالمة، الصوت مستمر أثناء التصفح.", "info");
@@ -5947,20 +5936,12 @@ function maximizeCallView() {
 }
 window.maximizeCallView = maximizeCallView;
 
-function formatCallDuration(elapsedSec) {
-    const hrs = Math.floor(elapsedSec / 3600);
-    const mins = Math.floor((elapsedSec % 3600) / 60);
-    const secs = elapsedSec % 60;
-    if (hrs > 0) {
-        return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    }
-    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-}
-
 function updateCallTimer() {
     if (!activeCallStartTime) return;
     const elapsedSec = Math.floor((Date.now() - activeCallStartTime) / 1000);
-    const timeStr = formatCallDuration(elapsedSec);
+    const mins = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+    const secs = String(elapsedSec % 60).padStart(2, '0');
+    const timeStr = `${mins}:${secs}`;
     const timerEl = document.getElementById('call-timer');
     if (timerEl) timerEl.textContent = timeStr;
     const metaEl = document.getElementById('floating-call-meta');
@@ -5984,7 +5965,6 @@ async function handleFullCallToggleCam() {
     if (activeCallMode === 'direct') {
         await toggleInAppCam();
         updateFullCallButtonsUI();
-        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
     }
 }
 window.handleFullCallToggleCam = handleFullCallToggleCam;
@@ -5998,9 +5978,15 @@ function updateFullCallButtonsUI() {
     const myMicBadge = document.getElementById('call-my-mic-status-badge');
 
     if (fullMicBtn) {
-        fullMicBtn.className = isMuted ? 'call-ctl-btn mic-btn mic-muted' : 'call-ctl-btn mic-btn mic-active';
-        if (fullMicIcon) fullMicIcon.innerHTML = isMuted ? CALL_MIC_BTN_OFF_SVG : CALL_MIC_BTN_ON_SVG;
-        if (fullMicLabel) fullMicLabel.textContent = 'كتم';
+        if (!isMuted) {
+            fullMicBtn.className = 'call-ctl-btn mic-btn mic-active';
+            if (fullMicIcon) fullMicIcon.textContent = '🎙️';
+            if (fullMicLabel) fullMicLabel.textContent = 'المايك: شغال';
+        } else {
+            fullMicBtn.className = 'call-ctl-btn mic-btn mic-muted';
+            if (fullMicIcon) fullMicIcon.textContent = '🔇';
+            if (fullMicLabel) fullMicLabel.textContent = 'المايك: مكتوم';
+        }
     }
 
     if (floatMicBtn) {
@@ -6010,23 +5996,25 @@ function updateFullCallButtonsUI() {
     }
 
     if (myMicBadge) {
-        myMicBadge.textContent = !isMuted ? 'المايك: شغال' : 'المايك: مكتوم';
+        myMicBadge.textContent = !isMuted ? '🎙️ المايك الخاص بك: شغال' : '🔇 المايك الخاص بك: مكتوم';
+        myMicBadge.style.color = !isMuted ? '#00ff88' : '#ef4444';
+        myMicBadge.style.borderColor = !isMuted ? 'rgba(0, 255, 136, 0.3)' : 'rgba(239, 68, 68, 0.3)';
     }
 
     const fullCamBtn = document.getElementById('fullcall-cam-btn');
     const fullCamIcon = document.getElementById('fullcall-cam-icon');
     const fullCamLabel = document.getElementById('fullcall-cam-label');
-    const camOff = activeCallMode === 'agora' ? true : isInAppCamOff;
     if (fullCamBtn) {
-        fullCamBtn.className = camOff ? 'call-ctl-btn cam-btn cam-off' : 'call-ctl-btn cam-btn';
-        if (fullCamIcon) fullCamIcon.innerHTML = camOff ? CALL_CAM_OFF_SVG : CALL_CAM_ON_SVG;
-        if (fullCamLabel) fullCamLabel.textContent = 'إيقاف الفيديو';
-        if (activeCallMode === 'agora') {
-            fullCamBtn.disabled = true;
-            fullCamBtn.style.opacity = '0.55';
+        if (!isInAppCamOff) {
+            if (fullCamIcon) fullCamIcon.textContent = '📹';
+            if (fullCamLabel) fullCamLabel.textContent = 'الكاميرا: شغال';
+            fullCamBtn.style.color = '#fff';
+            fullCamBtn.style.borderColor = 'rgba(0, 242, 254, 0.3)';
         } else {
-            fullCamBtn.disabled = false;
-            fullCamBtn.style.opacity = '1';
+            if (fullCamIcon) fullCamIcon.textContent = '🚫';
+            if (fullCamLabel) fullCamLabel.textContent = 'الكاميرا: معطلة';
+            fullCamBtn.style.color = '#ef4444';
+            fullCamBtn.style.borderColor = '#ef4444';
         }
     }
 }
@@ -6034,8 +6022,7 @@ window.updateFullCallButtonsUI = updateFullCallButtonsUI;
 
 async function handleFullCallEnd() {
     const endingMode = activeCallMode;
-    const endingCallId = myActiveCallRowId != null ? myActiveCallRowId : activeCallId;
-    if (!endingMode && endingCallId == null) return;
+    const endingCallId = activeCallId;
     const user = (typeof getCurrentUsername === 'function' ? getCurrentUsername() : null) || 'عضو الكلان';
 
     if (activeCallTimerInterval) {
@@ -6047,12 +6034,6 @@ async function handleFullCallEnd() {
         activeCallHeartbeatInterval = null;
     }
     activeCallStartTime = null;
-
-    console.log('[active_calls] End Call clicked, id=', endingCallId, 'mode=', endingMode);
-    const leaveResult = await leaveActiveCallRow(endingCallId);
-    if (leaveResult && leaveResult.ended) {
-        await deleteActiveCallRow(endingCallId);
-    }
 
     if (endingMode === 'agora') {
         await leaveAgoraRoom();
@@ -6071,469 +6052,314 @@ async function handleFullCallEnd() {
     if (overlay) overlay.style.display = 'none';
     if (floatBar) floatBar.style.display = 'none';
 
-    const leavePayload = { callId: endingCallId, username: user, hostName: user };
-    if (leaveResult && leaveResult.ended) {
-        fetch('/api/calls/end', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(leavePayload)
-        }).catch(() => {});
-    } else {
-        fetch('/api/calls/leave', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(leavePayload)
-        }).catch(() => {});
-    }
+    fetch('/api/calls/end', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callId: endingCallId, hostName: user })
+    }).catch(() => {});
 
-    showToast("تم مغادرة المكالمة.", "info");
-    await fetchAndSyncActiveCalls();
+    showToast("🔴 تم إنهاء المكالمة ومغادرة الغرفة.", "info");
+    fetchAndSyncActiveCalls();
 }
 window.handleFullCallEnd = handleFullCallEnd;
 
-function getCallParticipantName(user) {
-    if (!user) return 'عضو';
-    return user.name || user.username || user.displayName || (user.uid != null ? `عضو ${user.uid}` : 'عضو');
-}
+function updateFullCallParticipantsUI() {
+    const container = document.getElementById('call-participants-list');
+    const countEl = document.getElementById('call-participants-count');
 
-function collectCallParticipants() {
     const myName = (typeof getCurrentUsername === 'function' ? getCurrentUsername() : null) || 'أنت';
+    const myId = (typeof getCurrentUserId === 'function' ? getCurrentUserId() : null) || 'me';
     const isMuted = activeCallMode === 'agora' ? isAgoraMicMuted : isInAppMicMuted;
-    const camOn = activeCallMode === 'direct' && !isInAppCamOff;
-    const list = [{
-        id: 'local',
+    const participants = [];
+
+    // المشارك المحلي (المستخدم الحالي)
+    participants.push({
         name: myName,
+        isHost: activeCallHost ? (typeof normalizeName === 'function' ? normalizeName(myName) === normalizeName(activeCallHost) : myName === activeCallHost) : true,
         isMe: true,
-        isMuted,
-        hasVideo: camOn
-    }];
-    if (typeof agoraRemoteUsers !== 'undefined' && agoraRemoteUsers instanceof Map) {
+        isMuted: isMuted,
+        isSpeaking: !isMuted
+    });
+
+    if (activeCallMode === 'agora' && typeof agoraRemoteUsers !== 'undefined' && agoraRemoteUsers instanceof Map) {
         agoraRemoteUsers.forEach((user, uid) => {
-            list.push({
-                id: String(uid),
-                name: getCallParticipantName(user),
+            const hasAudio = user.hasAudio;
+            const displayName = user.displayName || user.username || user.name || (user.metadata && user.metadata.username) || (typeof agoraUserNames !== 'undefined' && agoraUserNames.get(uid)) || `عضو (${uid})`;
+            participants.push({
+                name: displayName,
+                isHost: activeCallHost ? (displayName === activeCallHost) : false,
                 isMe: false,
-                isMuted: !user.hasAudio,
-                hasVideo: activeCallMode !== 'agora' && !!(user.hasVideo && user.videoTrack),
-                user
+                isMuted: !hasAudio,
+                isSpeaking: hasAudio
             });
         });
-    }
-    return list;
-}
-
-function ensureCallTile(grid, participant) {
-    const tileId = `call-tile-${participant.id}`;
-    let tile = document.getElementById(tileId);
-    if (!tile) {
-        tile = document.createElement('div');
-        tile.id = tileId;
-        tile.className = 'call-tile' + (participant.isMe ? ' is-local' : '');
-        tile.innerHTML = `
-            <div class="call-tile-media" id="call-tile-media-${participant.id}"></div>
-            <div class="call-tile-placeholder" id="call-tile-ph-${participant.id}">
-                <div class="call-tile-avatar">${CALL_AVATAR_SVG}</div>
-            </div>
-            <div class="call-tile-badge">
-                <span class="call-tile-mic ${participant.isMuted ? '' : 'is-on'}" id="call-tile-mic-${participant.id}">${participant.isMuted ? CALL_MIC_OFF_SVG : CALL_MIC_ON_SVG}</span>
-                <span class="call-tile-name">${escapeHTML(participant.name)}</span>
-            </div>
-        `;
-        grid.appendChild(tile);
-    }
-    const nameEl = tile.querySelector('.call-tile-name');
-    if (nameEl) nameEl.textContent = participant.name;
-    const micEl = document.getElementById(`call-tile-mic-${participant.id}`);
-    if (micEl) {
-        micEl.className = 'call-tile-mic' + (participant.isMuted ? '' : ' is-on');
-        micEl.innerHTML = participant.isMuted ? CALL_MIC_OFF_SVG : CALL_MIC_ON_SVG;
-    }
-    const ph = document.getElementById(`call-tile-ph-${participant.id}`);
-    const media = document.getElementById(`call-tile-media-${participant.id}`);
-    const showVideo = participant.hasVideo && activeCallMode !== 'agora';
-    if (ph) ph.style.display = showVideo ? 'none' : 'flex';
-    if (media) media.style.display = showVideo ? 'block' : 'none';
-    return { tile, media };
-}
-
-function attachLocalVideoToTile(mediaEl) {
-    if (!mediaEl) return;
-    let videoEl = mediaEl.querySelector('video');
-    if (!videoEl) {
-        videoEl = document.createElement('video');
-        videoEl.id = 'inapp-clan-video';
-        videoEl.autoplay = true;
-        videoEl.playsInline = true;
-        videoEl.muted = true;
-        videoEl.setAttribute('autoplay', '');
-        videoEl.setAttribute('playsinline', '');
-        videoEl.setAttribute('muted', '');
-        mediaEl.innerHTML = '';
-        mediaEl.appendChild(videoEl);
-    }
-    if (inAppMediaStream && videoEl.srcObject !== inAppMediaStream) {
-        videoEl.srcObject = inAppMediaStream;
-    }
-    if (!isInAppCamOff) videoEl.play().catch(() => {});
-}
-
-function updateFullCallParticipantsUI() {
-    const grid = document.getElementById('call-participants-grid');
-    const countEl = document.getElementById('call-participants-count');
-    const participants = collectCallParticipants();
-    if (countEl) countEl.textContent = String(participants.length);
-    if (!grid) return;
-
-    const keep = new Set();
-    participants.forEach((p) => {
-        keep.add(`call-tile-${p.id}`);
-        const { media } = ensureCallTile(grid, p);
-        if (p.isMe && p.hasVideo) {
-            attachLocalVideoToTile(media);
-        } else if (!p.isMe && p.hasVideo && p.user && p.user.videoTrack && media) {
-            const playerId = `call-tile-player-${p.id}`;
-            let player = document.getElementById(playerId);
-            if (!player) {
-                media.innerHTML = '';
-                player = document.createElement('div');
-                player.id = playerId;
-                player.style.width = '100%';
-                player.style.height = '100%';
-                media.appendChild(player);
-                try { p.user.videoTrack.play(player); } catch (_) {}
-            }
+    } else if (activeCallMode === 'direct') {
+        if (typeof directCallParticipants !== 'undefined' && directCallParticipants instanceof Map) {
+            directCallParticipants.forEach((p, peerId) => {
+                if (String(peerId) !== String(myId)) {
+                    const displayName = p.name || p.username || 'عضو الكلان';
+                    participants.push({
+                        name: displayName,
+                        isHost: activeCallHost ? (displayName === activeCallHost) : false,
+                        isMe: false,
+                        isMuted: !!p.micMuted,
+                        isSpeaking: !p.micMuted
+                    });
+                }
+            });
         }
-    });
-    Array.from(grid.children).forEach((child) => {
-        if (!keep.has(child.id)) child.remove();
-    });
-
-    const list = document.getElementById('call-participants-list');
-    if (list) {
-        list.innerHTML = participants.map(p => `<div>${escapeHTML(p.name)}</div>`).join('');
     }
+
+    if (countEl) countEl.textContent = String(participants.length);
+
+    if (container) {
+        container.innerHTML = participants.map(p => `
+            <div class="participant-card ${p.isHost ? 'is-host' : ''} ${p.isSpeaking ? 'is-speaking' : ''}">
+                <div class="participant-name-block">
+                    <div class="participant-avatar-badge">${p.isHost ? '👑' : '👤'}</div>
+                    <div class="participant-user-name" title="${p.name}">
+                        ${p.name} ${p.isMe ? '<small style="color:#94a3b8;">(أنت)</small>' : ''}
+                    </div>
+                </div>
+                <div class="participant-status-icons">
+                    <span>${!p.isMuted ? '🎙️' : '🔇'}</span>
+                    ${p.isSpeaking ? '<span style="color:#00ff88; font-size:0.75rem;">🔊</span>' : ''}
+                </div>
+            </div>
+        `).join('');
+    }
+
+    renderCallParticipantsGrid();
 }
 window.updateFullCallParticipantsUI = updateFullCallParticipantsUI;
 
-function getCallTypeLabel(mode) {
-    if (mode === 'agora') return 'Agora voice';
-    if (mode === 'meet') return 'Google Meet';
-    return 'Direct A/V';
-}
+function renderCallParticipantsGrid() {
+    const grid = document.getElementById('call-participants-grid');
+    if (!grid) return;
 
-function getCallBarTitle(mode, topic) {
-    if (mode === 'agora') return `Agora voice: ${topic || 'PHANTOM'}`;
-    if (mode === 'meet') return `Google Meet: ${topic || 'Meet'}`;
-    return `Direct A/V: ${topic || 'المقر'}`;
-}
+    const myName = (typeof getCurrentUsername === 'function' ? getCurrentUsername() : null) || 'أنت';
+    const myId = (typeof getCurrentUserId === 'function' ? getCurrentUserId() : null) || 'me';
 
-function normalizeActiveCallRow(row) {
-    if (!row) return null;
-    const callType = row.call_type || row.mode || (row.details && row.details.mode) || 'direct';
-    const participants = (typeof row.participants === 'number')
-        ? row.participants
-        : (Array.isArray(row.participants) ? row.participants.length : 1);
-    return {
-        ...row,
-        id: row.id,
-        call_type: callType,
-        mode: callType,
-        creator_name: row.creator_name || row.hostName || row.challengerName || 'عضو الكلان',
-        creator_id: row.creator_id || row.hostId || '',
-        channel_name: row.channel_name || row.channelName || (row.details && row.details.channelName) || '',
-        participants,
-        hostName: row.creator_name || row.hostName || row.challengerName || 'عضو الكلان',
-        roomName: row.channel_name || row.roomName || row.topic || ''
-    };
-}
-
-let myActiveCallRowId = null;
-let activeCallsRealtimeChannel = null;
-
-async function serverGetActiveCalls() {
-    const client = ensureSupabaseClient();
-    if (!client) return [];
-    try {
-        const { data, error } = await client.from('active_calls').select('*').order('created_at', { ascending: false });
-        if (error || data == null) return [];
-        return asList(data).map(normalizeActiveCallRow).filter((row) => row && Number(row.participants) > 0);
-    } catch (e) {
-        console.warn("⚠️ [Supabase] serverGetActiveCalls error:", e);
-        return [];
-    }
-}
-
-async function insertActiveCallRow(callType, channelName) {
-    const client = ensureSupabaseClient();
-    const username = (typeof getCurrentUsername === 'function' ? getCurrentUsername() : null) || 'عضو PHANTOM';
-    const userId = (typeof getCurrentUserId === 'function' ? getCurrentUserId() : null) || username;
-    const payload = {
-        creator_id: String(userId),
-        creator_name: username,
-        call_type: callType,
-        channel_name: channelName || '',
-        participants: 1
-    };
-    if (!client) return null;
-    try {
-        const { data, error } = await client.from('active_calls').insert([payload]).select();
-        if (!error && Array.isArray(data) && data[0]) {
-            myActiveCallRowId = data[0].id;
-            activeCallId = data[0].id;
-            return data[0];
+    if (activeCallMode === 'direct') {
+        const remoteList = [];
+        if (typeof directCallParticipants !== 'undefined' && directCallParticipants instanceof Map) {
+            directCallParticipants.forEach((p, peerId) => {
+                if (String(peerId) !== String(myId)) {
+                    const peerObj = (typeof directCallPeers !== 'undefined' && directCallPeers instanceof Map) ? directCallPeers.get(String(peerId)) : null;
+                    remoteList.push({
+                        peerId: String(peerId),
+                        name: p.name || p.username || 'عضو الكلان',
+                        isMuted: !!p.micMuted,
+                        camOff: !!p.camOff,
+                        stream: peerObj ? peerObj.stream : null
+                    });
+                }
+            });
         }
-    } catch (e) {
-        console.warn("⚠️ [Supabase] insertActiveCallRow error:", e);
-    }
-    return null;
-}
 
-function resolveActiveCallRowId(preferredId) {
-    const raw = preferredId != null ? preferredId : (myActiveCallRowId != null ? myActiveCallRowId : activeCallId);
-    if (raw == null || raw === '') return null;
-    if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
-    const asNum = Number(raw);
-    if (Number.isFinite(asNum) && String(raw).trim() !== '' && !String(raw).startsWith('call_')) return asNum;
-    return raw;
-}
-
-async function incrementActiveCallParticipants(callId) {
-    const client = ensureSupabaseClient();
-    const id = resolveActiveCallRowId(callId);
-    if (!client || id == null) return;
-    try {
-        const { data } = await client.from('active_calls').select('id, participants').eq('id', id).maybeSingle();
-        if (!data) return;
-        const next = Math.max(1, (Number(data.participants) || 1) + 1);
-        await client.from('active_calls').update({ participants: next }).eq('id', data.id);
-        myActiveCallRowId = data.id;
-    } catch (e) {
-        console.warn("⚠️ [Supabase] incrementActiveCallParticipants error:", e);
-    }
-}
-
-async function deleteActiveCallRow(callId) {
-    const client = ensureSupabaseClient();
-    const id = resolveActiveCallRowId(callId);
-    console.log('[active_calls] Trying to delete row id=', id);
-    if (!client || id == null) {
-        console.warn('[active_calls] delete skipped: missing client or id', { hasClient: !!client, id });
-        return false;
-    }
-    try {
-        const { data, error } = await client.from('active_calls').delete().eq('id', id).select();
-        if (error) {
-            console.error('[active_calls] delete FAILED', error);
-            return false;
+        const totalTiles = 1 + remoteList.length;
+        if (totalTiles === 1) {
+            grid.style.gridTemplateColumns = '1fr';
+            grid.style.gridTemplateRows = '1fr';
+        } else if (totalTiles === 2) {
+            grid.style.gridTemplateColumns = window.innerWidth < 640 ? '1fr' : '1fr 1fr';
+            grid.style.gridTemplateRows = window.innerWidth < 640 ? '1fr 1fr' : '1fr';
+        } else {
+            grid.style.gridTemplateColumns = '1fr 1fr';
+            grid.style.gridTemplateRows = 'repeat(auto-fill, minmax(130px, 1fr))';
         }
-        console.log('[active_calls] delete SUCCESS', data);
-        removeActiveCallFromLocalList(id);
-        return true;
-    } catch (e) {
-        console.error('[active_calls] delete EXCEPTION', e);
-        return false;
-    }
-}
 
-async function leaveActiveCallRow(callIdOverride) {
-    const client = ensureSupabaseClient();
-    const id = resolveActiveCallRowId(callIdOverride);
-    console.log('[active_calls] leave start, id=', id, 'myActiveCallRowId=', myActiveCallRowId, 'activeCallId=', activeCallId);
-    const savedId = id;
-    myActiveCallRowId = null;
-    if (!client || id == null) {
-        console.warn('[active_calls] leave aborted: missing client or id');
-        return { ended: false, remaining: 0 };
-    }
-    try {
-        const { data, error: selectError } = await client.from('active_calls').select('id, participants').eq('id', id).maybeSingle();
-        if (selectError) console.error('[active_calls] select before leave FAILED', selectError);
-        const remainingOthers = data ? Math.max(0, (Number(data.participants) || 1) - 1) : 0;
-        if (!data || remainingOthers <= 0) {
-            const deleted = await deleteActiveCallRow(data ? data.id : id);
-            return { ended: true, remaining: 0, deleted };
+        // 1. لوحة المشترك المحلي
+        let localTile = document.getElementById('call-tile-local');
+        if (!localTile) {
+            localTile = document.createElement('div');
+            localTile.id = 'call-tile-local';
+            localTile.className = 'call-tile is-local';
+            grid.appendChild(localTile);
         }
-        const { error: updateError } = await client.from('active_calls').update({ participants: remainingOthers }).eq('id', data.id);
-        if (updateError) {
-            console.error('[active_calls] decrement FAILED', updateError);
-            await deleteActiveCallRow(data.id);
-            return { ended: true, remaining: 0 };
-        }
-        console.log('[active_calls] decremented participants to', remainingOthers);
-        return { ended: false, remaining: remainingOthers };
-    } catch (e) {
-        console.error('[active_calls] leaveActiveCallRow error', e);
-        await deleteActiveCallRow(savedId);
-        return { ended: true, remaining: 0 };
-    }
-}
 
-function removeActiveCallFromLocalList(deletedId) {
-    if (deletedId == null) return;
-    allActiveServerCalls = (allActiveServerCalls || []).filter((c) => c && String(c.id) !== String(deletedId));
-    updateActiveCallsSync(allActiveServerCalls, allActiveServerCalls[0] || null);
-    renderJoinCallsModal();
-}
+        const localHasVideo = !!(inAppMediaStream && inAppMediaStream.getVideoTracks().some(t => t.enabled && t.readyState === 'live') && !isInAppCamOff);
 
-async function purgeStaleActiveCalls() {
-    const client = ensureSupabaseClient();
-    if (!client) return;
-    const cutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-    try {
-        const { data, error } = await client.from('active_calls').select('id, created_at').lt('created_at', cutoff);
-        if (error) {
-            console.error('[active_calls] stale select FAILED', error);
-            return;
-        }
-        const rows = asList(data);
-        for (const row of rows) {
-            if (myActiveCallRowId != null && String(row.id) === String(myActiveCallRowId)) continue;
-            console.log('[active_calls] deleting stale row', row.id, row.created_at);
-            const { error: delError } = await client.from('active_calls').delete().eq('id', row.id);
-            if (delError) console.error('[active_calls] stale delete FAILED', row.id, delError);
-            else {
-                console.log('[active_calls] stale delete SUCCESS', row.id);
-                removeActiveCallFromLocalList(row.id);
+        localTile.innerHTML = `
+            <div class="call-tile-media">
+                <video id="call-grid-local-video" autoplay playsinline muted style="width:100%; height:100%; object-fit:cover; display:${localHasVideo ? 'block' : 'none'};"></video>
+            </div>
+            <div class="call-tile-placeholder" id="call-grid-local-placeholder" style="display:${localHasVideo ? 'none' : 'flex'};">
+                <div class="call-tile-avatar">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                </div>
+            </div>
+            <div class="call-tile-badge">
+                <span class="call-tile-mic ${!isInAppMicMuted ? 'is-on' : ''}">${!isInAppMicMuted ? '🎙️' : '🔇'}</span>
+                <span class="call-tile-name">${myName} (أنت)</span>
+            </div>
+        `;
+
+        const localVideoEl = document.getElementById('call-grid-local-video');
+        if (localVideoEl && inAppMediaStream) {
+            if (localVideoEl.srcObject !== inAppMediaStream) {
+                localVideoEl.srcObject = inAppMediaStream;
+            }
+            if (localHasVideo) {
+                localVideoEl.play().catch(() => {});
             }
         }
-    } catch (e) {
-        console.error('[active_calls] purgeStaleActiveCalls error', e);
-    }
-}
 
-function cleanupActiveCallOnUnload() {
-    const id = resolveActiveCallRowId();
-    if (id == null) return;
-    const local = (allActiveServerCalls || []).find((c) => c && String(c.id) === String(id));
-    const participants = local ? Number(local.participants) || 1 : 1;
-    const headers = {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
-        'Content-Type': 'application/json',
-        Prefer: 'return=minimal'
-    };
-    const url = SUPABASE_URL + '/rest/v1/active_calls?id=eq.' + encodeURIComponent(id);
-    if (participants <= 1) {
-        console.log('[active_calls] beforeunload DELETE', id);
-        fetch(url, { method: 'DELETE', headers, keepalive: true }).catch((e) => {
-            console.error('[active_calls] beforeunload delete failed', e);
+        // إزالة اللوحات القديمة التي لم تعد متصلة
+        const currentRemoteIds = new Set(remoteList.map(r => r.peerId));
+        Array.from(grid.querySelectorAll('.call-tile:not(.is-local)')).forEach(t => {
+            const pid = t.getAttribute('data-peer-id');
+            if (pid && !currentRemoteIds.has(pid)) {
+                t.remove();
+            }
         });
-    } else {
-        console.log('[active_calls] beforeunload decrement', id, participants - 1);
-        fetch(url, {
-            method: 'PATCH',
-            headers,
-            keepalive: true,
-            body: JSON.stringify({ participants: Math.max(0, participants - 1) })
-        }).catch((e) => {
-            console.error('[active_calls] beforeunload decrement failed', e);
+
+        // 2. لوحات المشتركين البعيدين
+        remoteList.forEach(r => {
+            let rTile = document.querySelector(`.call-tile[data-peer-id="${r.peerId}"]`);
+            if (!rTile) {
+                rTile = document.createElement('div');
+                rTile.className = 'call-tile';
+                rTile.setAttribute('data-peer-id', r.peerId);
+                grid.appendChild(rTile);
+            }
+
+            const rHasVideo = !!(r.stream && r.stream.getVideoTracks().some(t => t.enabled && t.readyState === 'live') && !r.camOff);
+
+            rTile.innerHTML = `
+                <div class="call-tile-media">
+                    <video id="call-grid-remote-video-${r.peerId}" autoplay playsinline style="width:100%; height:100%; object-fit:cover; display:${rHasVideo ? 'block' : 'none'};"></video>
+                </div>
+                <div class="call-tile-placeholder" id="call-grid-remote-placeholder-${r.peerId}" style="display:${rHasVideo ? 'none' : 'flex'};">
+                    <div class="call-tile-avatar">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                    </div>
+                </div>
+                <div class="call-tile-badge">
+                    <span class="call-tile-mic ${!r.isMuted ? 'is-on' : ''}">${!r.isMuted ? '🎙️' : '🔇'}</span>
+                    <span class="call-tile-name">${r.name}</span>
+                </div>
+            `;
+
+            const rVideoEl = document.getElementById(`call-grid-remote-video-${r.peerId}`);
+            if (rVideoEl && r.stream) {
+                if (rVideoEl.srcObject !== r.stream) {
+                    rVideoEl.srcObject = r.stream;
+                }
+                rVideoEl.play().catch(e => console.log('[Remote Video Play]', e));
+            }
+        });
+
+    } else if (activeCallMode === 'agora') {
+        const remoteList = [];
+        if (typeof agoraRemoteUsers !== 'undefined' && agoraRemoteUsers instanceof Map) {
+            agoraRemoteUsers.forEach((u, uid) => {
+                const displayName = u.displayName || u.username || u.name || (typeof agoraUserNames !== 'undefined' && agoraUserNames.get(uid)) || `عضو (${uid})`;
+                remoteList.push({
+                    uid: uid,
+                    user: u,
+                    name: displayName,
+                    hasAudio: !!u.hasAudio,
+                    hasVideo: !!u.hasVideo
+                });
+            });
+        }
+
+        const totalTiles = 1 + remoteList.length;
+        if (totalTiles === 1) {
+            grid.style.gridTemplateColumns = '1fr';
+            grid.style.gridTemplateRows = '1fr';
+        } else if (totalTiles === 2) {
+            grid.style.gridTemplateColumns = window.innerWidth < 640 ? '1fr' : '1fr 1fr';
+            grid.style.gridTemplateRows = window.innerWidth < 640 ? '1fr 1fr' : '1fr';
+        } else {
+            grid.style.gridTemplateColumns = '1fr 1fr';
+            grid.style.gridTemplateRows = 'repeat(auto-fill, minmax(130px, 1fr))';
+        }
+
+        // لوحة المشترك المحلي لـ Agora
+        let localTile = document.getElementById('call-tile-local');
+        if (!localTile) {
+            localTile = document.createElement('div');
+            localTile.id = 'call-tile-local';
+            localTile.className = 'call-tile is-local';
+            grid.appendChild(localTile);
+        }
+        localTile.innerHTML = `
+            <div class="call-tile-placeholder" style="display:flex;">
+                <div class="call-tile-avatar" style="${!isAgoraMicMuted ? 'border: 2px solid #00ff88; box-shadow: 0 0 15px rgba(0,255,136,0.4);' : ''}">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                </div>
+            </div>
+            <div class="call-tile-badge">
+                <span class="call-tile-mic ${!isAgoraMicMuted ? 'is-on' : ''}">${!isAgoraMicMuted ? '🎙️' : '🔇'}</span>
+                <span class="call-tile-name">${myName} (أنت)</span>
+            </div>
+        `;
+
+        // إزالة اللوحات القديمة
+        const currentUids = new Set(remoteList.map(r => String(r.uid)));
+        Array.from(grid.querySelectorAll('.call-tile:not(.is-local)')).forEach(t => {
+            const uid = t.getAttribute('data-agora-uid');
+            if (uid && !currentUids.has(uid)) {
+                t.remove();
+            }
+        });
+
+        // لوحات المشاركين لـ Agora
+        remoteList.forEach(r => {
+            let rTile = document.querySelector(`.call-tile[data-agora-uid="${r.uid}"]`);
+            if (!rTile) {
+                rTile = document.createElement('div');
+                rTile.className = 'call-tile';
+                rTile.setAttribute('data-agora-uid', String(r.uid));
+                grid.appendChild(rTile);
+            }
+            rTile.innerHTML = `
+                <div class="call-tile-media" id="agora-grid-player-${r.uid}" style="width:100%; height:100%; display:${r.hasVideo ? 'block' : 'none'};"></div>
+                <div class="call-tile-placeholder" style="display:${r.hasVideo ? 'none' : 'flex'};">
+                    <div class="call-tile-avatar" style="${r.hasAudio ? 'border: 2px solid #00ff88; box-shadow: 0 0 15px rgba(0,255,136,0.4);' : ''}">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                    </div>
+                </div>
+                <div class="call-tile-badge">
+                    <span class="call-tile-mic ${r.hasAudio ? 'is-on' : ''}">${r.hasAudio ? '🎙️' : '🔇'}</span>
+                    <span class="call-tile-name">${r.name}</span>
+                </div>
+            `;
+            if (r.hasVideo && r.user && r.user.videoTrack) {
+                const playerContainer = document.getElementById(`agora-grid-player-${r.uid}`);
+                if (playerContainer) {
+                    playerContainer.innerHTML = '';
+                    r.user.videoTrack.play(playerContainer);
+                }
+            }
         });
     }
-    myActiveCallRowId = null;
 }
+window.renderCallParticipantsGrid = renderCallParticipantsGrid;
 
-let staleActiveCallsInterval = null;
-
-function setupActiveCallsRealtime() {
-    const client = ensureSupabaseClient();
-    if (!client) return;
-    if (activeCallsRealtimeChannel) {
-        try { client.removeChannel(activeCallsRealtimeChannel); } catch (_) {}
-        activeCallsRealtimeChannel = null;
-    }
-    try {
-        activeCallsRealtimeChannel = client.channel('active_calls_realtime')
-            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'active_calls' }, (payload) => {
-                const deletedId = payload && payload.old ? payload.old.id : null;
-                console.log('[active_calls] Realtime DELETE', deletedId, payload);
-                removeActiveCallFromLocalList(deletedId);
-            })
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'active_calls' }, async () => {
-                await fetchAndSyncActiveCalls();
-                renderJoinCallsModal();
-            })
-            .subscribe();
-    } catch (e) {
-        console.warn("⚠️ [Realtime] setupActiveCallsRealtime error:", e);
-    }
-    if (typeof window !== 'undefined' && !window.__activeCallUnloadBound) {
-        window.__activeCallUnloadBound = true;
-        window.addEventListener('beforeunload', cleanupActiveCallOnUnload);
-        window.addEventListener('pagehide', cleanupActiveCallOnUnload);
-    }
-    if (staleActiveCallsInterval) {
-        clearInterval(staleActiveCallsInterval);
-        staleActiveCallsInterval = null;
-    }
-    staleActiveCallsInterval = setInterval(() => {
-        purgeStaleActiveCalls();
-    }, 60000);
-    purgeStaleActiveCalls();
-}
-
-function handleJoinCallClick(event) {
+// 📜 دوال القائمة المنسدلة للمكالمات النشطة
+function toggleActiveCallsDropdown(event) {
     if (event) {
         event.preventDefault();
         event.stopPropagation();
     }
-    const calls = Array.isArray(allActiveServerCalls) ? allActiveServerCalls : [];
-    if (!calls.length) {
-        showToast("No active calls", "info");
-        return;
-    }
-    openJoinCallsModal();
-}
-window.handleJoinCallClick = handleJoinCallClick;
-window.toggleActiveCallsDropdown = handleJoinCallClick;
-window.handleChatCallJoinClick = handleJoinCallClick;
+    const joinBtn = document.getElementById('chat-call-join-btn');
+    if (joinBtn && joinBtn.disabled) return;
 
-function openJoinCallsModal() {
-    const modal = document.getElementById('join-calls-modal');
-    if (!modal) {
+    const dropdown = document.getElementById('active-calls-dropdown');
+    if (!dropdown) return;
+
+    const isVisible = dropdown.style.display === 'block';
+    if (isVisible) {
+        closeActiveCallsDropdown();
+    } else {
         openActiveCallsDropdown();
-        return;
     }
-    renderJoinCallsModal();
-    modal.style.display = 'flex';
 }
-window.openJoinCallsModal = openJoinCallsModal;
-
-function closeJoinCallsModal() {
-    const modal = document.getElementById('join-calls-modal');
-    if (modal) modal.style.display = 'none';
-}
-window.closeJoinCallsModal = closeJoinCallsModal;
-
-function renderJoinCallsModal() {
-    const container = document.getElementById('join-calls-modal-list');
-    if (!container) return;
-    const calls = Array.isArray(allActiveServerCalls) ? allActiveServerCalls : [];
-    if (!calls.length) {
-        container.innerHTML = '<div class="empty-calls-notice" style="text-align:center; padding:16px 10px; color:#94a3b8; font-size:0.85rem; font-weight:700;">No active calls</div>';
-        return;
-    }
-    container.innerHTML = calls.map(c => {
-        const type = c.call_type || c.mode || 'direct';
-        const typeLabel = getCallTypeLabel(type);
-        const host = c.creator_name || c.hostName || 'عضو الكلان';
-        const count = (typeof c.participants === 'number') ? c.participants : 1;
-        return `
-            <div class="active-call-item" style="background:rgba(255,255,255,0.05); border:1px solid rgba(0, 242, 254, 0.25); border-radius:10px; padding:10px 12px; display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;">
-                <div style="flex:1; display:flex; flex-direction:column; gap:4px;">
-                    <span style="font-size:0.9rem; font-weight:900; color:#fff;">${escapeHTML(host)}</span>
-                    <span style="font-size:0.75rem; color:#00f2fe; font-weight:800;">${escapeHTML(typeLabel)}</span>
-                    <span style="font-size:0.75rem; color:#94a3b8;">${count} participants</span>
-                </div>
-                <button type="button" onclick="joinSpecificCall('${c.id}')" style="padding:7px 15px; background:linear-gradient(135deg, #00f2fe, #00ff88); border:none; color:#050a14; font-weight:900; font-size:0.82rem; border-radius:8px; cursor:pointer;">Join</button>
-            </div>
-        `;
-    }).join('');
-}
-window.renderJoinCallsModal = renderJoinCallsModal;
-
-function toggleActiveCallsDropdown(event) {
-    handleJoinCallClick(event);
-}
+window.toggleActiveCallsDropdown = toggleActiveCallsDropdown;
+window.handleChatCallJoinClick = toggleActiveCallsDropdown;
 
 function openActiveCallsDropdown() {
     const dropdown = document.getElementById('active-calls-dropdown');
@@ -6579,11 +6405,11 @@ function renderActiveCallsDropdown(calls) {
     });
 
     container.innerHTML = sorted.map(c => {
-        const host = c.creator_name || c.hostName || c.challengerName || 'عضو الكلان';
-        const mode = c.call_type || c.mode || ((c.details && c.details.mode) ? c.details.mode : 'direct');
-        const modeLabel = getCallTypeLabel(mode);
-        const room = c.channel_name || c.roomName || c.topic || (c.details && c.details.topic) || modeLabel;
-        const pCount = (typeof c.participants === 'number') ? c.participants : ((Array.isArray(c.participants) && c.participants.length > 0) ? c.participants.length : 1);
+        const host = c.hostName || c.challengerName || 'عضو الكلان';
+        const mode = (c.mode === 'agora' || (c.details && c.details.mode === 'agora')) ? 'agora' : 'direct';
+        const modeLabel = mode === 'agora' ? '🎙️ Agora (صوت)' : '📱 اتصال مباشر (صوت وفيديو)';
+        const room = c.roomName || c.topic || (c.details && c.details.topic) || (mode === 'agora' ? 'غرفة Agora الصوتية' : 'مكالمة المقر المباشرة');
+        const pCount = (Array.isArray(c.participants) && c.participants.length > 0) ? c.participants.length : 1;
         const callId = c.id;
 
         return `
@@ -6612,9 +6438,8 @@ window.renderActiveCallsDropdown = renderActiveCallsDropdown;
 
 async function joinSpecificCall(callId) {
     closeActiveCallsDropdown();
-    closeJoinCallsModal();
-    let call = allActiveServerCalls.find(c => String(c.id) === String(callId));
-    if (!call && currentActiveCallData && String(currentActiveCallData.id) === String(callId)) {
+    let call = allActiveServerCalls.find(c => c.id === callId);
+    if (!call && currentActiveCallData && currentActiveCallData.id === callId) {
         call = currentActiveCallData;
     }
     if (!call) {
@@ -6623,22 +6448,15 @@ async function joinSpecificCall(callId) {
         return;
     }
 
-    const host = call.creator_name || call.hostName || call.challengerName || 'عضو الكلان';
-    const mode = call.call_type || call.mode || ((call.details && call.details.mode === 'agora') ? 'agora' : 'direct');
-    const room = call.channel_name || call.roomName || call.topic || (call.details && call.details.topic) || getCallTypeLabel(mode);
-    const channel = call.channel_name || call.channelName || (call.details && call.details.channelName) || AGORA_CHANNEL;
+    const host = call.hostName || call.challengerName || 'عضو الكلان';
+    const mode = (call.mode === 'agora' || (call.details && call.details.mode === 'agora')) ? 'agora' : 'direct';
+    const room = call.roomName || call.topic || (call.details && call.details.topic) || (mode === 'agora' ? 'غرفة Agora الصوتية' : 'مكالمة المقر المباشرة');
+    const channel = call.channelName || (call.details && call.details.channelName) || AGORA_CHANNEL;
 
     showToast(`📞 جاري الانضمام لمكالمة ${host}...`, "info");
 
     if (mode === 'agora') {
         await joinAgoraRoom(channel, call.id, host, room);
-    } else if (mode === 'meet') {
-        if (channel) window.open(channel, '_blank', 'noopener');
-        myActiveCallRowId = call.id;
-        activeCallId = call.id;
-        await incrementActiveCallParticipants(call.id);
-        openFullCallView('meet', { id: call.id, hostName: host, topic: room, channelName: channel });
-        fetchAndSyncActiveCalls();
     } else {
         await startInAppCall(call.id, host, room);
     }
@@ -6647,38 +6465,22 @@ window.joinSpecificCall = joinSpecificCall;
 
 async function fetchAndSyncActiveCalls() {
     try {
-        const client = ensureSupabaseClient();
-        const supabaseCalls = await serverGetActiveCalls();
-        if (client) {
-            updateActiveCallsSync(supabaseCalls, supabaseCalls[0] || null);
-            return;
-        }
-        if (supabaseCalls.length) {
-            updateActiveCallsSync(supabaseCalls, supabaseCalls[0]);
-            return;
-        }
         const res = await fetch('/api/calls/active');
-        if (!res.ok) {
-            updateActiveCallsSync([], null);
-            return;
-        }
+        if (!res.ok) return;
         const data = await res.json();
         const activeCallsList = Array.isArray(data.activeCalls) ? data.activeCalls : (data.activeCall ? [data.activeCall] : []);
-        updateActiveCallsSync(activeCallsList.map(normalizeActiveCallRow), data.activeCall);
-    } catch (_) {
-        updateActiveCallsSync([], null);
-    }
+        updateActiveCallsSync(activeCallsList, data.activeCall);
+    } catch (_) {}
 }
 window.fetchAndSyncActiveCalls = fetchAndSyncActiveCalls;
 
 function updateActiveCallsSync(callsList, primaryCall) {
     allActiveServerCalls = Array.isArray(callsList) ? callsList.filter(c => {
-        if (!c) return false;
-        if (c.status === 'ended' || c.status === 'cancelled') return false;
-        if (Number(c.participants) <= 0) return false;
-        const mode = c.call_type || c.mode || (c.details && c.details.mode);
-        return mode === 'agora' || mode === 'direct' || mode === 'inapp' || mode === 'meet';
-    }).map(normalizeActiveCallRow) : [];
+        const isAct = (c.status === 'active' || c.active) && c.status !== 'ended' && c.status !== 'cancelled';
+        const mode = c.mode || (c.details && c.details.mode);
+        // استبعاد أي مكالمة خارجية مثل Google Meet أو مكالمة منتهية
+        return isAct && (mode === 'agora' || mode === 'direct' || mode === 'inapp');
+    }) : [];
     const joinBtn = document.getElementById('chat-call-join-btn');
     const endedStatus = document.getElementById('chat-call-ended-status');
     const banner = document.getElementById('clan-active-call-banner');
@@ -6688,17 +6490,18 @@ function updateActiveCallsSync(callsList, primaryCall) {
     if (banner) banner.style.display = 'none';
 
     if (allActiveServerCalls.length === 0) {
+        // لا توجد مكالمات نشطة: زر "انضمام" معطل تماماً وبدون أي أنيميشن أو توهج
         if (joinBtn) {
-            joinBtn.disabled = false;
-            joinBtn.style.opacity = '1';
-            joinBtn.style.cursor = 'pointer';
-            joinBtn.style.background = 'rgba(255,255,255,0.08)';
-            joinBtn.style.borderColor = 'rgba(255,255,255,0.2)';
-            joinBtn.style.color = '#e2e8f0';
+            joinBtn.disabled = true;
+            joinBtn.style.opacity = '0.45';
+            joinBtn.style.cursor = 'not-allowed';
+            joinBtn.style.background = 'rgba(255,255,255,0.05)';
+            joinBtn.style.borderColor = 'rgba(255,255,255,0.12)';
+            joinBtn.style.color = '#64748b';
             joinBtn.style.boxShadow = 'none';
             joinBtn.style.animation = 'none';
             joinBtn.style.transform = 'none';
-            joinBtn.title = 'انضمام لمكالمة نشطة';
+            joinBtn.title = 'لا توجد مكالمات نشطة حالياً';
         }
         const dot = document.getElementById('voice-live-dot');
         if (dot) dot.remove();
@@ -6787,6 +6590,111 @@ let agoraLocalVideoTrack = null;
 let isAgoraJoined = false;
 let isAgoraMicMuted = false;
 let agoraRemoteUsers = new Map();
+let agoraUserNames = new Map();
+let agoraMetaRealtimeChannel = null;
+
+async function resolveAgoraMemberName(uid, userObj) {
+    if (agoraUserNames.has(uid)) return agoraUserNames.get(uid);
+    if (agoraUserNames.has(String(uid))) return agoraUserNames.get(String(uid));
+    if (agoraUserNames.has(Number(uid))) return agoraUserNames.get(Number(uid));
+
+    // 1. قراءة البيانات الوصفية الممررة مع الكائن
+    if (userObj) {
+        if (typeof userObj.username === 'string' && userObj.username) {
+            agoraUserNames.set(uid, userObj.username);
+            return userObj.username;
+        }
+        if (typeof userObj.name === 'string' && userObj.name) {
+            agoraUserNames.set(uid, userObj.name);
+            return userObj.name;
+        }
+        if (userObj.metadata && (userObj.metadata.username || userObj.metadata.name)) {
+            const n = userObj.metadata.username || userObj.metadata.name;
+            agoraUserNames.set(uid, n);
+            return n;
+        }
+        if (userObj.userProperties && (userObj.userProperties.username || userObj.userProperties.name)) {
+            const n = userObj.userProperties.username || userObj.userProperties.name;
+            agoraUserNames.set(uid, n);
+            return n;
+        }
+    }
+
+    // 2. جلب الاسم من جدول members في Supabase باستخدام الـ UID
+    try {
+        const client = ensureSupabaseClient();
+        if (client) {
+            const uidStr = String(uid);
+            const { data } = await client
+                .from('members')
+                .select('name')
+                .or(`id.eq.${uidStr},userId.eq.${uidStr}`)
+                .maybeSingle();
+            if (data && data.name) {
+                agoraUserNames.set(uid, data.name);
+                agoraUserNames.set(String(uid), data.name);
+                return data.name;
+            }
+        }
+    } catch (fetchErr) {
+        console.warn(`[Agora] Could not fetch member name for UID ${uid}:`, fetchErr);
+    }
+
+    return `عضو (${uid})`;
+}
+
+function initAgoraMetaChannel(channelName, myUid, myUsername) {
+    try {
+        const client = ensureSupabaseClient();
+        if (!client) return;
+        if (agoraMetaRealtimeChannel) {
+            try { client.removeChannel(agoraMetaRealtimeChannel); } catch (_) {}
+            agoraMetaRealtimeChannel = null;
+        }
+        const cleanChan = String(channelName).replace(/[^a-zA-Z0-9_-]/g, '_');
+        agoraMetaRealtimeChannel = client.channel(`agora_meta_${cleanChan}`, {
+            config: { broadcast: { self: false } }
+        });
+
+        agoraMetaRealtimeChannel
+            .on('broadcast', { event: 'user_meta' }, ({ payload }) => {
+                if (payload && payload.uid && payload.username) {
+                    agoraUserNames.set(payload.uid, payload.username);
+                    agoraUserNames.set(String(payload.uid), payload.username);
+                    const remoteUser = agoraRemoteUsers.get(payload.uid) || agoraRemoteUsers.get(Number(payload.uid));
+                    if (remoteUser) remoteUser.displayName = payload.username;
+                    updateCallParticipantsUI();
+                    updateAgoraUsersUI();
+                    updateFullCallParticipantsUI();
+                }
+            })
+            .on('broadcast', { event: 'meta_request' }, () => {
+                if (agoraMetaRealtimeChannel) {
+                    agoraMetaRealtimeChannel.send({
+                        type: 'broadcast',
+                        event: 'user_meta',
+                        payload: { uid: myUid, username: myUsername }
+                    });
+                }
+            })
+            .subscribe((status) => {
+                if (status === 'SUBSCRIBED') {
+                    agoraMetaRealtimeChannel.send({
+                        type: 'broadcast',
+                        event: 'user_meta',
+                        payload: { uid: myUid, username: myUsername }
+                    });
+                    agoraMetaRealtimeChannel.send({
+                        type: 'broadcast',
+                        event: 'meta_request',
+                        payload: {}
+                    });
+                }
+            });
+    } catch (e) {
+        console.warn("[Agora] Error initializing meta channel:", e);
+    }
+}
 
 function setupAgoraClientEvents() {
     if (agoraClient) return;
@@ -6796,23 +6704,39 @@ function setupAgoraClientEvents() {
     configureAgoraRtcInstance(window.AgoraRTC);
     agoraClient = window.AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
 
+    // 0. الاستماع لحدث انضمام المشترك وقراءة البيانات الوصفية أو جلب الاسم الحقيقي
+    agoraClient.on("user-joined", async (user) => {
+        console.log(`[Agora] User joined: ${user.uid}`, user);
+        const realName = await resolveAgoraMemberName(user.uid, user);
+        user.displayName = realName;
+        agoraRemoteUsers.set(user.uid, user);
+        updateCallParticipantsUI();
+        updateAgoraUsersUI();
+        updateFullCallParticipantsUI();
+    });
+
     // 1. الاشتراك التلقائي في فيديو وصوت كل مشارك ينشر مساره
     agoraClient.on("user-published", async (user, mediaType) => {
         try {
             await agoraClient.subscribe(user, mediaType);
             console.log(`[Agora] Subscribed to user ${user.uid} for ${mediaType}`);
 
+            if (!user.displayName) {
+                user.displayName = await resolveAgoraMemberName(user.uid, user);
+            }
+
             if (mediaType === "audio" && user.audioTrack) {
                 user.audioTrack.play();
             }
 
-            agoraRemoteUsers.set(user.uid, user);
             if (mediaType === "video" && user.videoTrack) {
                 renderRemoteUserVideoTile(user);
             }
+
+            agoraRemoteUsers.set(user.uid, user);
             updateCallParticipantsUI();
             updateAgoraUsersUI();
-            if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
+            updateFullCallParticipantsUI();
         } catch (subErr) {
             console.error(`[Agora] Error subscribing to user ${user.uid}:`, subErr);
         }
@@ -6826,27 +6750,20 @@ function setupAgoraClientEvents() {
         }
         if (!user.hasAudio && !user.hasVideo) {
             agoraRemoteUsers.delete(user.uid);
-        } else {
-            agoraRemoteUsers.set(user.uid, user);
         }
         updateCallParticipantsUI();
         updateAgoraUsersUI();
-        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
+        updateFullCallParticipantsUI();
     });
 
     // 3. التعامل مع خروج المشارك من القناة
-    agoraClient.on("user-joined", (user) => {
-        agoraRemoteUsers.set(user.uid, user);
-        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
-    });
-
     agoraClient.on("user-left", (user) => {
         console.log(`[Agora] User ${user.uid} left the channel`);
         removeRemoteUserVideoTile(user.uid);
         agoraRemoteUsers.delete(user.uid);
         updateCallParticipantsUI();
         updateAgoraUsersUI();
-        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
+        updateFullCallParticipantsUI();
     });
 
     // 4. التجديد التلقائي للتوكن قبل انتهائه
@@ -6873,17 +6790,28 @@ function setupAgoraClientEvents() {
 }
 
 function renderRemoteUserVideoTile(user) {
-    if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
     const remoteContainer = document.getElementById("remote-video-tiles");
+    const name = user.displayName || user.username || user.name || (agoraUserNames && agoraUserNames.get(user.uid)) || `عضو PHANTOM #${user.uid}`;
     if (!remoteContainer) return;
+
     let tile = document.getElementById(`remote-tile-${user.uid}`);
     if (!tile) {
         tile = document.createElement("div");
         tile.id = `remote-tile-${user.uid}`;
         tile.className = "video-tile remote-tile";
-        tile.innerHTML = `<div id="remote-player-${user.uid}" class="video-container" style="width:100%; height:100%;"></div>`;
+        tile.innerHTML = `
+            <div id="remote-player-${user.uid}" class="video-container" style="width:100%; height:100%;"></div>
+            <div class="video-tile-name-badge">
+                <span id="remote-tile-name-${user.uid}">${name}</span>
+                <span id="remote-mic-${user.uid}">🎙️</span>
+            </div>
+        `;
         remoteContainer.appendChild(tile);
+    } else {
+        const nameEl = document.getElementById(`remote-tile-name-${user.uid}`);
+        if (nameEl) nameEl.textContent = name;
     }
+
     const playerContainer = document.getElementById(`remote-player-${user.uid}`);
     if (playerContainer && user.videoTrack) {
         playerContainer.innerHTML = '';
@@ -6894,9 +6822,6 @@ function renderRemoteUserVideoTile(user) {
 function removeRemoteUserVideoTile(uid) {
     const tile = document.getElementById(`remote-tile-${uid}`);
     if (tile) tile.remove();
-    const gridTile = document.getElementById(`call-tile-${uid}`);
-    if (gridTile) gridTile.remove();
-    if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
 }
 
 function updateCallParticipantsUI() {
@@ -6910,12 +6835,460 @@ function updateCallParticipantsUI() {
     }
 }
 
+/* ========================================================
+   🌐 نظام WebRTC للمكالمات المباشرة عبر Supabase Realtime Signaling
+   ======================================================== */
+let directCallRealtimeChannel = null;
+let directCallPeers = new Map(); // peerId -> { pc, stream, remotePeerId, remoteName, iceQueue }
+let directCallParticipants = new Map(); // peerId -> { userId, name, micMuted, camOff, isHost }
+let currentDirectCallId = null;
+
+const DIRECT_CALL_ICE_SERVERS = {
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' }
+    ]
+};
+
+function createPeerConnection(remotePeerId, remoteName) {
+    const pId = String(remotePeerId);
+    if (directCallPeers.has(pId)) {
+        return directCallPeers.get(pId);
+    }
+
+    const pc = new RTCPeerConnection(DIRECT_CALL_ICE_SERVERS);
+    const peerObj = {
+        pc: pc,
+        stream: new MediaStream(),
+        remotePeerId: pId,
+        remoteName: remoteName || 'عضو الكلان',
+        iceQueue: []
+    };
+    directCallPeers.set(pId, peerObj);
+
+    // إضافة مسارات الصوت والفيديو المحلية للاتصال
+    if (inAppMediaStream) {
+        inAppMediaStream.getTracks().forEach(track => {
+            try {
+                pc.addTrack(track, inAppMediaStream);
+            } catch (err) {
+                console.warn("[WebRTC] addTrack warning:", err);
+            }
+        });
+    }
+
+    pc.onicecandidate = (event) => {
+        if (event.candidate && directCallRealtimeChannel) {
+            const myUserId = getCurrentUserId();
+            directCallRealtimeChannel.send({
+                type: 'broadcast',
+                event: 'signal',
+                payload: {
+                    from: myUserId,
+                    fromName: getCurrentUsername() || 'عضو',
+                    to: pId,
+                    signal: {
+                        type: 'candidate',
+                        candidate: event.candidate.toJSON()
+                    }
+                }
+            });
+        }
+    };
+
+    pc.ontrack = (event) => {
+        console.log(`[WebRTC] Received remote track from ${pId} (${remoteName}):`, event.track.kind);
+        if (event.streams && event.streams[0]) {
+            peerObj.stream = event.streams[0];
+        } else {
+            if (!peerObj.stream) peerObj.stream = new MediaStream();
+            peerObj.stream.addTrack(event.track);
+        }
+        renderCallParticipantsGrid();
+        updateFullCallParticipantsUI();
+    };
+
+    pc.onconnectionstatechange = () => {
+        console.log(`[WebRTC] Peer ${pId} state:`, pc.connectionState);
+        if (pc.connectionState === 'failed') {
+            try { pc.restartIce(); } catch (_) {}
+        }
+    };
+
+    return peerObj;
+}
+
+async function initiatePeerConnection(remotePeerId, remoteName) {
+    try {
+        const peerObj = createPeerConnection(remotePeerId, remoteName);
+        const pc = peerObj.pc;
+        const offer = await pc.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true
+        });
+        await pc.setLocalDescription(offer);
+
+        if (directCallRealtimeChannel) {
+            const myUserId = getCurrentUserId();
+            directCallRealtimeChannel.send({
+                type: 'broadcast',
+                event: 'signal',
+                payload: {
+                    from: myUserId,
+                    fromName: getCurrentUsername() || 'عضو',
+                    to: String(remotePeerId),
+                    signal: {
+                        type: 'offer',
+                        sdp: pc.localDescription
+                    }
+                }
+            });
+        }
+    } catch (err) {
+        console.error(`[WebRTC] initiatePeerConnection error with ${remotePeerId}:`, err);
+    }
+}
+
+async function handleReceiveOffer(fromPeerId, fromName, sdp) {
+    try {
+        const peerObj = createPeerConnection(fromPeerId, fromName);
+        const pc = peerObj.pc;
+        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+
+        if (peerObj.iceQueue && peerObj.iceQueue.length > 0) {
+            for (const cand of peerObj.iceQueue) {
+                try {
+                    await pc.addIceCandidate(new RTCIceCandidate(cand));
+                } catch (_) {}
+            }
+            peerObj.iceQueue = [];
+        }
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        if (directCallRealtimeChannel) {
+            const myUserId = getCurrentUserId();
+            directCallRealtimeChannel.send({
+                type: 'broadcast',
+                event: 'signal',
+                payload: {
+                    from: myUserId,
+                    fromName: getCurrentUsername() || 'عضو',
+                    to: String(fromPeerId),
+                    signal: {
+                        type: 'answer',
+                        sdp: pc.localDescription
+                    }
+                }
+            });
+        }
+    } catch (err) {
+        console.error(`[WebRTC] handleReceiveOffer error from ${fromPeerId}:`, err);
+    }
+}
+
+async function handleReceiveAnswer(fromPeerId, sdp) {
+    try {
+        const peerObj = directCallPeers.get(String(fromPeerId));
+        if (peerObj && peerObj.pc) {
+            const pc = peerObj.pc;
+            await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+
+            if (peerObj.iceQueue && peerObj.iceQueue.length > 0) {
+                for (const cand of peerObj.iceQueue) {
+                    try {
+                        await pc.addIceCandidate(new RTCIceCandidate(cand));
+                    } catch (_) {}
+                }
+                peerObj.iceQueue = [];
+            }
+        }
+    } catch (err) {
+        console.error(`[WebRTC] handleReceiveAnswer error from ${fromPeerId}:`, err);
+    }
+}
+
+async function handleReceiveCandidate(fromPeerId, candidateData) {
+    try {
+        const peerObj = directCallPeers.get(String(fromPeerId));
+        if (!peerObj) return;
+        const pc = peerObj.pc;
+        if (pc.remoteDescription && pc.remoteDescription.type) {
+            await pc.addIceCandidate(new RTCIceCandidate(candidateData));
+        } else {
+            if (!peerObj.iceQueue) peerObj.iceQueue = [];
+            peerObj.iceQueue.push(candidateData);
+        }
+    } catch (err) {
+        console.warn("[WebRTC] handleReceiveCandidate error:", err);
+    }
+}
+
+function closePeerConnection(remotePeerId) {
+    const pId = String(remotePeerId);
+    const peerObj = directCallPeers.get(pId);
+    if (peerObj) {
+        try {
+            if (peerObj.pc) peerObj.pc.close();
+        } catch (_) {}
+        directCallPeers.delete(pId);
+    }
+    const tile = document.querySelector(`.call-tile[data-peer-id="${pId}"]`);
+    if (tile) tile.remove();
+}
+
+function handleDirectCallPresenceState(state, myUserId, myUsername) {
+    if (!state) return;
+    Object.keys(state).forEach(key => {
+        if (key === String(myUserId)) return;
+        const presences = state[key];
+        if (Array.isArray(presences) && presences.length > 0) {
+            const p = presences[presences.length - 1];
+            const pId = String(p.userId || key);
+            if (pId !== String(myUserId)) {
+                directCallParticipants.set(pId, {
+                    userId: pId,
+                    name: p.username || p.name || 'عضو الكلان',
+                    micMuted: !!p.micMuted,
+                    camOff: !!p.camOff,
+                    isHost: !!p.isHost
+                });
+                if (String(myUserId) > pId && !directCallPeers.has(pId)) {
+                    initiatePeerConnection(pId, p.username || p.name);
+                }
+            }
+        }
+    });
+    updateFullCallParticipantsUI();
+}
+
+async function joinDirectCallRealtime(callId, myUserId, myUsername, isHost = false) {
+    leaveDirectCallRealtime(false);
+    currentDirectCallId = callId;
+    const client = ensureSupabaseClient();
+    if (!client) {
+        console.warn("[Direct Call Realtime] Supabase client not available");
+        return;
+    }
+
+    const cleanCallId = String(callId).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const channelName = `direct_call_${cleanCallId}`;
+
+    directCallParticipants.set(String(myUserId), {
+        userId: String(myUserId),
+        name: myUsername,
+        micMuted: isInAppMicMuted,
+        camOff: isInAppCamOff,
+        isHost: !!isHost,
+        isMe: true
+    });
+
+    directCallRealtimeChannel = client.channel(channelName, {
+        config: {
+            broadcast: { self: false },
+            presence: { key: String(myUserId) }
+        }
+    });
+
+    // 1. Presence التزامن والتتبع
+    directCallRealtimeChannel.on('presence', { event: 'sync' }, () => {
+        const state = directCallRealtimeChannel.presenceState();
+        handleDirectCallPresenceState(state, myUserId, myUsername);
+    });
+
+    // 2. انضمام مشترك جديد
+    directCallRealtimeChannel.on('presence', { event: 'join' }, ({ key, newPresences }) => {
+        if (key === String(myUserId)) return;
+        (newPresences || []).forEach(p => {
+            const pId = String(p.userId || key);
+            if (pId !== String(myUserId)) {
+                directCallParticipants.set(pId, {
+                    userId: pId,
+                    name: p.username || p.name || 'عضو الكلان',
+                    micMuted: !!p.micMuted,
+                    camOff: !!p.camOff,
+                    isHost: !!p.isHost
+                });
+                if (String(myUserId) > pId) {
+                    initiatePeerConnection(pId, p.username || p.name);
+                }
+            }
+        });
+        updateFullCallParticipantsUI();
+    });
+
+    // 3. مغادرة مشترك
+    directCallRealtimeChannel.on('presence', { event: 'leave' }, ({ key }) => {
+        const pId = String(key);
+        closePeerConnection(pId);
+        directCallParticipants.delete(pId);
+        updateFullCallParticipantsUI();
+    });
+
+    // 4. إشارات WebRTC (Offer / Answer / ICE Candidate)
+    directCallRealtimeChannel.on('broadcast', { event: 'signal' }, async ({ payload }) => {
+        if (!payload || String(payload.to) !== String(myUserId)) return;
+        const fromId = String(payload.from);
+        const fromName = payload.fromName || 'عضو الكلان';
+        const signal = payload.signal;
+        if (!signal) return;
+
+        if (signal.type === 'offer') {
+            await handleReceiveOffer(fromId, fromName, signal.sdp);
+        } else if (signal.type === 'answer') {
+            await handleReceiveAnswer(fromId, signal.sdp);
+        } else if (signal.type === 'candidate') {
+            await handleReceiveCandidate(fromId, signal.candidate);
+        }
+    });
+
+    // 5. إعلانات التواجد وحالة الميديا
+    directCallRealtimeChannel.on('broadcast', { event: 'peer-announce' }, ({ payload }) => {
+        if (!payload || String(payload.userId) === String(myUserId)) return;
+        const pId = String(payload.userId);
+        directCallParticipants.set(pId, {
+            userId: pId,
+            name: payload.username || payload.name || 'عضو الكلان',
+            micMuted: !!payload.micMuted,
+            camOff: !!payload.camOff,
+            isHost: !!payload.isHost
+        });
+        if (String(myUserId) > pId) {
+            initiatePeerConnection(pId, payload.username || payload.name);
+        } else {
+            if (directCallRealtimeChannel) {
+                directCallRealtimeChannel.send({
+                    type: 'broadcast',
+                    event: 'peer-announce-ack',
+                    payload: {
+                        userId: myUserId,
+                        username: myUsername,
+                        micMuted: isInAppMicMuted,
+                        camOff: isInAppCamOff,
+                        isHost: !!isHost
+                    }
+                });
+            }
+        }
+        updateFullCallParticipantsUI();
+    });
+
+    directCallRealtimeChannel.on('broadcast', { event: 'peer-announce-ack' }, ({ payload }) => {
+        if (!payload || String(payload.userId) === String(myUserId)) return;
+        const pId = String(payload.userId);
+        directCallParticipants.set(pId, {
+            userId: pId,
+            name: payload.username || payload.name || 'عضو الكلان',
+            micMuted: !!payload.micMuted,
+            camOff: !!payload.camOff,
+            isHost: !!payload.isHost
+        });
+        if (String(myUserId) > pId) {
+            initiatePeerConnection(pId, payload.username || payload.name);
+        }
+        updateFullCallParticipantsUI();
+    });
+
+    directCallRealtimeChannel.on('broadcast', { event: 'user_state' }, ({ payload }) => {
+        if (!payload || String(payload.userId) === String(myUserId)) return;
+        const pId = String(payload.userId);
+        const existing = directCallParticipants.get(pId);
+        if (existing) {
+            if (typeof payload.micMuted === 'boolean') existing.micMuted = payload.micMuted;
+            if (typeof payload.camOff === 'boolean') existing.camOff = payload.camOff;
+            updateFullCallParticipantsUI();
+        }
+    });
+
+    directCallRealtimeChannel.on('broadcast', { event: 'peer-leave' }, ({ payload }) => {
+        if (!payload || String(payload.userId) === String(myUserId)) return;
+        const pId = String(payload.userId);
+        closePeerConnection(pId);
+        directCallParticipants.delete(pId);
+        updateFullCallParticipantsUI();
+    });
+
+    // 6. الاشتراك وبث التواجد
+    directCallRealtimeChannel.subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+            console.log(`[Direct Call Realtime] Subscribed to ${channelName}`);
+            try {
+                await directCallRealtimeChannel.track({
+                    userId: String(myUserId),
+                    username: myUsername,
+                    micMuted: isInAppMicMuted,
+                    camOff: isInAppCamOff,
+                    isHost: !!isHost,
+                    joinedAt: Date.now()
+                });
+            } catch (err) {
+                console.warn("[Direct Call Realtime] track error:", err);
+            }
+            try {
+                directCallRealtimeChannel.send({
+                    type: 'broadcast',
+                    event: 'peer-announce',
+                    payload: {
+                        userId: myUserId,
+                        username: myUsername,
+                        micMuted: isInAppMicMuted,
+                        camOff: isInAppCamOff,
+                        isHost: !!isHost
+                    }
+                });
+            } catch (_) {}
+        }
+    });
+
+    updateFullCallParticipantsUI();
+}
+
+function leaveDirectCallRealtime(sendLeaveBroadcast = true) {
+    if (directCallRealtimeChannel) {
+        if (sendLeaveBroadcast) {
+            try {
+                const myUserId = getCurrentUserId();
+                directCallRealtimeChannel.send({
+                    type: 'broadcast',
+                    event: 'peer-leave',
+                    payload: { userId: myUserId }
+                });
+                directCallRealtimeChannel.untrack();
+            } catch (_) {}
+        }
+        try {
+            const client = ensureSupabaseClient();
+            if (client) client.removeChannel(directCallRealtimeChannel);
+        } catch (_) {}
+        directCallRealtimeChannel = null;
+    }
+
+    if (directCallPeers && directCallPeers.size) {
+        directCallPeers.forEach(({ pc }) => {
+            try { pc.close(); } catch (_) {}
+        });
+        directCallPeers.clear();
+    }
+
+    if (directCallParticipants) {
+        directCallParticipants.clear();
+    }
+    currentDirectCallId = null;
+
+    const grid = document.getElementById('call-participants-grid');
+    if (grid) grid.innerHTML = '';
+}
+
 /* 📱 بدء المكالمة المباشرة (فيديو وصوت) داخل التطبيق */
 async function startInAppCall(callIdOverride, hostOverride, roomNameOverride) {
     const username = getCurrentUsername() || 'عضو PHANTOM';
-    const actualHost = hostOverride || username;
-    const actualRoom = roomNameOverride || 'مكالمة المقر المباشرة';
-    const actualCallId = callIdOverride || ('call_direct_' + Date.now());
+    const existingDirectCall = (!callIdOverride && Array.isArray(allActiveServerCalls)) ? allActiveServerCalls.find(c => (c.mode === 'direct' || !c.mode) && c.status === 'active') : null;
+    const actualHost = hostOverride || (existingDirectCall ? (existingDirectCall.hostName || existingDirectCall.challengerName) : username);
+    const actualRoom = roomNameOverride || (existingDirectCall ? (existingDirectCall.roomName || existingDirectCall.topic) : 'مكالمة المقر المباشرة');
+    const actualCallId = callIdOverride || (existingDirectCall ? existingDirectCall.id : ('call_direct_' + Date.now()));
 
     // إيقاف أي مسارات Agora سابقة لتحرير المايكروفون والعتاد
     if (agoraLocalAudioTrack) {
@@ -6985,7 +7358,7 @@ async function startInAppCall(callIdOverride, hostOverride, roomNameOverride) {
         }
     }
 
-    // 3. إذا رفض المتصفح الصلاحيات أو تعذر فتح العتاد، إنشاء مسار صامت للاستماع
+    // 3. إذا رفض المتصفح الصلاحيات أو تعذر فتح العتاد، إنشاء مسار بديل
     if (!streamObtained || !inAppMediaStream) {
         try {
             const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -7017,8 +7390,13 @@ async function startInAppCall(callIdOverride, hostOverride, roomNameOverride) {
             videoEl.style.height = '100%';
             videoEl.style.objectFit = 'cover';
             videoEl.srcObject = inAppMediaStream;
-            videoEl.style.display = hasVideo ? 'block' : 'none';
-            if (hasVideo) videoEl.play().catch(() => {});
+
+            if (hasVideo) {
+                videoEl.style.display = 'block';
+                videoEl.play().catch(() => {});
+            } else {
+                videoEl.style.display = 'none';
+            }
             localContainer.appendChild(videoEl);
         }
 
@@ -7047,13 +7425,13 @@ async function startInAppCall(callIdOverride, hostOverride, roomNameOverride) {
             hostName: actualHost,
             topic: actualRoom
         });
-        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
 
-        if (!callIdOverride) {
-            insertActiveCallRow('direct', actualRoom).then((row) => {
-                if (row && row.id) activeCallId = row.id;
-                fetchAndSyncActiveCalls();
-            });
+        // 📡 انضمام لقناة Supabase Realtime وبث التواجد وبدء إشارات WebRTC المباشرة
+        const myUserId = getCurrentUserId();
+        const isHost = (!callIdOverride && (!existingDirectCall || existingDirectCall.hostName === username));
+        await joinDirectCallRealtime(actualCallId, myUserId, username, isHost);
+
+        if (!callIdOverride && !existingDirectCall) {
             fetch('/api/calls/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -7067,9 +7445,6 @@ async function startInAppCall(callIdOverride, hostOverride, roomNameOverride) {
                 })
             }).then(() => fetchAndSyncActiveCalls()).catch(() => {});
         } else {
-            myActiveCallRowId = actualCallId;
-            activeCallId = actualCallId;
-            incrementActiveCallParticipants(actualCallId).then(() => fetchAndSyncActiveCalls());
             fetch('/api/calls/join', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -7117,6 +7492,36 @@ async function toggleInAppMic() {
         audioTrack.enabled = !isInAppMicMuted;
     }
 
+    // بث حالة كتم/تشغيل المايك عبر قناة Supabase Realtime
+    if (directCallRealtimeChannel) {
+        try {
+            directCallRealtimeChannel.send({
+                type: 'broadcast',
+                event: 'user_state',
+                payload: {
+                    userId: getCurrentUserId(),
+                    micMuted: isInAppMicMuted,
+                    camOff: isInAppCamOff
+                }
+            });
+        } catch (_) {}
+    }
+
+    // تحديث مسار الصوت لجميع اتصالات الأقران
+    if (directCallPeers && directCallPeers.size && audioTrack) {
+        directCallPeers.forEach(({ pc }) => {
+            try {
+                const senders = pc.getSenders();
+                const aSender = senders.find(s => s.track && s.track.kind === 'audio');
+                if (aSender) {
+                    aSender.replaceTrack(audioTrack).catch(() => {});
+                } else {
+                    pc.addTrack(audioTrack, inAppMediaStream);
+                }
+            } catch (_) {}
+        });
+    }
+
     const micBtn = document.getElementById('inapp-mic-btn');
     if (micBtn) {
         micBtn.innerHTML = isInAppMicMuted ? '🔇 المايك: مكتوم' : '🎙️ المايك: شغال';
@@ -7126,9 +7531,7 @@ async function toggleInAppMic() {
     if (typeof updateFullCallButtonsUI === 'function') {
         updateFullCallButtonsUI();
     }
-    if (typeof updateFullCallParticipantsUI === 'function') {
-        updateFullCallParticipantsUI();
-    }
+    updateFullCallParticipantsUI();
     showToast(isInAppMicMuted ? "🔇 تم كتم المايك" : "🎙️ تم تشغيل المايك", "info");
 }
 
@@ -7167,6 +7570,39 @@ async function toggleInAppCam() {
         videoTrack.enabled = !isInAppCamOff;
     }
 
+    // بث حالة الكاميرا عبر قناة Supabase Realtime
+    if (directCallRealtimeChannel) {
+        try {
+            directCallRealtimeChannel.send({
+                type: 'broadcast',
+                event: 'user_state',
+                payload: {
+                    userId: getCurrentUserId(),
+                    micMuted: isInAppMicMuted,
+                    camOff: isInAppCamOff
+                }
+            });
+        } catch (_) {}
+    }
+
+    // تحديث مسار الفيديو لجميع اتصالات الأقران
+    if (directCallPeers && directCallPeers.size && videoTrack) {
+        directCallPeers.forEach(({ pc, remotePeerId, remoteName }) => {
+            try {
+                const senders = pc.getSenders();
+                const vSender = senders.find(s => s.track && s.track.kind === 'video');
+                if (vSender) {
+                    vSender.replaceTrack(videoTrack).catch(() => {});
+                } else {
+                    pc.addTrack(videoTrack, inAppMediaStream);
+                    if (String(getCurrentUserId()) > String(remotePeerId)) {
+                        initiatePeerConnection(remotePeerId, remoteName);
+                    }
+                }
+            } catch (_) {}
+        });
+    }
+
     const videoEl = document.getElementById('inapp-clan-video');
     const placeholder = document.getElementById('inapp-video-placeholder');
 
@@ -7192,9 +7628,7 @@ async function toggleInAppCam() {
     if (typeof updateFullCallButtonsUI === 'function') {
         updateFullCallButtonsUI();
     }
-    if (typeof updateFullCallParticipantsUI === 'function') {
-        updateFullCallParticipantsUI();
-    }
+    updateFullCallParticipantsUI();
     showToast(isInAppCamOff ? "🚫 تم إيقاف الكاميرا" : "📹 تم تشغيل الكاميرا بنجاح", "info");
 }
 
@@ -7203,6 +7637,8 @@ async function shareInAppCallInClanChat() {
 }
 
 async function endInAppCall() {
+    leaveDirectCallRealtime(true);
+
     if (inAppMediaStream) {
         inAppMediaStream.getTracks().forEach(track => {
             track.stop();
@@ -7214,8 +7650,6 @@ async function endInAppCall() {
     if (localContainer) {
         localContainer.innerHTML = '<video id="inapp-clan-video" autoplay playsinline muted style="width:100%; height:100%; object-fit:cover; display:none;"></video>';
     }
-    const callGridEnd = document.getElementById('call-participants-grid');
-    if (callGridEnd) callGridEnd.innerHTML = '';
 
     const placeholder = document.getElementById('inapp-video-placeholder');
     const liveBadge = document.getElementById('inapp-live-badge');
@@ -7239,6 +7673,7 @@ async function endInAppCall() {
     if (shareBtn) shareBtn.style.display = 'none';
     if (endBtn) endBtn.style.display = 'none';
 
+    fetch('/api/calls/end', { method: 'POST' }).catch(() => {});
     showToast("🔴 انتهت المكالمة المباشرة.", "info");
 }
 
@@ -7572,11 +8007,14 @@ async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, room
         // 2. إعداد عميل Agora RTC ومعالجات الأحداث
         setupAgoraClientEvents();
 
-        // 3. الانضمام إلى القناة باستخدام token و appId
+        // 3. الانضمام إلى القناة باستخدام token و appId مع تمرير الاسم كـ metadata
         try {
-            await agoraClient.join(activeAppId, activeChannel, activeToken, uid);
+            await agoraClient.join(activeAppId, activeChannel, activeToken, uid, { username: username });
             isAgoraJoined = true;
-            console.log(`[Agora] Joined channel ${activeChannel} as UID ${uid}`);
+            agoraUserNames.set(uid, username);
+            agoraUserNames.set(String(uid), username);
+            initAgoraMetaChannel(activeChannel, uid, username);
+            console.log(`[Agora] Joined channel ${activeChannel} as UID ${uid} (${username})`);
         } catch (joinErr) {
             console.error("Agora join error:", joinErr);
             let joinMsg = "فشل دخول قناة Agora.";
@@ -7621,7 +8059,6 @@ async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, room
         }
 
         updateAgoraUsersUI();
-        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
         showToast("🎉 تم الاتصال بغرفة Agora بنجاح!", "success");
 
         // 💾 حفظ بيانات جلسة Agora الحالية في sessionStorage لإعادة الاتصال التلقائي عند Refresh بالخطأ
@@ -7650,10 +8087,6 @@ async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, room
         }
 
         if (!callIdOverride) {
-            insertActiveCallRow('agora', activeChannel).then((row) => {
-                if (row && row.id) activeCallId = row.id;
-                fetchAndSyncActiveCalls();
-            });
             fetch('/api/calls/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -7668,9 +8101,6 @@ async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, room
                 })
             }).then(() => fetchAndSyncActiveCalls()).catch(() => {});
         } else {
-            myActiveCallRowId = actualCallId;
-            activeCallId = actualCallId;
-            incrementActiveCallParticipants(actualCallId).then(() => fetchAndSyncActiveCalls());
             fetch('/api/calls/join', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -7735,8 +8165,14 @@ async function leaveAgoraRoom() {
     isAgoraJoined = false;
     isAgoraMicMuted = false;
     agoraRemoteUsers.clear();
-    const callGrid = document.getElementById('call-participants-grid');
-    if (callGrid) callGrid.innerHTML = '';
+    if (agoraMetaRealtimeChannel) {
+        try {
+            const client = ensureSupabaseClient();
+            if (client) client.removeChannel(agoraMetaRealtimeChannel);
+        } catch (_) {}
+        agoraMetaRealtimeChannel = null;
+    }
+    if (agoraUserNames) agoraUserNames.clear();
     try { sessionStorage.removeItem('phantom_active_agora_session'); } catch (_) {}
 
     const statusPill = document.getElementById('call-connection-status');
@@ -7781,6 +8217,7 @@ async function leaveAgoraRoom() {
         updateFullCallButtonsUI();
     }
 
+    fetch('/api/calls/end', { method: 'POST' }).catch(() => {});
     showToast("🔴 غادرت غرفة Agora الصوتية.", "info");
 }
 
@@ -7827,15 +8264,24 @@ function updateAgoraUsersUI() {
     const count = agoraRemoteUsers.size + (isAgoraJoined ? 1 : 0);
     const usersList = document.getElementById("agora-users-list");
     const badge = document.getElementById("agora-members-badge");
-    const countEl = document.getElementById("call-participants-count");
-    if (countEl) countEl.textContent = String(Math.max(1, count));
+    const myName = (typeof getCurrentUsername === 'function' ? getCurrentUsername() : null) || 'أنت';
+
     if (badge) {
-        badge.textContent = `متصل بالروم (${count} في الغرفة)`;
+        badge.textContent = `🟢 متصل بالروم (${count} في الغرفة)`;
     }
     if (usersList) {
-        usersList.textContent = count > 1 ? `${count} أعضاء` : '';
+        if (count > 1) {
+            usersList.style.display = "block";
+            const names = [myName];
+            agoraRemoteUsers.forEach((u, uid) => {
+                const dName = u.displayName || u.username || u.name || (typeof agoraUserNames !== 'undefined' && agoraUserNames.get(uid)) || `عضو (${uid})`;
+                names.push(dName);
+            });
+            usersList.textContent = `👥 المتصلين بالروم: ${names.join('، ')}`;
+        } else {
+            usersList.style.display = "none";
+        }
     }
-    if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
 }
 
 window.openAndJoinCall = function(tabTarget) {
@@ -7927,13 +8373,6 @@ async function handleCreateNewMeetCall() {
                 if (codeEl) codeEl.textContent = `Google Meet الرسمي: جاهز للبدء الفوري بنقرة واحدة`;
                 if (joinBtn) joinBtn.href = currentGoogleMeetUri;
 
-                insertActiveCallRow('meet', currentGoogleMeetUri).then((row) => {
-                    if (row && row.id) {
-                        myActiveCallRowId = row.id;
-                        activeCallId = row.id;
-                    }
-                    fetchAndSyncActiveCalls();
-                });
                 showToast("🎉 تم تجهيز رابط Google Meet الرسمي بنجاح!", "success");
                 return;
             }
@@ -7955,13 +8394,6 @@ async function handleCreateNewMeetCall() {
         if (codeEl) codeEl.textContent = `الكود: ${currentGoogleMeetCode} | ${currentGoogleMeetUri}`;
         if (joinBtn) joinBtn.href = currentGoogleMeetUri;
 
-        insertActiveCallRow('meet', currentGoogleMeetUri).then((row) => {
-            if (row && row.id) {
-                myActiveCallRowId = row.id;
-                activeCallId = row.id;
-            }
-            fetchAndSyncActiveCalls();
-        });
         showToast("🎉 تم إنشاء رابط مكالمة Google Meet بنجاح!", "success");
     } catch (err) {
         console.warn("[Google Meet] Fallback to direct launcher:", err && err.message);
@@ -7978,13 +8410,6 @@ async function handleCreateNewMeetCall() {
         if (codeEl) codeEl.textContent = `Google Meet الرسمي: جاهز للبدء الفوري بنقرة واحدة`;
         if (joinBtn) joinBtn.href = currentGoogleMeetUri;
 
-        insertActiveCallRow('meet', currentGoogleMeetUri).then((row) => {
-            if (row && row.id) {
-                myActiveCallRowId = row.id;
-                activeCallId = row.id;
-            }
-            fetchAndSyncActiveCalls();
-        });
         showToast("📹 تم تجهيز رابط مكالمة Google Meet بنجاح!", "info");
     }
 }
@@ -8034,7 +8459,8 @@ function joinVoiceRoom() {
 }
 
 function leaveVoiceRoom() {
-    handleFullCallEnd();
+    endInAppCall();
+    closeGoogleMeetModal();
     const panel = document.getElementById("voice-room-panel");
     if (panel) panel.style.display = "none";
     const username = (typeof getCurrentUsername === "function" ? getCurrentUsername() : null) || "عضو PHANTOM";
@@ -15344,14 +15770,15 @@ function closeSuggestionModal() {
     document.getElementById('suggestion-reason').value = '';
 }
 
-async function submitSuggestion() {
+function submitSuggestion() {
     const name = document.getElementById('suggestion-name').value.trim();
     const details = document.getElementById('suggestion-details').value.trim();
     const reason = document.getElementById('suggestion-reason').value.trim();
 
     if (!name || !details || !reason) { showToast("أكمل جميع الحقول أولاً.", "error"); return; }
 
-    const newSugg = {
+    const suggestions = getStorage("phantom_suggestions", []);
+    suggestions.push({
         id: `sugg_${Date.now()}`,
         from: getCurrentUsername(),
         name: name,
@@ -15359,72 +15786,95 @@ async function submitSuggestion() {
         reason: reason,
         date: new Date().toLocaleString("ar-EG"),
         status: 'pending'
-    };
-    await serverCreateSuggestion(newSugg);
-    if (typeof renderSuggestions === 'function') renderSuggestions();
+    });
+    setStorage("phantom_suggestions", suggestions);
 
     showToast("✅ تم إرسال الاقتراح للقيادة.", "success");
     closeSuggestionModal();
 }
 
-function suggestionCardHtml(s, statusHtml) {
-    return `
-        <div class="suggestion-item">
-            <div class="s-title">💡 ${escapeHTML(s.name)}</div>
-            <div style="color:var(--text); margin-top:4px;">📝 ${escapeHTML(s.details)}</div>
-            <div class="s-reason">🗣️ ليه: ${escapeHTML(s.reason)}</div>
-            <div style="font-size:0.7rem; color:var(--muted); margin-top:4px;">👤 ${escapeHTML(s.from)} — ${escapeHTML(s.date)}</div>
-            <div class="suggestion-actions">
-                ${statusHtml}
-            </div>
-        </div>
-    `;
+async function serverGetSuggestions() {
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { data, error } = await client.from('suggestions').select('*').order('created_at', { ascending: false });
+            if (!error && Array.isArray(data)) {
+                setStorage("phantom_suggestions", data);
+                return data;
+            }
+        } catch (e) {
+            // جدول suggestions غير موجود بعد في schema، يتم استخدام الذاكرة المشتركة
+        }
+    }
+    return getStorage("phantom_suggestions", []);
 }
 
 function renderSuggestions() {
     const container = document.getElementById("suggestions-container");
     if (!container) return;
 
-    const suggestions = asList(getStorage("phantom_suggestions", []));
-    const pending = suggestions.filter(s => !s.status || s.status === 'pending');
-    const processed = suggestions.filter(s => s.status === 'approved' || s.status === 'rejected');
+    const suggestions = getStorage("phantom_suggestions", []);
 
-    if (!pending.length && !processed.length) {
+    if (!suggestions.length) {
         container.innerHTML = `<div style="text-align:center; padding:10px; color:var(--muted);">لا توجد اقتراحات حالياً.</div>`;
         return;
     }
 
-    const pendingHtml = pending.length
-        ? pending.map(s => suggestionCardHtml(s, `
-                    <button class="btn-accept" onclick="handleSuggestion('${s.id}', 'accept')">جيد</button>
-                    <button class="btn-reject" onclick="handleSuggestion('${s.id}', 'reject')">غير مفيد حالياً</button>
-            `)).join("")
-        : `<div style="text-align:center; padding:10px; color:var(--muted);">لا توجد اقتراحات معلّقة.</div>`;
+    // عرض جميع الاقتراحات عبر .map()
+    container.innerHTML = suggestions.map(s => {
+        let statusBadge = '';
+        const currentStatus = String(s.status || 'pending').toLowerCase();
 
-    const processedHtml = processed.map(s => {
-        const statusHtml = s.status === 'approved'
-            ? `<span style="color:var(--green); font-size:0.8rem; text-align:center; flex:1;">مقبول</span>`
-            : `<span style="color:var(--red); font-size:0.8rem; text-align:center; flex:1;">مرفوض</span>`;
-        return suggestionCardHtml(s, statusHtml);
+        if (currentStatus === 'pending') {
+            statusBadge = `
+                <button class="btn-accept" onclick="handleSuggestion('${s.id}', 'accept')">✅ قبول</button>
+                <button class="btn-reject" onclick="handleSuggestion('${s.id}', 'reject')">❌ غير مفيد حالياً</button>
+            `;
+        } else if (currentStatus === 'accepted' || currentStatus === 'approved') {
+            statusBadge = `<span style="color:#00ff88; font-weight:bold; font-size:0.85rem; text-align:center; flex:1; background:rgba(0,255,136,0.1); padding:4px 8px; border-radius:4px; border:1px solid rgba(0,255,136,0.3);">✅ تمت الموافقة</span>`;
+        } else if (currentStatus === 'rejected') {
+            statusBadge = `<span style="color:#ff4444; font-weight:bold; font-size:0.85rem; text-align:center; flex:1; background:rgba(255,68,68,0.1); padding:4px 8px; border-radius:4px; border:1px solid rgba(255,68,68,0.3);">❌ تم الرفض</span>`;
+        } else {
+            statusBadge = `<span style="color:var(--muted); font-size:0.85rem; text-align:center; flex:1;">ℹ️ ${escapeHTML(s.status)}</span>`;
+        }
+
+        return `
+            <div class="suggestion-item" data-id="${s.id}">
+                <div class="s-title">💡 ${escapeHTML(s.name || s.title || '')}</div>
+                <div style="color:var(--text); margin-top:4px;">📝 ${escapeHTML(s.details || s.description || '')}</div>
+                <div class="s-reason">🗣️ ليه: ${escapeHTML(s.reason || '')}</div>
+                <div style="font-size:0.7rem; color:var(--muted); margin-top:4px;">👤 ${escapeHTML(s.from || s.username || '')} — ${escapeHTML(s.date || '')}</div>
+                <div class="suggestion-actions">
+                    ${statusBadge}
+                </div>
+            </div>
+        `;
     }).join("");
-
-    container.innerHTML = `
-        ${pendingHtml}
-        ${processed.length ? `<div style="margin-top:16px; padding-top:10px; border-top:1px solid var(--border); color:var(--muted); font-size:0.8rem;">المعالجة</div>${processedHtml}` : ''}
-    `;
 }
 
 async function handleSuggestion(id, action) {
-    let suggestions = asList(getStorage("phantom_suggestions", []));
-    const sugg = suggestions.find(s => String(s.id) === String(id));
     const newStatus = action === 'accept' ? 'approved' : 'rejected';
-    await serverUpdateSuggestionStatus(id, newStatus);
+    
+    // تحديث قاعدة البيانات في Supabase إذا كان الجدول متوفراً
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            await client.from('suggestions').update({ status: newStatus }).eq('id', id);
+        } catch (e) {
+            // صامت في حال عدم وجود جدول suggestions في قاعدة البيانات
+        }
+    }
+
+    let suggestions = getStorage("phantom_suggestions", []);
+    const sugg = suggestions.find(s => String(s.id) === String(id));
+    suggestions = suggestions.map(s => String(s.id) === String(id) ? { ...s, status: newStatus } : s);
+    setStorage("phantom_suggestions", suggestions);
 
     if (action === 'accept') {
-        addSystemUpdate("✅ اقتراح مقبول", `تم قبول اقتراح "${sugg.name}" من ${sugg.from}.`, true);
-        showToast("✅ تم قبول الاقتراح.", "success");
+        if (sugg) addSystemUpdate("✅ اقتراح مقبول", `تمت الموافقة على اقتراح "${sugg.name || ''}" من ${sugg.from || ''}.`, true);
+        showToast("✅ تمت الموافقة على الاقتراح.", "success");
     } else {
-        addSystemUpdate("❌ اقتراح مرفوض", `تم رفض اقتراح "${sugg.name}" من ${sugg.from}.`, true);
+        if (sugg) addSystemUpdate("❌ اقتراح مرفوض", `تم رفض اقتراح "${sugg.name || ''}" من ${sugg.from || ''}.`, true);
         showToast("❌ تم رفض الاقتراح.", "info");
     }
     renderSuggestions();
