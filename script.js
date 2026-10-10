@@ -6093,6 +6093,11 @@ window.handleFullCallEnd = handleFullCallEnd;
 
 function getCallParticipantName(user) {
     if (!user) return 'عضو';
+    // 🏷️ الاسم الحقيقي القادم من Metadata/الخريطة/جدول members
+    if (typeof agoraUserNameMap !== 'undefined' && agoraUserNameMap instanceof Map && user.uid != null) {
+        const mapped = agoraUserNameMap.get(String(user.uid));
+        if (mapped) return mapped;
+    }
     return user.name || user.username || user.displayName || (user.uid != null ? `عضو ${user.uid}` : 'عضو');
 }
 
@@ -6107,6 +6112,25 @@ function collectCallParticipants() {
         isMuted,
         hasVideo: camOn
     }];
+    // 🔗 مشاركو الاتصال المباشر (WebRTC عبر قناة Supabase Realtime)
+    if (typeof directCallPeers !== 'undefined' && directCallPeers instanceof Map) {
+        directCallPeers.forEach((peer, peerId) => {
+            if (peerId == null) return;
+            if (typeof directCallSelfId !== 'undefined' && String(peerId) === String(directCallSelfId)) return;
+            const stream = peer && peer.stream;
+            const hasRemoteVideo = !!(stream && stream.getVideoTracks().some(t => t.readyState === 'live'));
+            const hasRemoteAudio = !!(stream && stream.getAudioTracks().some(t => t.readyState === 'live'));
+            list.push({
+                id: 'peer_' + peerId,
+                name: peer.name || ('عضو ' + peerId),
+                isMe: false,
+                isMuted: !hasRemoteAudio,
+                hasVideo: hasRemoteVideo && activeCallMode !== 'agora',
+                stream: stream || null,
+                peer
+            });
+        });
+    }
     if (typeof agoraRemoteUsers !== 'undefined' && agoraRemoteUsers instanceof Map) {
         agoraRemoteUsers.forEach((user, uid) => {
             list.push({
@@ -6190,6 +6214,27 @@ function updateFullCallParticipantsUI() {
         const { media } = ensureCallTile(grid, p);
         if (p.isMe && p.hasVideo) {
             attachLocalVideoToTile(media);
+        } else if (!p.isMe && p.stream && media) {
+            // 🔗 مشارك في الاتصال المباشر (WebRTC): ربط مسار الصوت/الفيديو القادم
+            const videoId = `call-tile-stream-${p.id}`;
+            let videoEl = document.getElementById(videoId);
+            if (!videoEl) {
+                media.innerHTML = '';
+                videoEl = document.createElement('video');
+                videoEl.id = videoId;
+                videoEl.autoplay = true;
+                videoEl.playsInline = true;
+                videoEl.setAttribute('autoplay', '');
+                videoEl.setAttribute('playsinline', '');
+                videoEl.style.width = '100%';
+                videoEl.style.height = '100%';
+                videoEl.style.objectFit = 'cover';
+                media.appendChild(videoEl);
+            }
+            if (videoEl.srcObject !== p.stream) {
+                videoEl.srcObject = p.stream;
+            }
+            videoEl.play().catch(() => {});
         } else if (!p.isMe && p.hasVideo && p.user && p.user.videoTrack && media) {
             const playerId = `call-tile-player-${p.id}`;
             let player = document.getElementById(playerId);
@@ -6788,6 +6833,164 @@ let isAgoraJoined = false;
 let isAgoraMicMuted = false;
 let agoraRemoteUsers = new Map();
 
+/* ========================================================
+   🏷️ خريطة أسماء مستخدمي Agora (uid ➜ الاسم الحقيقي)
+   تُبنى من ثلاثة مصادر:
+   1) Metadata المُمرَّرة عند الانضمام: client.join(appId, channel, token, uid, { username })
+   2) بث الهوية عبر قناة Supabase Realtime + Agora Stream Message
+   3) الرجوع لجلب الاسم من جدول members في Supabase عبر الـ UID
+   ======================================================== */
+let agoraUserNameMap = new Map();
+let agoraSelfUid = null;
+let agoraSelfName = null;
+let agoraIdentityChannel = null;
+const AGORA_NAME_CACHE_KEY = "phantom_agora_names_cache";
+
+function loadAgoraNameCache() {
+    try {
+        const raw = sessionStorage.getItem(AGORA_NAME_CACHE_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+            Object.keys(parsed).forEach((key) => agoraUserNameMap.set(key, parsed[key]));
+        }
+    } catch (_) {}
+}
+
+function persistAgoraNameCache() {
+    try {
+        const obj = {};
+        agoraUserNameMap.forEach((value, key) => { obj[key] = value; });
+        sessionStorage.setItem(AGORA_NAME_CACHE_KEY, JSON.stringify(obj));
+    } catch (_) {}
+}
+
+/* حفظ اسم عضو في الخريطة (يرفض الأسماء البديلة مثل "عضو 12345") */
+function rememberAgoraUserName(uid, name) {
+    if (uid == null || !name) return false;
+    const clean = String(name).trim();
+    if (!clean || clean.startsWith("عضو ")) return false;
+    const key = String(uid);
+    if (agoraUserNameMap.get(key) === clean) return false;
+    agoraUserNameMap.set(key, clean);
+    persistAgoraNameCache();
+    return true;
+}
+
+/* تحليل الـ Metadata القادمة من Agora (كائن أو نص JSON) */
+function parseAgoraMetadata(metadata) {
+    if (!metadata) return null;
+    let parsed = metadata;
+    if (typeof metadata === "string") {
+        try { parsed = JSON.parse(metadata); } catch (_) { return { username: metadata }; }
+    }
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+}
+
+loadAgoraNameCache();
+
+/* الرجوع لجلب اسم العضو من جدول members في Supabase عبر الـ UID */
+async function fetchAgoraNameFromMembers(uid) {
+    const client = (typeof ensureSupabaseClient === "function") ? ensureSupabaseClient() : null;
+    if (!client || uid == null) return null;
+    const uidStr = String(uid);
+    const columns = ["userId", "gameId", "uid", "agora_uid", "id"];
+    for (const column of columns) {
+        try {
+            const { data, error } = await client.from("members").select("name").eq(column, uidStr).limit(1);
+            if (!error && Array.isArray(data) && data[0] && data[0].name) {
+                return data[0].name;
+            }
+        } catch (_) {}
+    }
+    return null;
+}
+
+/* تحديد اسم المشارك: الخريطة ➜ Metadata ➜ جدول members */
+async function resolveAgoraUserName(user) {
+    if (!user || user.uid == null) return null;
+    const key = String(user.uid);
+    if (agoraUserNameMap.has(key)) return agoraUserNameMap.get(key);
+
+    const meta = parseAgoraMetadata(user.metadata || user._metadata);
+    if (meta && meta.username) {
+        rememberAgoraUserName(user.uid, meta.username);
+        return meta.username;
+    }
+
+    const fromDb = await fetchAgoraNameFromMembers(user.uid);
+    if (fromDb) {
+        rememberAgoraUserName(user.uid, fromDb);
+        if (typeof updateFullCallParticipantsUI === "function") updateFullCallParticipantsUI();
+        return fromDb;
+    }
+    return null;
+}
+
+/* بث هوية العضو (الـ UID + الاسم) لكل الموجودين في الغرفة */
+function broadcastAgoraIdentity() {
+    const payload = {
+        uid: (agoraClient && agoraClient.uid != null) ? agoraClient.uid : agoraSelfUid,
+        username: agoraSelfName || (typeof getCurrentUsername === "function" ? getCurrentUsername() : "") || ""
+    };
+    if (payload.uid == null || !payload.username) return;
+    agoraSelfUid = payload.uid;
+    rememberAgoraUserName(payload.uid, payload.username);
+
+    // 1) عبر قناة Supabase Realtime (موثوقة دائماً)
+    if (agoraIdentityChannel) {
+        try { agoraIdentityChannel.send({ type: "broadcast", event: "agora-identity", payload }); } catch (_) {}
+    }
+    // 2) عبر Agora Stream Message الأصلية (حسب دعم المتصفح/الإصدار)
+    if (agoraClient && typeof agoraClient.sendStreamMessage === "function") {
+        try {
+            agoraClient.sendStreamMessage(JSON.stringify({ t: "agora-identity", uid: payload.uid, username: payload.username }));
+        } catch (_) {}
+    }
+}
+
+/* فتح قناة Supabase Realtime لتبادل الأسماء داخل غرفة Agora */
+async function initAgoraIdentityChannel(channelName) {
+    const client = (typeof ensureSupabaseClient === "function") ? ensureSupabaseClient() : null;
+    if (!client || !channelName) return;
+    await teardownAgoraIdentityChannel();
+    try {
+        agoraIdentityChannel = client.channel(`agora_identity_${channelName}`, {
+            config: { broadcast: { self: false } }
+        });
+        agoraIdentityChannel.on("broadcast", { event: "agora-identity" }, ({ payload }) => {
+            if (!payload || payload.uid == null || !payload.username) return;
+            if (rememberAgoraUserName(payload.uid, payload.username)) {
+                updateAgoraUsersUI();
+                if (typeof updateFullCallParticipantsUI === "function") updateFullCallParticipantsUI();
+            }
+        });
+        await new Promise((resolve) => {
+            let settled = false;
+            const done = () => { if (!settled) { settled = true; resolve(true); } };
+            try {
+                agoraIdentityChannel.subscribe((status) => {
+                    if (status === "SUBSCRIBED") done();
+                });
+            } catch (_) { done(); }
+            setTimeout(done, 6000);
+        });
+        broadcastAgoraIdentity();
+    } catch (e) {
+        console.warn("[Agora] Identity channel setup failed:", e);
+    }
+}
+
+async function teardownAgoraIdentityChannel() {
+    if (!agoraIdentityChannel) return;
+    const client = (typeof ensureSupabaseClient === "function") ? ensureSupabaseClient() : null;
+    const ch = agoraIdentityChannel;
+    agoraIdentityChannel = null;
+    try { ch.unsubscribe(); } catch (_) {}
+    try { if (client && typeof client.removeChannel === "function") client.removeChannel(ch); } catch (_) {}
+}
+
 function setupAgoraClientEvents() {
     if (agoraClient) return;
     if (typeof window === "undefined" || !window.AgoraRTC) {
@@ -6810,6 +7013,11 @@ function setupAgoraClientEvents() {
             if (mediaType === "video" && user.videoTrack) {
                 renderRemoteUserVideoTile(user);
             }
+            // 🏷️ تحديد الاسم الحقيقي للمشارك (Metadata / خريطة الأسماء / جدول members)
+            resolveAgoraUserName(user).then(() => {
+                updateAgoraUsersUI();
+                if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
+            });
             updateCallParticipantsUI();
             updateAgoraUsersUI();
             if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
@@ -6834,9 +7042,13 @@ function setupAgoraClientEvents() {
         if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
     });
 
-    // 3. التعامل مع خروج المشارك من القناة
-    agoraClient.on("user-joined", (user) => {
+    // 3. التعامل مع انضمام مشارك جديد للقناة
+    agoraClient.on("user-joined", async (user) => {
         agoraRemoteUsers.set(user.uid, user);
+        // 🏷️ بث اسمنا للعضو الجديد حتى يُعرف فوراً + قراءة اسمه من Metadata/الخريطة/members
+        broadcastAgoraIdentity();
+        await resolveAgoraUserName(user);
+        updateAgoraUsersUI();
         if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
     });
 
@@ -6849,7 +7061,26 @@ function setupAgoraClientEvents() {
         if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
     });
 
-    // 4. التجديد التلقائي للتوكن قبل انتهائه
+    // 4. استقبال هوية الأعضاء عبر Agora Stream Message (uid ➜ الاسم)
+    agoraClient.on("stream-message", (uid, payload) => {
+        try {
+            let text = "";
+            if (typeof payload === "string") {
+                text = payload;
+            } else if (payload) {
+                text = new TextDecoder().decode(payload);
+            }
+            const data = JSON.parse(text);
+            if (!data || !data.username) return;
+            const key = (data.uid != null) ? data.uid : uid;
+            if (rememberAgoraUserName(key, data.username)) {
+                updateAgoraUsersUI();
+                if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
+            }
+        } catch (_) {}
+    });
+
+    // 5. التجديد التلقائي للتوكن قبل انتهائه
     agoraClient.on("token-privilege-will-expire", async () => {
         console.warn("[Agora] Token will expire soon. Renewing via agora-token function...");
         try {
@@ -6864,7 +7095,7 @@ function setupAgoraClientEvents() {
         }
     });
 
-    // 5. التعامل مع انتهاء صلاحية التوكن
+    // 6. التعامل مع انتهاء صلاحية التوكن
     agoraClient.on("token-privilege-did-expire", () => {
         console.error("[Agora] Token expired!");
         showToast("⚠️ انتهت صلاحية توكن Agora، يرجى إعادة الدخول للغرفة.", "error");
@@ -7052,6 +7283,8 @@ async function startInAppCall(callIdOverride, hostOverride, roomNameOverride) {
         if (!callIdOverride) {
             insertActiveCallRow('direct', actualRoom).then((row) => {
                 if (row && row.id) activeCallId = row.id;
+                // 🔗 بدء قناة إشارات WebRTC باسم صف المكالمة الرسمي (يستخدمه المنضمون أيضاً)
+                initDirectCallSignaling(activeCallId || actualCallId, username, true);
                 fetchAndSyncActiveCalls();
             });
             fetch('/api/calls/start', {
@@ -7079,6 +7312,8 @@ async function startInAppCall(callIdOverride, hostOverride, roomNameOverride) {
                     userId: getCurrentUserId()
                 })
             }).then(() => fetchAndSyncActiveCalls()).catch(() => {});
+            // 🔗 الانضمام لقناة إشارات الاتصال المباشر الخاصة بهذه المكالمة
+            initDirectCallSignaling(actualCallId, username, false);
         }
 
     } catch (err) {
@@ -7129,6 +7364,8 @@ async function toggleInAppMic() {
     if (typeof updateFullCallParticipantsUI === 'function') {
         updateFullCallParticipantsUI();
     }
+    // 🔗 مزامنة المسار الصوتي الجديد مع كل اتصالات WebRTC النشطة
+    syncDirectCallLocalTracks();
     showToast(isInAppMicMuted ? "🔇 تم كتم المايك" : "🎙️ تم تشغيل المايك", "info");
 }
 
@@ -7195,6 +7432,8 @@ async function toggleInAppCam() {
     if (typeof updateFullCallParticipantsUI === 'function') {
         updateFullCallParticipantsUI();
     }
+    // 🔗 مزامنة مسار الفيديو مع كل اتصالات WebRTC النشطة
+    syncDirectCallLocalTracks();
     showToast(isInAppCamOff ? "🚫 تم إيقاف الكاميرا" : "📹 تم تشغيل الكاميرا بنجاح", "info");
 }
 
@@ -7203,6 +7442,10 @@ async function shareInAppCallInClanChat() {
 }
 
 async function endInAppCall() {
+    // 🔗 إغلاق قناة إشارات WebRTC وقطع الاتصالات بالكامل
+    if (typeof teardownDirectCallSignaling === 'function') {
+        await teardownDirectCallSignaling(true);
+    }
     if (inAppMediaStream) {
         inAppMediaStream.getTracks().forEach(track => {
             track.stop();
@@ -7492,6 +7735,10 @@ async function obtainAgoraAudioTrack() {
 }
 
 async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, roomNameOverride) {
+    // 🔗 إغلاق قناة إشارات الاتصال المباشر (لا يمكن استخدام وضعين في نفس الوقت)
+    if (typeof teardownDirectCallSignaling === 'function') {
+        await teardownDirectCallSignaling(true);
+    }
     // إيقاف مسارات الاتصال المباشر السابقة لتحرير المايكروفون لـ Agora
     if (inAppMediaStream) {
         try { inAppMediaStream.getTracks().forEach(t => t.stop()); } catch (_) {}
@@ -7572,10 +7819,19 @@ async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, room
         // 2. إعداد عميل Agora RTC ومعالجات الأحداث
         setupAgoraClientEvents();
 
-        // 3. الانضمام إلى القناة باستخدام token و appId
+        // 3. الانضمام إلى القناة باستخدام token و appId مع تمرير اسم العضو كـ Metadata
         try {
-            await agoraClient.join(activeAppId, activeChannel, activeToken, uid);
+            try {
+                await agoraClient.join(activeAppId, activeChannel, activeToken, uid, { username: username });
+            } catch (metaJoinErr) {
+                // بعض إصدارات Agora لا تقبل الوسيط الخامس (Metadata): إعادة المحاولة بدونه
+                console.warn("[Agora] Join with metadata failed, retrying without it:", metaJoinErr);
+                await agoraClient.join(activeAppId, activeChannel, activeToken, uid);
+            }
             isAgoraJoined = true;
+            agoraSelfUid = (agoraClient && agoraClient.uid != null) ? agoraClient.uid : uid;
+            agoraSelfName = username;
+            rememberAgoraUserName(agoraSelfUid, agoraSelfName);
             console.log(`[Agora] Joined channel ${activeChannel} as UID ${uid}`);
         } catch (joinErr) {
             console.error("Agora join error:", joinErr);
@@ -7591,6 +7847,9 @@ async function joinAgoraRoom(channelOverride, callIdOverride, hostOverride, room
             }
             throw new Error(joinMsg);
         }
+
+        // 3.b فتح قناة تبادل الأسماء (Supabase Realtime) وبث هويتنا فور الانضمام
+        initAgoraIdentityChannel(activeChannel);
 
         // 4. إنشاء ونشر مسار المايكروفون
         try {
@@ -7719,6 +7978,10 @@ function updateAgoraMicButtonUI(isActive, customLabel) {
 }
 
 async function leaveAgoraRoom() {
+    // 🏷️ إغلاق قناة تبادل الأسماء قبل مغادرة الغرفة
+    await teardownAgoraIdentityChannel();
+    agoraSelfUid = null;
+    agoraSelfName = null;
     try {
         if (agoraLocalAudioTrack) {
             agoraLocalAudioTrack.stop();
@@ -7857,6 +8120,402 @@ window.joinAgoraRoom = joinAgoraRoom;
 window.leaveAgoraRoom = leaveAgoraRoom;
 window.toggleAgoraMic = toggleAgoraMic;
 window.shareAgoraCallInClanChat = shareAgoraCallInClanChat;
+
+/* ========================================================
+   🔗 الاتصال المباشر (Direct Call) عبر WebRTC
+   قناة الإشارات: direct_call_{callId} على Supabase Realtime
+   - بث التواجد (Presence): معرّف العضو + اسمه
+   - تبادل Offer / Answer / ICE Candidates عبر Broadcast
+   ======================================================== */
+const DIRECT_CALL_ICE_CONFIG = {
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:global.stun.twilio.com:3478' }
+    ]
+};
+
+let directCallChannel = null;
+let directCallPeers = new Map();   // peerId ➜ { id, name, pc, stream, ... }
+let directCallSelfId = null;
+let directCallSelfName = null;
+let directCallSignalingId = null;
+
+/* معرّف ثابت وفريد لكل عضو لاستخدامه في قناة الإشارات */
+function getDirectCallSelfId() {
+    const uid = (typeof getCurrentUserId === 'function') ? getCurrentUserId() : null;
+    if (uid) return String(uid);
+    const name = (typeof getCurrentUsername === 'function') ? getCurrentUsername() : null;
+    if (name) return 'u_' + encodeURIComponent(name);
+    return 'u_' + Math.random().toString(36).slice(2, 10);
+}
+
+/* إرسال إشارة WebRTC إلى مشارك محدد عبر القناة */
+function sendDirectCallSignal(event, payload) {
+    if (!directCallChannel) return;
+    try {
+        directCallChannel.send({ type: 'broadcast', event, payload });
+    } catch (e) {
+        console.warn('[DirectCall] broadcast failed:', event, e);
+    }
+}
+
+function setDirectPeerName(peerId, name) {
+    if (peerId == null || !name) return;
+    const peer = directCallPeers.get(peerId);
+    if (peer && peer.name !== name) {
+        peer.name = name;
+        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
+    }
+}
+
+/* إنشاء اتصال نظير (RTCPeerConnection) لمشارك جديد + إضافة المسارات المحلية */
+function ensureDirectPeer(peerId, peerName) {
+    if (peerId == null) return null;
+    const existing = directCallPeers.get(peerId);
+    if (existing) {
+        if (peerName && existing.name !== peerName) {
+            existing.name = peerName;
+            if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
+        }
+        return existing;
+    }
+    if (typeof RTCPeerConnection === 'undefined') {
+        console.warn('[DirectCall] WebRTC (RTCPeerConnection) غير مدعوم في هذا المتصفح.');
+        return null;
+    }
+
+    const pc = new RTCPeerConnection(DIRECT_CALL_ICE_CONFIG);
+    const peer = {
+        id: String(peerId),
+        name: peerName || null,
+        pc,
+        stream: new MediaStream(),
+        makingOffer: false,
+        ignoreOffer: false,
+        isSettingRemoteAnswerPending: false,
+        polite: String(directCallSelfId) > String(peerId),
+        pendingCandidates: [],
+        hasRemoteDescription: false,
+        offerScheduled: false
+    };
+    directCallPeers.set(peerId, peer);
+
+    // إضافة مساراتنا المحلية (صوت/فيديو) قبل بدء التفاوض
+    if (inAppMediaStream) {
+        inAppMediaStream.getTracks().forEach((track) => {
+            try { pc.addTrack(track, inAppMediaStream); } catch (_) {}
+        });
+    }
+
+    pc.onicecandidate = ({ candidate }) => {
+        if (!candidate) return;
+        sendDirectCallSignal('direct-ice', {
+            from: directCallSelfId,
+            to: peer.id,
+            candidate: candidate.toJSON()
+        });
+    };
+
+    pc.ontrack = (event) => {
+        try {
+            const streams = (event.streams && event.streams.length) ? event.streams : null;
+            if (streams) {
+                streams[0].getTracks().forEach((t) => {
+                    if (!peer.stream.getTracks().includes(t)) peer.stream.addTrack(t);
+                });
+            } else if (event.track && !peer.stream.getTracks().includes(event.track)) {
+                peer.stream.addTrack(event.track);
+            }
+        } catch (_) {}
+        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
+    };
+
+    pc.onnegotiationneeded = async () => {
+        try {
+            if (pc.signalingState !== 'stable') return;
+            if (peer.ignoreOffer) return;
+            peer.makingOffer = true;
+            await pc.setLocalDescription();
+            sendDirectCallSignal('direct-offer', {
+                from: directCallSelfId,
+                to: peer.id,
+                name: directCallSelfName,
+                description: pc.localDescription
+            });
+        } catch (e) {
+            console.warn('[DirectCall] negotiation failed:', e);
+        } finally {
+            peer.makingOffer = false;
+        }
+    };
+
+    pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'failed') {
+            try { pc.restartIce(); } catch (_) {}
+        }
+        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
+    };
+
+    // ضمان بدء التفاوض حتى في الحالات النادرة التي لا يُطلق فيها onnegotiationneeded
+    scheduleDirectOffer(peer);
+    return peer;
+}
+
+/* مزامنة المسارات المحلية (بعد تشغيل/إيقاف المايك أو الكاميرا) مع كل اتصالات WebRTC */
+function syncDirectCallLocalTracks() {
+    if (!directCallPeers || !directCallPeers.size) return;
+    directCallPeers.forEach((peer) => {
+        if (!peer || !peer.pc) return;
+        try {
+            const senders = peer.pc.getSenders();
+            const localTracks = inAppMediaStream ? inAppMediaStream.getTracks() : [];
+            localTracks.forEach((track) => {
+                if (!track) return;
+                if (senders.some(s => s.track === track)) return;
+                const sameKind = senders.find(s => s.track && s.track.kind === track.kind);
+                if (sameKind) {
+                    try { sameKind.replaceTrack(track); return; } catch (_) {}
+                }
+                try { peer.pc.addTrack(track, inAppMediaStream); } catch (_) {}
+            });
+        } catch (_) {}
+    });
+}
+
+/* بدء العرض بشكل استباقي (حتمي: صاحب المعرّف الأصغر يبادر) */
+function scheduleDirectOffer(peer) {
+    if (!peer || peer.offerScheduled || !peer.pc) return;
+    peer.offerScheduled = true;
+    setTimeout(() => {
+        try {
+            if (!peer.pc) return;
+            if (peer.pc.localDescription) return;
+            if (peer.pc.signalingState !== 'stable') return;
+            if (!peer.pc.getSenders().length && !peer.pc.getTransceivers().length) return;
+            if (String(directCallSelfId) > String(peer.id)) return;
+            peer.pc.setLocalDescription().then(() => {
+                sendDirectCallSignal('direct-offer', {
+                    from: directCallSelfId,
+                    to: peer.id,
+                    name: directCallSelfName,
+                    description: peer.pc.localDescription
+                });
+            }).catch((e) => console.warn('[DirectCall] proactive offer failed:', e));
+        } catch (_) {}
+    }, 900);
+}
+
+/* تفريغ المرشحات (ICE Candidates) المؤجلة بعد تعيين الوصف البعيد */
+async function flushDirectPendingCandidates(peer) {
+    if (!peer || !peer.pc) return;
+    const pending = peer.pendingCandidates.splice(0);
+    for (const candidate of pending) {
+        try { await peer.pc.addIceCandidate(candidate); } catch (e) { console.warn('[DirectCall] pending ICE failed:', e); }
+    }
+}
+
+/* معالجة Offer / Answer قادمة من مشارك (مع نمط "التفاوض المثالي" لمنع التعارض) */
+async function handleDirectDescription(payload) {
+    if (!payload || !payload.description || payload.to == null) return;
+    if (String(payload.to) !== String(directCallSelfId)) return;
+    const peer = ensureDirectPeer(payload.from, payload.name);
+    if (!peer) return;
+    const pc = peer.pc;
+    const description = payload.description;
+    try {
+        const readyForOffer = !peer.makingOffer && (pc.signalingState === 'stable' || peer.isSettingRemoteAnswerPending);
+        const offerCollision = description.type === 'offer' && !readyForOffer;
+        peer.ignoreOffer = !peer.polite && offerCollision;
+        if (peer.ignoreOffer) {
+            console.warn(`[DirectCall] Ignoring colliding offer from ${peer.id} (impolite peer).`);
+            return;
+        }
+        peer.isSettingRemoteAnswerPending = description.type === 'answer';
+        await pc.setRemoteDescription(description);
+        peer.isSettingRemoteAnswerPending = false;
+        peer.hasRemoteDescription = true;
+        await flushDirectPendingCandidates(peer);
+
+        if (description.type === 'offer') {
+            await pc.setLocalDescription();
+            sendDirectCallSignal('direct-answer', {
+                from: directCallSelfId,
+                to: peer.id,
+                name: directCallSelfName,
+                description: pc.localDescription
+            });
+        }
+        if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
+    } catch (e) {
+        console.warn('[DirectCall] Failed handling description:', e);
+    }
+}
+
+/* معالجة مرشح ICE قادم من مشارك */
+async function handleDirectIceCandidate(payload) {
+    if (!payload || !payload.candidate || payload.to == null) return;
+    if (String(payload.to) !== String(directCallSelfId)) return;
+    const peer = directCallPeers.get(payload.from);
+    if (!peer || !peer.pc) return;
+    if (!peer.hasRemoteDescription) {
+        peer.pendingCandidates.push(payload.candidate);
+        return;
+    }
+    try {
+        await peer.pc.addIceCandidate(payload.candidate);
+    } catch (e) {
+        if (!peer.ignoreOffer) console.warn('[DirectCall] addIceCandidate failed:', e);
+    }
+}
+
+/* إزالة مشارك وقطع اتصاله */
+function removeDirectPeer(peerId) {
+    const peer = directCallPeers.get(peerId);
+    if (!peer) return;
+    directCallPeers.delete(peerId);
+    try { if (peer.pc) peer.pc.close(); } catch (_) {}
+    try { if (peer.stream) peer.stream.getTracks().forEach(t => t.stop()); } catch (_) {}
+    const tile = document.getElementById(`call-tile-peer_${peerId}`);
+    if (tile) tile.remove();
+    if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
+}
+
+/* مزامنة قائمة المشاركين مع حالة التواجد (Presence) في القناة */
+function handleDirectCallPresence() {
+    if (!directCallChannel || !directCallSelfId) return;
+    let state = {};
+    try { state = directCallChannel.presenceState() || {}; } catch (_) { state = {}; }
+    const presentIds = new Set();
+    Object.keys(state).forEach((key) => {
+        const raw = state[key];
+        const entries = Array.isArray(raw) ? raw : [raw];
+        entries.forEach((entry) => {
+            if (!entry) return;
+            const peerId = (entry.userId != null) ? entry.userId : key;
+            if (String(peerId) === String(directCallSelfId)) return;
+            presentIds.add(String(peerId));
+            ensureDirectPeer(peerId, entry.name);
+        });
+    });
+    // إزالة المشاركين الذين غادروا القناة
+    Array.from(directCallPeers.keys()).forEach((id) => {
+        if (!presentIds.has(String(id))) removeDirectPeer(id);
+    });
+    if (typeof updateFullCallParticipantsUI === 'function') updateFullCallParticipantsUI();
+}
+
+/* ========================================================
+   🚀 تشغيل قناة إشارات الاتصال المباشر على Supabase Realtime
+   القناة: direct_call_{callId}
+   ======================================================== */
+async function initDirectCallSignaling(callId, selfName, isHost = false) {
+    const client = (typeof ensureSupabaseClient === 'function') ? ensureSupabaseClient() : null;
+    const signalingId = callId || ('call_direct_' + Date.now());
+
+    directCallSelfId = getDirectCallSelfId();
+    directCallSelfName = selfName || (typeof getCurrentUsername === 'function' ? getCurrentUsername() : null) || directCallSelfId;
+    directCallSignalingId = signalingId;
+
+    if (!client) {
+        console.warn('[DirectCall] Supabase client غير متاح — تعطيل قناة الإشارات.');
+        return false;
+    }
+
+    if (directCallChannel) {
+        await teardownDirectCallSignaling(false);
+    }
+
+    const channelName = `direct_call_${signalingId}`;
+    console.log(`[DirectCall] Signaling on "${channelName}" as ${directCallSelfId} (${directCallSelfName}) host=${isHost}`);
+
+    try {
+        directCallChannel = client.channel(channelName, {
+            config: {
+                broadcast: { self: false, ack: false },
+                presence: { key: directCallSelfId }
+            }
+        });
+
+        // --- التواجد (Presence) ---
+        directCallChannel.on('presence', { event: 'sync' }, () => handleDirectCallPresence());
+        directCallChannel.on('presence', { event: 'join' }, ({ newPresences }) => {
+            (newPresences || []).forEach((p) => {
+                if (p && p.userId != null && p.name) setDirectPeerName(p.userId, p.name);
+            });
+            handleDirectCallPresence();
+        });
+        directCallChannel.on('presence', { event: 'leave' }, ({ leftPresences }) => {
+            (leftPresences || []).forEach((p) => {
+                if (p && p.userId != null) removeDirectPeer(p.userId);
+            });
+        });
+
+        // --- إشارات WebRTC ---
+        directCallChannel.on('broadcast', { event: 'direct-offer' }, ({ payload }) => handleDirectDescription(payload));
+        directCallChannel.on('broadcast', { event: 'direct-answer' }, ({ payload }) => handleDirectDescription(payload));
+        directCallChannel.on('broadcast', { event: 'direct-ice' }, ({ payload }) => handleDirectIceCandidate(payload));
+        directCallChannel.on('broadcast', { event: 'direct-name' }, ({ payload }) => {
+            if (payload && payload.from != null) setDirectPeerName(payload.from, payload.name);
+        });
+
+        await new Promise((resolve) => {
+            let settled = false;
+            const done = () => { if (!settled) { settled = true; resolve(true); } };
+            try {
+                directCallChannel.subscribe(async (status) => {
+                    if (status === 'SUBSCRIBED') {
+                        try {
+                            await directCallChannel.track({
+                                userId: directCallSelfId,
+                                name: directCallSelfName,
+                                callId: signalingId,
+                                isHost: !!isHost,
+                                joinedAt: Date.now()
+                            });
+                        } catch (e) {
+                            console.warn('[DirectCall] presence track failed:', e);
+                        }
+                        // إعلان اسمنا لكل الموجودين
+                        sendDirectCallSignal('direct-name', { from: directCallSelfId, name: directCallSelfName });
+                        console.log('[DirectCall] Subscribed & presence tracked.');
+                        done();
+                    }
+                });
+            } catch (_) { done(); }
+            setTimeout(done, 8000);
+        });
+        handleDirectCallPresence();
+        return true;
+    } catch (e) {
+        console.warn('[DirectCall] Signaling setup failed:', e);
+        return false;
+    }
+}
+
+/* إغلاق قناة الإشارات وقطع كل الاتصالات */
+async function teardownDirectCallSignaling(clearState = true) {
+    Array.from(directCallPeers.keys()).forEach((id) => removeDirectPeer(id));
+    directCallPeers.clear();
+
+    const client = (typeof ensureSupabaseClient === 'function') ? ensureSupabaseClient() : null;
+    if (directCallChannel) {
+        const ch = directCallChannel;
+        directCallChannel = null;
+        try { await ch.untrack(); } catch (_) {}
+        try { ch.unsubscribe(); } catch (_) {}
+        try { if (client && typeof client.removeChannel === 'function') client.removeChannel(ch); } catch (_) {}
+    }
+    if (clearState) {
+        directCallSignalingId = null;
+        const grid = document.getElementById('call-participants-grid');
+        if (grid) grid.innerHTML = '';
+    }
+    console.log('[DirectCall] Signaling channel closed.');
+}
+
+window.initDirectCallSignaling = initDirectCallSignaling;
+window.teardownDirectCallSignaling = teardownDirectCallSignaling;
 
 /* 🌐 دوال Google Meet الرسمية */
 async function handleGoogleMeetSignIn() {
