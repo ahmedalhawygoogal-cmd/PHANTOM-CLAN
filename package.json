@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "node server.js",
-    "build": "echo 'Build complete'",
+    "build": "node scripts/build-static.mjs",
     "lint": "node -c script.js data.js server.js sw.js",
-    "test": "echo 'No tests specified' && exit 0",
+    "test": "node -c script.js data.js server.js sw.js && node tests/call-participants.test.mjs",
     "start": "node server.js"
   },
   "dependencies": {
