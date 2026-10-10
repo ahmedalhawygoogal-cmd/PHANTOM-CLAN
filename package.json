@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node server.js",
-    "build": "echo 'Build complete'",
+    "build": "node scripts/build-static.mjs",
     "lint": "node -c script.js data.js server.js sw.js",
     "test": "node -c script.js data.js server.js sw.js && node tests/direct-call-signaling.test.mjs",
     "start": "node server.js"
