@@ -86,7 +86,9 @@ const SHARED_DATA_KEYS = new Set([
     "phantom_clips_comments",
     "phantom_deleted_warnings",
     "phantom_site_presence",
-    "phantom_suggestions"
+    "phantom_suggestions",
+    "phantom_popularity_queue",
+    "phantom_popularity_active_match"
 ]);
 
 function getStorage(key, fallback) {
@@ -1373,6 +1375,22 @@ function setupMatchmakingRealtime() {
             .on('broadcast', { event: 'challenge_dismissed' }, ({ payload }) => {
                 if (!payload) return;
                 handleChallengeDismissedRealtime(payload);
+            })
+            .on('broadcast', { event: 'popularity_match_start' }, ({ payload }) => {
+                if (!payload) return;
+                handlePopularityMatchStartBroadcast(payload);
+            })
+            .on('broadcast', { event: 'popularity_queue_update' }, ({ payload }) => {
+                if (!payload) return;
+                handlePopularityQueueUpdateBroadcast(payload);
+            })
+            .on('broadcast', { event: 'popularity_vote_update' }, ({ payload }) => {
+                if (!payload) return;
+                handlePopularityVoteBroadcast(payload);
+            })
+            .on('broadcast', { event: 'popularity_match_end' }, ({ payload }) => {
+                if (!payload) return;
+                handlePopularityMatchEndBroadcast(payload);
             })
             .subscribe((status, err) => {
                 if (status === 'SUBSCRIBED') {
@@ -11431,15 +11449,15 @@ let popularityBattleState = {
     timer: null,
     secondsLeft: 60,
     playerA: { name: '', votes: 0 },
-    playerB: { name: 'المتحدي الشبح', votes: 0 },
+    playerB: { name: '', votes: 0 },
     userVotedChoice: null,
     userBet: 0,
     crowdInterval: null,
-    challengeId: null
+    challengeId: null,
+    votersMap: {} // { username: { choice: 'A'|'B', bet: number } }
 };
 
 let popularityMatchmakingInterval = null;
-let currentPopularityChallengeId = null;
 
 function initPopularityBattle() {
     const readyBtn = document.getElementById('battle-ready-btn');
@@ -11454,6 +11472,7 @@ function initPopularityBattle() {
 
     updatePopularityBattleBalance();
     renderPopularityClanMembers();
+    syncPopularityBattleUIState();
 }
 
 function updatePopularityBattleBalance() {
@@ -11465,133 +11484,192 @@ function updatePopularityBattleBalance() {
     }
 }
 
-// ⚔️ بدء ماتش ميكينغ السيرفر لمعركة الشعبية
-function startPopularityBattle() {
-    const username = getCurrentUsername() || 'المحارب';
-    const lobby = document.getElementById('popularity-search-lobby');
-    const resultMsg = document.getElementById('battle-result-msg');
-    if (resultMsg) { resultMsg.style.display = 'none'; resultMsg.textContent = ''; }
-
-    if (lobby) {
-        lobby.style.display = 'block';
-    }
-
-    let timeLeft = 20;
-    const renderPopLobby = () => {
-        const percent = Math.max(0, (timeLeft / 20) * 100);
-        if (!lobby) return;
-        lobby.innerHTML = `
-            <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
-                <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚔️</div>
-                <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري الاتصال بالسيرفر والبحث عن منافس في معركة الشعبية...</div>
-                <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">مهلة الانتظار: ${timeLeft} ثانية (بث التحدي لجميع أعضاء الكلان)</div>
-                <div style="width:100%; height:6px; background:rgba(255,255,255,0.1); border-radius:10px; overflow:hidden; margin:10px 0 12px;">
-                    <div style="width:${percent}%; height:100%; background:linear-gradient(90deg, #00f2fe, #00ff88); transition:width 1s linear;"></div>
-                </div>
-                <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
-                    <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="launchRivalPopularityMatch()">
-                        ⚡ بدء الجولة فوراً مع منافس من الكلان
-                    </button>
-                    <button type="button" class="btn-danger" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelPopularityMatchmaking()">
-                        ❌ إلغاء البحث
-                    </button>
-                </div>
-            </div>
-        `;
-    };
-
-    renderPopLobby();
-    showToast("📡 دخلت طابور مطابقة معركة الشعبية...", "info");
-
-    // الدخول في طابور السيرفر الحقيقي
-    fetch('/api/battles/queue/join', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            type: 'popularity',
-            username: username,
-            userId: getCurrentUserId(),
-            stake: 0
-        })
-    }).then(res => res.json()).then(joinData => {
-        if (joinData.matched && joinData.challenge) {
-            cancelPopularityMatchmaking();
-            // 🚀 بث فوري للطرف الآخر عبر Supabase Realtime ليدخل المواجهة فوراً
-            broadcastMatchEvent('match_found', { challenge: joinData.challenge });
-            const opp = joinData.challenge.challengerName === username ? joinData.challenge.targetName : joinData.challenge.challengerName;
-            showToast(`🔥 تم التوفيق مع ${opp}! تبدأ معركة الشعبية الآن...`, 'success');
-            startLivePopularityBattle(username, opp, joinData.challenge.id);
+// Supabase helper to check if a table exists without network errors crashing
+async function safeCheckSupabaseTable(tableName) {
+    const client = ensureSupabaseClient();
+    if (!client) return false;
+    try {
+        const { error } = await client.from(tableName).select('*').limit(1);
+        if (error) {
+            console.error(`[Supabase Error] Table or column missing in '${tableName}': ${error.message}`);
+            return false;
         }
-    }).catch(() => {});
+        return true;
+    } catch (e) {
+        console.error(`[Supabase Error] Exception while checking table '${tableName}':`, e);
+        return false;
+    }
+}
 
-    if (popularityMatchmakingInterval) clearInterval(popularityMatchmakingInterval);
-    popularityMatchmakingInterval = setInterval(() => {
-        timeLeft--;
-        if (timeLeft > 0) {
-            renderPopLobby();
-        } else {
-            clearInterval(popularityMatchmakingInterval);
-            popularityMatchmakingInterval = null;
-            fetch('/api/battles/queue/leave', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'popularity', username, userId: getCurrentUserId() })
-            }).catch(() => {});
+function syncPopularityBattleUIState() {
+    const readyBtn = document.getElementById('battle-ready-btn');
+    const activeMatch = getStorage("phantom_popularity_active_match", null);
+    const queue = getStorage("phantom_popularity_queue", []);
 
-            if (lobby) {
-                lobby.innerHTML = `
-                    <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:14px;">
-                        <div style="font-size:2.2rem;">⏱️</div>
-                        <div style="font-weight:900; color:#ef4444; font-size:1.1rem; margin:6px 0;">لا يوجد منافس متاح حالياً، حاول مرة أخرى.</div>
-                        <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:10px;">
-                            <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="startPopularityBattle()">
-                                🔄 محاولة مجدداً
-                            </button>
-                            <button type="button" class="btn-secondary" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelPopularityMatchmaking()">
-                                إغلاق
-                            </button>
-                        </div>
-                    </div>
-                `;
+    if (activeMatch && activeMatch.active) {
+        if (readyBtn) {
+            readyBtn.disabled = true;
+            readyBtn.style.opacity = '0.5';
+            readyBtn.style.cursor = 'not-allowed';
+            readyBtn.textContent = '🔒 هناك مواجهة جارية الآن (يمكنك المشاهدة والتصويت)';
+        }
+    } else {
+        if (readyBtn) {
+            readyBtn.disabled = false;
+            readyBtn.style.opacity = '1';
+            readyBtn.style.cursor = 'pointer';
+            const username = getCurrentUsername();
+            const isWaiting = queue.some(q => normalizeName(q.username) === normalizeName(username));
+            if (isWaiting) {
+                readyBtn.textContent = '⏳ أنت في قائمة الانتظار...';
+            } else {
+                readyBtn.textContent = '⚔️ استعد (ماتش ميكينغ السيرفر)';
             }
         }
-    }, 1200);
+    }
+}
+
+// ⚔️ بدء / انضمام طابور التوفيق لمعركة الشعبية
+function startPopularityBattle() {
+    const username = getCurrentUsername();
+    if (!username) {
+        showToast("يرجى تسجيل الدخول أولاً للمشاركة!", "error");
+        return;
+    }
+
+    const activeMatch = getStorage("phantom_popularity_active_match", null);
+    if (activeMatch && activeMatch.active) {
+        showToast("⚠️ توجد معركة جارية الآن! يمكنك فقط المشاهدة والتصويت.", "info");
+        const arena = document.getElementById('battle-arena');
+        const lobby = document.getElementById('battle-lobby');
+        if (arena && activeMatch.playerA && activeMatch.playerB) {
+            if (lobby) lobby.style.display = 'none';
+            arena.style.display = 'flex';
+        }
+        syncPopularityBattleUIState();
+        return;
+    }
+
+    let queue = getStorage("phantom_popularity_queue", []);
+
+    // Check if user is already in queue
+    if (queue.some(item => normalizeName(item.username) === normalizeName(username))) {
+        showToast("أنت بالفعل في طابور الانتظار، في انتظار لاعب آخر...", "info");
+        syncPopularityBattleUIState();
+        return;
+    }
+
+    // Check if there is another player waiting in the queue
+    const waitingOpponent = queue.find(item => normalizeName(item.username) !== normalizeName(username));
+
+    if (waitingOpponent) {
+        // MUTUAL MATCH FOUND! Remove matched players from queue and start match.
+        const playerA = waitingOpponent.username;
+        const playerB = username;
+
+        // Remove both from queue
+        queue = queue.filter(item =>
+            normalizeName(item.username) !== normalizeName(playerA) &&
+            normalizeName(item.username) !== normalizeName(playerB)
+        );
+        setStorage("phantom_popularity_queue", queue);
+
+        const challengeId = `pop_match_${Date.now()}`;
+        const matchPayload = {
+            id: challengeId,
+            active: true,
+            playerA: playerA,
+            playerB: playerB,
+            startTime: Date.now()
+        };
+
+        setStorage("phantom_popularity_active_match", matchPayload);
+
+        // Broadcast queue update & match start to all connected clients
+        broadcastMatchEvent('popularity_queue_update', { queue });
+        broadcastMatchEvent('popularity_match_start', { match: matchPayload });
+
+        // Show match found notification at the top of the screen
+        showTopMatchNotification(`🔥 تم العثور على مواجهة بين ${playerA} و ${playerB}! تبدأ المعركة الآن...`, "match");
+
+        startLivePopularityBattle(playerA, playerB, challengeId);
+    } else {
+        // First player joining queue
+        queue.push({ username, userId: getCurrentUserId(), time: Date.now() });
+        setStorage("phantom_popularity_queue", queue);
+
+        broadcastMatchEvent('popularity_queue_update', { queue });
+
+        const searchLobby = document.getElementById('popularity-search-lobby');
+        if (searchLobby) {
+            searchLobby.style.display = 'block';
+            searchLobby.innerHTML = `
+                <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
+                    <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚔️</div>
+                    <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">أنت في قائمة الانتظار...</div>
+                    <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">في انتظار انضمام لاعب آخر بالضغط على "استعد"</div>
+                    <div style="margin-top:12px;">
+                        <button type="button" class="btn-danger" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelPopularityMatchmaking()">
+                            ❌ إلغاء الانتظار
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        showToast("📡 تم تسجليك في طابور الانتظار، في انتظار لاعب ثاني...", "info");
+        showTopMatchNotification(`⚔️ ${username} ينتظر منافساً في معركة الشعبية 1v1! اضغط "استعد" للمواجهة.`, "waiting");
+        syncPopularityBattleUIState();
+    }
 }
 
 function cancelPopularityMatchmaking() {
-    if (popularityMatchmakingInterval) {
-        clearInterval(popularityMatchmakingInterval);
-        popularityMatchmakingInterval = null;
-    }
     const username = getCurrentUsername();
-    const userId = getCurrentUserId();
-    fetch('/api/battles/queue/leave', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'popularity', username, userId })
-    }).catch(() => {});
+    let queue = getStorage("phantom_popularity_queue", []);
+    queue = queue.filter(item => normalizeName(item.username) !== normalizeName(username));
+    setStorage("phantom_popularity_queue", queue);
 
-    if (currentPopularityChallengeId) {
-        fetch('/api/battles/dismiss', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ challengeId: currentPopularityChallengeId, username: getCurrentUsername() })
-        }).catch(() => {});
-        currentPopularityChallengeId = null;
+    broadcastMatchEvent('popularity_queue_update', { queue });
+
+    const searchLobby = document.getElementById('popularity-search-lobby');
+    if (searchLobby) {
+        searchLobby.style.display = 'none';
+        searchLobby.innerHTML = '';
     }
-    const lobby = document.getElementById('popularity-search-lobby');
-    if (lobby) {
-        lobby.style.display = 'none';
-        lobby.innerHTML = '';
-    }
+
+    showToast("تم إلغاء الانتظار وخروجك من الطابور.", "info");
+    syncPopularityBattleUIState();
 }
 
-function launchRivalPopularityMatch() {
-    startPopularityBattle();
+function showTopMatchNotification(msg, type = "info") {
+    showToast(msg, type === "match" ? "success" : "info");
+
+    const tgBanner = document.getElementById('telegram-battle-notification');
+    const tgText = document.getElementById('tg-banner-text');
+    const tgIcon = document.getElementById('tg-banner-icon');
+    const tgTag = document.getElementById('tg-banner-tag');
+    const tgJoin = document.getElementById('tg-banner-join-btn');
+
+    if (tgBanner && tgText) {
+        if (tgIcon) tgIcon.textContent = '⚔️';
+        if (tgTag) { tgTag.textContent = '• معركة الشعبية 1v1'; tgTag.style.color = 'var(--cyan)'; }
+        tgText.textContent = msg;
+        if (tgJoin) {
+            tgJoin.innerHTML = '⚔️ دخول المعركة';
+            tgJoin.onclick = function() {
+                const battleOverlay = document.getElementById('battle-overlay');
+                if (battleOverlay) battleOverlay.style.display = 'flex';
+                tgBanner.classList.remove('show');
+            };
+        }
+        tgBanner.classList.add('show');
+        setTimeout(() => tgBanner.classList.remove('show'), 6000);
+    }
 }
 
 function startLivePopularityBattle(playerAName, playerBName, challengeId = null) {
     const lobby = document.getElementById('battle-lobby');
+    const searchLobby = document.getElementById('popularity-search-lobby');
     const arena = document.getElementById('battle-arena');
     const resultMsg = document.getElementById('battle-result-msg');
     if (resultMsg) { resultMsg.style.display = 'none'; resultMsg.textContent = ''; }
@@ -11599,14 +11677,16 @@ function startLivePopularityBattle(playerAName, playerBName, challengeId = null)
     popularityBattleState = {
         active: true,
         secondsLeft: 60,
-        playerA: { name: playerAName, votes: 50 },
-        playerB: { name: playerBName, votes: 50 },
+        playerA: { name: playerAName, votes: 0 },
+        playerB: { name: playerBName, votes: 0 },
         userVotedChoice: null,
         userBet: 0,
         crowdInterval: null,
-        challengeId: challengeId
+        challengeId: challengeId,
+        votersMap: {}
     };
 
+    if (searchLobby) { searchLobby.style.display = 'none'; searchLobby.innerHTML = ''; }
     if (lobby) lobby.style.display = 'none';
     if (arena) arena.style.display = 'flex';
 
@@ -11620,21 +11700,12 @@ function startLivePopularityBattle(playerAName, playerBName, challengeId = null)
     if (voteAEl) voteAEl.textContent = `🔵 صوّت لـ ${playerAName}`;
     if (voteBEl) voteBEl.textContent = `🔴 صوّت لـ ${playerBName}`;
 
+    syncPopularityBattleUIState();
     updatePopularityPKBar();
     updatePopularityBattleBalance();
 
     if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
     popularityBattleState.timer = setInterval(popularityBattleTick, 1000);
-
-    if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
-    popularityBattleState.crowdInterval = setInterval(() => {
-        if (!popularityBattleState.active) return;
-        const addA = Math.floor(Math.random() * 8);
-        const addB = Math.floor(Math.random() * 8);
-        popularityBattleState.playerA.votes += addA;
-        popularityBattleState.playerB.votes += addB;
-        updatePopularityPKBar();
-    }, 2800);
 
     showToast(`⚔️ انطلقت معركة الشعبية بين ${playerAName} و ${playerBName}!`, "info");
 }
@@ -11642,7 +11713,7 @@ function startLivePopularityBattle(playerAName, playerBName, challengeId = null)
 function updatePopularityPKBar() {
     const total = popularityBattleState.playerA.votes + popularityBattleState.playerB.votes;
     const pctA = total > 0 ? Math.round((popularityBattleState.playerA.votes / total) * 100) : 50;
-    const pctB = 100 - pctA;
+    const pctB = total > 0 ? (100 - pctA) : 50;
 
     const fillEl = document.getElementById('pk-bar-fill');
     const labelA = document.getElementById('pk-left-label');
@@ -11662,9 +11733,30 @@ function votePopularityBattle(choice) {
         showToast("المعركة غير نشطة حالياً!", "error");
         return;
     }
+
+    const username = getCurrentUsername();
+    if (!username) {
+        showToast("يرجى تسجيل الدخول أولاً للتصويت!", "error");
+        return;
+    }
+
+    const playerAName = popularityBattleState.playerA.name;
+    const playerBName = popularityBattleState.playerB.name;
+
+    // Rule 3: Active participants cannot vote for themselves or each other
+    if (normalizeName(username) === normalizeName(playerAName) || normalizeName(username) === normalizeName(playerBName)) {
+        showToast("🚫 لا يمكن للاعبين في المواجهة الحالية التصويت أو إرسال نقاط لأنفسهم!", "error");
+        return;
+    }
+
+    // Rule 4: Enforce exactly ONE vote per match for ONE player only
+    if (popularityBattleState.votersMap[normalizeName(username)] || popularityBattleState.userVotedChoice !== null) {
+        showToast("⚠️ لقد قمت بالتصويت بالفعل في هذه الجولة! يُسمح بالتصويت مرة واحدة فقط لمتنافس واحد.", "error");
+        return;
+    }
+
     const betInput = document.getElementById('bet-amount');
     const betVal = Math.max(1, parseInt(betInput ? betInput.value : 10, 10) || 10);
-    const username = getCurrentUsername();
     const balance = getUserBalance();
 
     if (balance < betVal) {
@@ -11677,7 +11769,8 @@ function votePopularityBattle(choice) {
     updateVaultBalanceUI();
 
     popularityBattleState.userVotedChoice = choice;
-    popularityBattleState.userBet += betVal;
+    popularityBattleState.userBet = betVal;
+    popularityBattleState.votersMap[normalizeName(username)] = { choice, bet: betVal };
 
     const voteWeight = betVal * 2;
     if (choice === 'A') {
@@ -11690,19 +11783,58 @@ function votePopularityBattle(choice) {
     updatePopularityPKBar();
     playCodoSound('send');
 
-    // مزامنة التصويت مع السيرفر إن كان التحدي نشطاً عبر السيرفر
-    if (popularityBattleState.challengeId) {
-        fetch('/api/battles/vote', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                challengeId: popularityBattleState.challengeId,
-                choice: choice,
-                voterName: username,
-                amount: betVal
-            })
-        }).catch(() => {});
+    // Broadcast vote to all connected clients
+    broadcastMatchEvent('popularity_vote_update', {
+        choice: choice,
+        amount: voteWeight,
+        voter: username,
+        votersMap: popularityBattleState.votersMap
+    });
+}
+
+function handlePopularityMatchStartBroadcast(payload) {
+    if (!payload || !payload.match) return;
+    const match = payload.match;
+    const username = getCurrentUsername();
+
+    showTopMatchNotification(`🔥 انطلقت معركة الشعبية بين ${match.playerA} و ${match.playerB}!`, "match");
+    syncPopularityBattleUIState();
+
+    if (normalizeName(username) === normalizeName(match.playerA) || normalizeName(username) === normalizeName(match.playerB)) {
+        const battleOverlay = document.getElementById('battle-overlay');
+        if (battleOverlay) battleOverlay.style.display = 'flex';
+        startLivePopularityBattle(match.playerA, match.playerB, match.id);
+    } else if (!popularityBattleState.active) {
+        // Active for spectating
+        startLivePopularityBattle(match.playerA, match.playerB, match.id);
     }
+}
+
+function handlePopularityQueueUpdateBroadcast(payload) {
+    if (!payload) return;
+    if (Array.isArray(payload.queue)) {
+        setStorage("phantom_popularity_queue", payload.queue);
+    }
+    syncPopularityBattleUIState();
+}
+
+function handlePopularityVoteBroadcast(payload) {
+    if (!payload || !popularityBattleState.active) return;
+    if (payload.votersMap) {
+        popularityBattleState.votersMap = { ...popularityBattleState.votersMap, ...payload.votersMap };
+    }
+    if (payload.choice === 'A') {
+        popularityBattleState.playerA.votes += (payload.amount || 0);
+    } else if (payload.choice === 'B') {
+        popularityBattleState.playerB.votes += (payload.amount || 0);
+    }
+    updatePopularityPKBar();
+}
+
+function handlePopularityMatchEndBroadcast(payload) {
+    if (!payload) return;
+    setStorage("phantom_popularity_active_match", null);
+    syncPopularityBattleUIState();
 }
 
 function popularityBattleTick() {
@@ -11723,11 +11855,15 @@ function cancelPopularityBattle() {
     if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
     if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
     popularityBattleState.active = false;
+    setStorage("phantom_popularity_active_match", null);
+    broadcastMatchEvent('popularity_match_end', { timestamp: Date.now() });
 
     const lobby = document.getElementById('battle-lobby');
     const arena = document.getElementById('battle-arena');
     if (arena) arena.style.display = 'none';
     if (lobby) lobby.style.display = 'block';
+
+    syncPopularityBattleUIState();
     renderPopularityClanMembers();
     showToast("تم الانسحاب من جولة معركة الشعبية.", "info");
 }
@@ -11736,6 +11872,9 @@ function endPopularityBattle() {
     if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
     if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
     popularityBattleState.active = false;
+
+    setStorage("phantom_popularity_active_match", null);
+    broadcastMatchEvent('popularity_match_end', { timestamp: Date.now() });
 
     const votesA = popularityBattleState.playerA.votes;
     const votesB = popularityBattleState.playerB.votes;
@@ -11747,12 +11886,17 @@ function endPopularityBattle() {
 
     if (votesA > votesB) {
         winnerName = popularityBattleState.playerA.name;
-        userWonReward += 500;
+        if (normalizeName(username) === normalizeName(popularityBattleState.playerA.name)) {
+            userWonReward += 500;
+        }
         if (popularityBattleState.userVotedChoice === 'A') {
             userWonReward += Math.round(popularityBattleState.userBet * 1.8);
         }
     } else if (votesB > votesA) {
         winnerName = popularityBattleState.playerB.name;
+        if (normalizeName(username) === normalizeName(popularityBattleState.playerB.name)) {
+            userWonReward += 500;
+        }
         if (popularityBattleState.userVotedChoice === 'B') {
             userWonReward += Math.round(popularityBattleState.userBet * 1.8);
         }
@@ -11790,6 +11934,7 @@ function endPopularityBattle() {
         const arena = document.getElementById('battle-arena');
         if (arena) arena.style.display = 'none';
         if (lobby) lobby.style.display = 'block';
+        syncPopularityBattleUIState();
         renderPopularityClanMembers();
     }, 6000);
 }
@@ -11798,7 +11943,6 @@ window.startPopularityBattle = startPopularityBattle;
 window.cancelPopularityBattle = cancelPopularityBattle;
 window.votePopularityBattle = votePopularityBattle;
 window.updatePopularityBattleBalance = updatePopularityBattleBalance;
-window.launchRivalPopularityMatch = launchRivalPopularityMatch;
 window.cancelPopularityMatchmaking = cancelPopularityMatchmaking;
 
 let arenaSearchInterval = null;
