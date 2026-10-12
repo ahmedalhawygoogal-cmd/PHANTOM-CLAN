@@ -1410,6 +1410,14 @@ function setupMatchmakingRealtime() {
                 if (!payload) return;
                 handleArenaMatchEndBroadcast(payload);
             })
+            .on('broadcast', { event: 'arena_target_spawn' }, ({ payload }) => {
+                if (!payload) return;
+                handleArenaTargetSpawnBroadcast(payload);
+            })
+            .on('broadcast', { event: 'arena_score_update' }, ({ payload }) => {
+                if (!payload) return;
+                handleArenaScoreUpdateBroadcast(payload);
+            })
             .subscribe((status, err) => {
                 if (status === 'SUBSCRIBED') {
                     console.log("🟢 [Supabase Realtime] قناة المطابقة والمواجهات المباشرة جاهزة (Matchmaking Broadcast Active).");
@@ -11006,17 +11014,15 @@ function updateCombatHud() {
     if (timerEl) timerEl.textContent = `⏱️ 00:0${Math.max(0, phantomArenaState.roundTimeLeft)}`;
 }
 
-// 🎯 توليد هدف جديد داخل الساحة
+// 🎯 توليد هدف جديد داخل الساحة متزامن عبر الشاشات بنسب مئوية
 function spawnNextTarget() {
     if (phantomArenaState.roundTimeLeft <= 0) return;
     const playfield = document.getElementById('arena-playfield');
     if (!playfield) return;
 
-    // إزالة الهدف السابق إذا وجد
     const oldTarget = playfield.querySelector('.arena-target');
     if (oldTarget) oldTarget.remove();
 
-    // اختيار نوع الهدف (70% عادي، 15% فائق، 15% لغم)
     const rand = Math.random();
     let type = 'core';
     let pts = 100;
@@ -11035,33 +11041,34 @@ function spawnNextTarget() {
         cssClass = 'arena-target-mine';
     }
 
-    const fieldRect = playfield.getBoundingClientRect();
-    const width = fieldRect.width || 340;
-    const height = fieldRect.height || 360;
-
-    // حساب إحداثيات عشوائية آمنة مع هوامش
-    const posX = Math.floor(40 + Math.random() * (width - 80));
-    const posY = Math.floor(40 + Math.random() * (height - 80));
+    const posXPercent = Math.floor(10 + Math.random() * 75);
+    const posYPercent = Math.floor(15 + Math.random() * 65);
 
     const targetEl = document.createElement('div');
     targetEl.className = `arena-target ${cssClass}`;
-    targetEl.style.left = `${posX}px`;
-    targetEl.style.top = `${posY}px`;
+    targetEl.style.left = `${posXPercent}%`;
+    targetEl.style.top = `${posYPercent}%`;
     targetEl.innerHTML = icon;
 
     phantomArenaState.currentTarget = { type, pts, el: targetEl };
     phantomArenaState.targetSpawnTime = Date.now();
 
-    // معالج النقر للاعب
     targetEl.addEventListener('click', (e) => {
         e.stopPropagation();
-        handleUserTargetClick(type, pts, posX, posY);
+        handleUserTargetClick(type, pts, posXPercent, posYPercent);
     });
 
     playfield.appendChild(targetEl);
 
-    // محاكاة استجابة ذكاء البوت
-    scheduleAiReaction(type, pts, posX, posY);
+    if (phantomArenaState.mode === 'duel') {
+        broadcastMatchEvent('arena_target_spawn', {
+            matchId: phantomArenaState.challengeId,
+            type, pts, icon, cssClass, posXPercent, posYPercent,
+            timestamp: Date.now()
+        });
+    } else {
+        scheduleAiReaction(type, pts, posXPercent, posYPercent);
+    }
 }
 
 // 🖱️ معالجة نقرة المستخدم
@@ -11351,22 +11358,29 @@ function replayArenaMatch() {
     }
 }
 
-// 📜 عرض لوحة أبطال الساحة وسجل النزالات
+// 📜 عرض لوحة أبطال الساحة وسجل النزالات الحقيقيين فقط من الكلان
 function renderArenaLeaderboard() {
     const list = document.getElementById('arena-leaderboard-list');
     if (!list) return;
 
-    const stats = getArenaStats();
+    const roster = typeof getFullRoster === 'function' ? getFullRoster() : [];
     const myName = getCurrentUsername() || 'المحارب';
+    const pointsMap = typeof getLocalPoints === 'function' ? getLocalPoints() : {};
+    const arenaStats = getArenaStats();
 
-    // قائمة أبطال افتراضية تكتيكية مع العضو الحالي
-    const warriors = [
-        { name: 'PH 5oM•D8', title: 'أسطورة الساحة', wins: Math.max(18, stats.wins + 4), speed: '175ms', avatar: '👑' },
-        { name: 'PH•GHOST_01', title: 'قناص فانتوم', wins: Math.max(14, stats.wins + 2), speed: '195ms', avatar: '⚡' },
-        { name: myName, title: 'محارب الساحة', wins: stats.wins, speed: stats.bestReactionMs ? `${stats.bestReactionMs}ms` : '240ms', avatar: '⚔️', isMe: true },
-        { name: 'PH•SHADOW', title: 'سفاح الظلال', wins: 9, speed: '280ms', avatar: '🗡️' },
-        { name: 'PH•VIPER', title: 'مدافع الرومات', wins: 6, speed: '310ms', avatar: '🛡️' }
-    ];
+    const warriors = roster.map(m => {
+        const isMe = normalizeName(m.name) === normalizeName(myName);
+        const wins = isMe ? arenaStats.wins : (m.wins || Math.floor((pointsMap[m.name] || 0) / 100));
+        const speed = isMe && arenaStats.bestReactionMs ? `${arenaStats.bestReactionMs}ms` : '220ms';
+        return {
+            name: m.name,
+            title: m.rank || 'عضو الكلان',
+            wins: wins,
+            speed: speed,
+            avatar: m.avatar && m.avatar.length <= 4 ? m.avatar : '⚔️',
+            isMe: isMe
+        };
+    });
 
     warriors.sort((a, b) => b.wins - a.wins);
 
