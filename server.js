@@ -1224,10 +1224,28 @@ const battleHistoryRecords = []; // سجل موحد للمواجهات الحق�
 function cleanupQueue() {
   const now = Date.now();
   for (const [key, q] of matchmakingQueue.entries()) {
-    if (now - q.queuedAt > 60000) {
+    // مهلة الطابور 30 ثانية (نفس مهلة البحث في الواجهة)
+    if (now - q.queuedAt > 30000) {
       matchmakingQueue.delete(key);
     }
   }
+}
+
+// ✅ مطابقة متبادلة صريحة: أي لاعبين ضغطا "استعد" لنفس النوع يُطابقان فوراً
+function findQueueOpponent(matchType, cleanUser, cleanId) {
+  let best = null;
+  let bestKey = null;
+  for (const [key, waiter] of matchmakingQueue.entries()) {
+    if (waiter.type !== matchType) continue;
+    if (waiter.name.toLowerCase() === cleanUser.toLowerCase()) continue;
+    if (waiter.id === cleanId) continue;
+    if (!best || waiter.queuedAt < best.queuedAt) {
+      best = waiter;
+      bestKey = key;
+    }
+  }
+  if (bestKey) matchmakingQueue.delete(bestKey);
+  return best;
 }
 
 app.post('/api/battles/queue/join', (req, res) => {
@@ -1242,23 +1260,9 @@ app.post('/api/battles/queue/join', (req, res) => {
   const cleanId = userId ? String(userId).trim() : cleanUser;
   const matchType = type || 'popularity';
 
-  // البحث عن لاعب حقيقي آخر متواجد في الطابور بنفس النوع وليس نفس اللاعب
-  let matchedOpponent = null;
-  for (const [key, waiter] of matchmakingQueue.entries()) {
-    if (waiter.type === matchType && waiter.name.toLowerCase() !== cleanUser.toLowerCase() && waiter.id !== cleanId) {
-      // التحقق من أن الخصم لا يزال متصلاً
-      const isStillOnline = Array.from(onlineUsers.values()).some(u => 
-        (u.userId && u.userId === waiter.id) || u.username.toLowerCase() === waiter.name.toLowerCase()
-      );
-      if (isStillOnline) {
-        matchedOpponent = waiter;
-        matchmakingQueue.delete(key);
-        break;
-      } else {
-        matchmakingQueue.delete(key);
-      }
-    }
-  }
+  // 🤝 المطابقة المتبادلة: أول لاعب آخر في الطابور بنفس النوع يُطابق فوراً.
+  // (لا نشترط ظهوره في قائمة التواجد — البيانات القديمة قد تتأخر لحظياً)
+  let matchedOpponent = findQueueOpponent(matchType, cleanUser, cleanId);
 
   if (matchedOpponent) {
     // إنشاء مواجهة حقيقية موحدة للطرفين لمدة يوم كامل (24 ساعة)
@@ -1413,14 +1417,34 @@ app.post('/api/battles/join', (req, res) => {
   res.json({ success: true, challenge });
 });
 
+// ❌ إلغاء التحدي: فوري ولا يترك أثراً في قوائم الانتظار
 app.post('/api/battles/dismiss', (req, res) => {
-  const { challengeId, username } = req.body || {};
+  const { challengeId, username, userId } = req.body || {};
+  const cleanUser = username ? String(username).trim() : '';
+  const cleanId = userId ? String(userId).trim() : null;
+
   if (challengeId && activeChallenges.has(challengeId)) {
     const ch = activeChallenges.get(challengeId);
-    if (ch.targetName === username || ch.challengerName === username) {
-      ch.status = 'cancelled';
+    const isParticipant = ch.challengerName === cleanUser
+      || ch.targetName === cleanUser
+      || (cleanId && (ch.challengerId === cleanId || ch.targetId === cleanId || ch.acceptedBy === cleanUser));
+    if (isParticipant) {
+      // التحدي المعلّق يُحذف نهائياً حتى لا يظهر إشعاره لأحد
+      if (ch.status === 'pending') activeChallenges.delete(challengeId);
+      else ch.status = 'cancelled';
     }
   }
+
+  // أزل صاحب الطلب من طابور المطابقة أيضاً (سواء انتظر أو ألغى)
+  if (cleanUser || cleanId) {
+    for (const [key, q] of matchmakingQueue.entries()) {
+      if (q.type === undefined) continue;
+      if ((cleanId && q.id === cleanId) || q.name.toLowerCase() === cleanUser.toLowerCase()) {
+        matchmakingQueue.delete(key);
+      }
+    }
+  }
+
   res.json({ success: true });
 });
 
@@ -1437,6 +1461,12 @@ app.post('/api/battles/vote', (req, res) => {
   const challenge = activeChallenges.get(challengeId);
   if (challenge.status !== 'active') {
     return res.status(400).json({ error: 'المواجهة غير نشطة حالياً.' });
+  }
+
+  // 💰 الحد الأدنى للدخول في معركة الشعبية: 500 نقطة
+  const minStake = challenge.type === 'popularity' ? 500 : 0;
+  if (minStake > 0 && (!Number(req.body && req.body.amount) || Number(req.body.amount) < minStake)) {
+    return res.status(400).json({ error: `الحد الأدنى للدخول ${minStake} نقطة.` });
   }
 
   // التحقق من مدة المواجهة (24 ساعة)
@@ -1462,11 +1492,12 @@ app.post('/api/battles/vote', (req, res) => {
     return res.status(400).json({ error: 'لا يمكنك التصويت في مواجهة أنت طرف فيها.' });
   }
 
-  // تسجيل الصوت الحقيقي (صوت واحد موثق)
+  // تسجيل الصوت الحقيقي (صوت واحد موثق) مع مبلغ الرهان لحساب الأرباح
   challenge.voters[voterKey] = {
     choice,
     voterName,
     voterId: voterId || null,
+    amount: Number(req.body && req.body.amount) || 0,
     votedAt: Date.now()
   };
 
