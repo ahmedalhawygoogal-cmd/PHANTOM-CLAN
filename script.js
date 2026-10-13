@@ -1402,9 +1402,77 @@ function broadcastMatchEvent(event, payload) {
     }
 }
 
+/* ========================================================
+   🔔 معالجات قناة المطابقة (كانت مفقودة بالكامل وتسبب في
+   تعطّل الإشعارات وعدم مزامنة الأجهزة) — لا تُحذف.
+   ======================================================== */
+function handleMatchFoundRealtime(challenge) {
+    if (!challenge || !challenge.id) return;
+    const me = { id: getCurrentUserId(), name: getCurrentUsername() };
+    if (!me.name) return;
+
+    const amPlayerA = isSameUser(challenge.challengerId, challenge.challengerName, me.id, me.name)
+        || isSameUser(challenge.playerA && challenge.playerA.id, challenge.playerA && challenge.playerA.name, me.id, me.name);
+    const amPlayerB = isSameUser(challenge.targetId, challenge.targetName, me.id, me.name)
+        || isSameUser(null, challenge.acceptedBy, me.id, me.name)
+        || isSameUser(challenge.playerB && challenge.playerB.id, challenge.playerB && challenge.playerB.name, me.id, me.name);
+
+    if (!amPlayerA && !amPlayerB) return;
+
+    // 🚫 لا يُقبل التحدي من صاحبه: الطرفان فقط يدخلان المواجهة
+    if (challenge.status === 'pending') return;
+
+    if (challenge.type === 'popularity') {
+        const battleOverlay = document.getElementById('battle-overlay');
+        if (battleOverlay) battleOverlay.style.display = 'flex';
+        startSyncPopularityBattle(matchRowFromChallenge(challenge));
+    } else {
+        const arenaOverlay = document.getElementById('arena-overlay');
+        if (arenaOverlay) arenaOverlay.style.display = 'flex';
+        joinActiveArenaDuel(challenge);
+    }
+}
+
+function handleMatchStatusChangeRealtime(payload) {
+    if (!payload || !payload.challenge) return;
+    const challenge = payload.challenge;
+    if (payload.status === 'active') {
+        handleMatchFoundRealtime(challenge);
+    } else if (payload.status === 'cancelled' || payload.status === 'finished') {
+        handleChallengeDismissedRealtime({ challengeId: challenge.id });
+    }
+}
+
+function handleChallengeDismissedRealtime(payload) {
+    const challengeId = payload && (payload.challengeId || payload.id);
+    if (!challengeId) return;
+
+    if (pendingBattleInvite && pendingBattleInvite.id === challengeId) {
+        hideTelegramBattleNotification(false);
+    }
+    if (currentPopularityChallengeId === challengeId) {
+        currentPopularityChallengeId = null;
+        popularityDirectSearchInterval && clearInterval(popularityDirectSearchInterval);
+        popularityDirectSearchInterval = null;
+        const lobby = document.getElementById('popularity-search-lobby');
+        if (lobby && !popularityBattleState.active) { lobby.style.display = 'none'; lobby.innerHTML = ''; }
+    }
+    if (currentArenaChallengeId === challengeId) {
+        currentArenaChallengeId = null;
+        arenaDirectSearchInterval && clearInterval(arenaDirectSearchInterval);
+        arenaDirectSearchInterval = null;
+        const lobby = document.getElementById('arena-search-lobby');
+        if (lobby) { lobby.style.display = 'none'; lobby.innerHTML = ''; }
+    }
+}
+
 function cleanupRealtimeSubscriptions() {
     const client = ensureSupabaseClient();
     if (!client) return;
+    if (typeof matchesRealtimeChannel !== 'undefined' && matchesRealtimeChannel) {
+        try { client.removeChannel(matchesRealtimeChannel); } catch (_) {}
+        matchesRealtimeChannel = null;
+    }
     if (tablesRealtimeChannel) {
         try { client.removeChannel(tablesRealtimeChannel); } catch (_) {}
         tablesRealtimeChannel = null;
@@ -10042,51 +10110,36 @@ function showTelegramBattleNotification(challenge) {
             hideTelegramBattleNotification(false);
 
             // إشعار السيرفر وبث فوري لكلا الطرفين عبر Supabase Realtime
-            fetch('/api/battles/join', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    challengeId: targetChallenge.id,
-                    joinerName: getCurrentUsername(),
-                    joinerId: getCurrentUserId()
-                })
-            }).then(r => r.json()).then(data => {
-                const activeChallenge = (data && data.challenge) ? data.challenge : {
-                    ...targetChallenge,
-                    status: 'active',
-                    acceptedBy: getCurrentUsername(),
-                    targetName: getCurrentUsername()
-                };
-                // 🚀 بث فوري للمباراة عبر Supabase Realtime ليعلم الطرفان في نفس اللحظة
-                broadcastMatchEvent('match_found', { challenge: activeChallenge });
-                broadcastMatchEvent('match_status_change', { challengeId: activeChallenge.id, status: 'active', challenge: activeChallenge });
-            }).catch(() => {
-                const activeChallenge = {
-                    ...targetChallenge,
-                    status: 'active',
-                    acceptedBy: getCurrentUsername(),
-                    targetName: getCurrentUsername()
-                };
-                broadcastMatchEvent('match_found', { challenge: activeChallenge });
-            });
-
             // التوجيه الفوري المباشر وفق نوع النشاط
             if (targetChallenge.type === 'call') {
                 showToast(`📞 جاري الانضمام لمكالمة ${targetChallenge.challengerName}...`, 'info');
                 if (typeof showGoogleMeetModal === 'function') {
                     showGoogleMeetModal();
                 }
-            } else if (targetChallenge.type === 'popularity') {
-                showToast(`⚔️ تم قبول معركة الشعبية ضد ${targetChallenge.challengerName}!`, 'success');
-                const battleOverlay = document.getElementById('battle-overlay');
-                if (battleOverlay) battleOverlay.style.display = 'flex';
-                joinActivePopularityBattle(targetChallenge);
-            } else { // arena
-                showToast(`⚡ انضممت لساحة النزال ضد ${targetChallenge.challengerName}!`, 'success');
-                const arenaOverlay = document.getElementById('arena-overlay');
-                if (arenaOverlay) arenaOverlay.style.display = 'flex';
-                joinActiveArenaDuel(targetChallenge);
+                return;
             }
+
+            // ✅ القبول يُكتب في game_matches (status = active) فيرى الطرفان نفس المواجهة
+            acceptPendingMatch(targetChallenge).then(activeRow => {
+                if (activeRow) {
+                    broadcastMatchEvent('match_found', { challenge: matchRowToChallenge(activeRow) });
+                    broadcastMatchEvent('match_status_change', { challengeId: activeRow.id, status: 'active', challenge: activeRow });
+                    enterActiveMatch(activeRow);
+                    return;
+                }
+                // لا يوجد اتصال بالجدول → توجيه محلي مباشر
+                if (targetChallenge.type === 'popularity') {
+                    showToast(`⚔️ تم قبول معركة الشعبية ضد ${targetChallenge.challengerName}!`, 'success');
+                    const battleOverlay = document.getElementById('battle-overlay');
+                    if (battleOverlay) battleOverlay.style.display = 'flex';
+                    joinActivePopularityBattle(targetChallenge);
+                } else {
+                    showToast(`⚡ انضممت لساحة النزال ضد ${targetChallenge.challengerName}!`, 'success');
+                    const arenaOverlay = document.getElementById('arena-overlay');
+                    if (arenaOverlay) arenaOverlay.style.display = 'flex';
+                    joinActiveArenaDuel(targetChallenge);
+                }
+            });
         };
     }
 }
@@ -10097,12 +10150,15 @@ function hideTelegramBattleNotification(dismissOnServer = false) {
     if (banner) banner.classList.remove('show');
 
     if (dismissOnServer && pendingBattleInvite && pendingBattleInvite.id) {
+        // ❌ إلغاء الصف في قاعدة البيانات أيضاً حتى يختفي التحدي من كل الأجهزة
+        cancelMatchRow(pendingBattleInvite.id);
         fetch('/api/battles/dismiss', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 challengeId: pendingBattleInvite.id,
-                username: getCurrentUsername()
+                username: getCurrentUsername(),
+                userId: getCurrentUserId()
             })
         }).catch(() => {});
     }
@@ -10111,55 +10167,63 @@ function hideTelegramBattleNotification(dismissOnServer = false) {
 
 // انضمام مباشر لمعركة الشعبية من الإشعار
 function joinActivePopularityBattle(challenge) {
-    const lobby = document.getElementById('battle-lobby');
-    const arena = document.getElementById('battle-arena');
-    const username = getCurrentUsername() || 'المحارب';
-    const opponent = challenge.challengerName || 'المتحدي الشبح';
+    if (!challenge) return;
+    const row = challenge.matchRow || matchRowFromChallenge(challenge);
+    startSyncPopularityBattle(row);
+}
 
-    popularityBattleState = {
-        active: true,
-        secondsLeft: 60,
-        playerA: { name: opponent, votes: 50 },
-        playerB: { name: username, votes: 50 },
-        userVotedChoice: null,
-        userBet: 0,
-        crowdInterval: null
+/* ✅ قبول تحدٍّ معلّق: يصبح الطالب الطرف الثاني (p2) ويصير الصف نشطاً للطرفين */
+async function acceptPendingMatch(challenge) {
+    if (!challenge || !challenge.id) return null;
+    const client = ensureSupabaseClient();
+    const me = myIdentity();
+    if (!client) return null;
+    try {
+        const { data, error } = await client.from(MATCHES_TABLE).update({
+            status: 'active',
+            opponent_id: me.id,
+            opponent_name: me.name,
+            p2_id: me.id,
+            p2_name: me.name,
+            p2_score: 0,
+            started_at: new Date().toISOString(),
+            expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+        }).eq('id', challenge.id).eq('status', 'pending').select();
+        if (error || !data || !data[0]) return null;
+        return data[0];
+    } catch (e) {
+        return null;
+    }
+}
+
+function matchRowToChallenge(row) {
+    return {
+        id: row.id,
+        type: row.game_type,
+        status: 'active',
+        challengerName: row.p1_name || row.created_by_name,
+        challengerId: row.p1_id,
+        acceptedBy: row.p2_name,
+        targetName: row.p2_name,
+        targetId: row.p2_id,
+        stakeholder: row.p1_id,
+        stake: row.stake,
+        seed: row.seed
     };
-
-    if (lobby) lobby.style.display = 'none';
-    if (arena) arena.style.display = 'flex';
-
-    const nameAEl = document.getElementById('fighter-name-a');
-    const nameBEl = document.getElementById('fighter-name-b');
-    const voteAEl = document.getElementById('vote-btn-a');
-    const voteBEl = document.getElementById('vote-btn-b');
-
-    if (nameAEl) nameAEl.textContent = opponent;
-    if (nameBEl) nameBEl.textContent = username;
-    if (voteAEl) voteAEl.textContent = `🔵 صوّت لـ ${opponent}`;
-    if (voteBEl) voteBEl.textContent = `🔴 صوّت لـ ${username}`;
-
-    updatePopularityPKBar();
-    updatePopularityBattleBalance();
-
-    if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
-    popularityBattleState.timer = setInterval(popularityBattleTick, 1000);
-
-    if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
-    popularityBattleState.crowdInterval = setInterval(() => {
-        if (!popularityBattleState.active) return;
-        const addA = Math.floor(Math.random() * 8);
-        const addB = Math.floor(Math.random() * 8);
-        popularityBattleState.playerA.votes += addA;
-        popularityBattleState.playerB.votes += addB;
-        updatePopularityPKBar();
-    }, 2800);
 }
 
 // انضمام مباشر لساحة النزال 1v1 من الإشعار
 function joinActiveArenaDuel(challenge) {
+    if (!challenge) return;
+    if (challenge.matchRow) { enterArenaDuelFromRow(challenge.matchRow); return; }
+
+    // مسار احتياطي محلي (عند تعذر الوصول للجدول فقط)
     phantomArenaState.mode = 'duel';
-    phantomArenaState.stake = challenge.stake || 0;
+    phantomArenaState.stake = Number(challenge.stake) || 0;
+    phantomArenaState.challengeId = challenge.id || null;
+    phantomArenaState.matchRow = null;
+    phantomArenaState.seed = challenge.seed || challenge.id || String(Date.now());
+    phantomArenaState.iAmP1 = false;
     phantomArenaState.opponent = {
         name: challenge.challengerName || 'بطل PHANTOM',
         avatar: '⚔️',
@@ -10167,6 +10231,40 @@ function joinActiveArenaDuel(challenge) {
     };
     switchArenaView('lobby');
     launchVersusCountdown();
+}
+
+/* 🎯 بذرة موحّدة: نفس الموضع ونفس الهدف على كل الأجهزة */
+function seededRandom(seedStr, step) {
+    let h = 2166136261 >>> 0;
+    const s = String(seedStr == null ? 'phantom' : seedStr) + ':' + step;
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619) >>> 0;
+    }
+    return (h % 100000) / 100000;
+}
+
+/* ⬆️ رفع نتيجتي إلى صف المواجهة (ييراها الجهاز الآخر فوراً) */
+function syncArenaScoreToRow() {
+    const row = phantomArenaState.matchRow;
+    if (!row || !row.id) return;
+    const me = myIdentity();
+    const patch = phantomArenaState.iAmP1
+        ? { p1_id: me.id, p1_name: me.name, p1_score: phantomArenaState.p1Score }
+        : { p2_id: me.id, p2_name: me.name, p2_score: phantomArenaState.p2Score };
+    updateMatchRow(row.id, patch);
+}
+
+/* 🔒 تثبيت النتيجة النهائية مرة واحدة فقط (أول كاتب يفوز) — نفس الفائز على الجهازين */
+async function finalizeArenaRow(patch) {
+    const row = phantomArenaState.matchRow;
+    const client = ensureSupabaseClient();
+    if (!row || !row.id || !client) return;
+    try {
+        await client.from(MATCHES_TABLE)
+            .update({ ...patch, status: 'finished', finished_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+            .eq('id', row.id).is('winner_id', null);
+    } catch (e) {}
 }
 
 // ========================================================
@@ -10253,101 +10351,45 @@ function renderArenaClanMembers() {
 function sendDirectArenaChallenge(targetName) {
     ArenaAudio.init();
     const username = getCurrentUsername() || 'المحارب';
-    const balance = getUserBalance();
+    if (!targetName) return;
 
-    if (phantomArenaState.stake > 0 && balance < phantomArenaState.stake) {
-        showToast(`⚠️ رصيدك (${balance} نقطة) لا يكفي لرهان ${phantomArenaState.stake} نقطة!`, 'error');
+    const stake = Number(phantomArenaState.stake) || 0;
+    if (stake > 0 && getUserBalance() < stake) {
+        showToast(`⚠️ رصيدك (${getUserBalance()} نقطة) لا يكفي لرهان ${stake} نقطة!`, 'error');
         return;
     }
 
-    const lobby = document.getElementById('arena-search-lobby');
-    if (!lobby) return;
-    lobby.style.display = 'block';
+    // 🧊 رسم فوري قبل أي انتظار شبكة (لا تجمّد لنافذة التحدي)
+    const myToken = ++matchRequestToken;
+    renderChallengeWaiting('arena', targetName, 'ساحة النزال');
 
-    let timeLeft = 25;
-    const renderDirectLobby = () => {
-        const percent = Math.max(0, (timeLeft / 25) * 100);
-        lobby.innerHTML = `
-            <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
-                <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚡</div>
-                <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري إرسال إشعار التحدي المباشر إلى <span style="color:#00f2fe;">${escapeHTML(targetName)}</span>...</div>
-                <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">بانتظار قبول النزال: ${timeLeft} ثانية (الرهان: ${phantomArenaState.stake ? phantomArenaState.stake + ' نقطة' : 'نزال شرف'})</div>
-                <div style="width:100%; height:6px; background:rgba(255,255,255,0.1); border-radius:10px; overflow:hidden; margin:10px 0 12px;">
-                    <div style="width:${percent}%; height:100%; background:linear-gradient(90deg, #00f2fe, #00ff88); transition:width 1s linear;"></div>
-                </div>
-                <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:14px;">
-                    <button type="button" class="btn-danger" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelMatching()">
-                        ❌ إلغاء التحدي
-                    </button>
-                </div>
-            </div>
-        `;
-    };
+    const targetMember = (typeof getFullRoster === 'function' ? getFullRoster() : [])
+        .find(m => m && m.name && normalizeName(m.name) === normalizeName(targetName));
 
-    renderDirectLobby();
-
-    // إرسال التحدي للسيرفر
-    fetch('/api/battles/challenge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            type: 'arena',
-            challengerName: username,
-            challengerId: getCurrentUserId(),
-            targetName: targetName,
-            stake: phantomArenaState.stake
-        })
-    }).then(res => res.json()).then(data => {
-        if (data.success && data.challenge) {
-            currentArenaChallengeId = data.challenge.id;
-            // 🚀 بث فوري لإشعار التحدي المباشر عبر Supabase Realtime ليتلقاه الخصم فوراً
-            broadcastMatchEvent('challenge_invite', data.challenge);
-            trackArenaDirectChallenge(data.challenge.id, targetName, timeLeft);
-        }
-    }).catch(() => {});
+    insertMatchRow({
+        type: 'arena',
+        opponentName: targetName,
+        opponentId: (targetMember && (targetMember.userId || targetMember.id)) || null,
+        stake: stake,
+        status: 'pending'
+    }).then(row => {
+        if (myToken !== matchRequestToken) { if (row && row.id) cancelMatchRow(row.id); return; }
+        if (!row) { showToast('⚠️ تعذّر إرسال التحدي، حاول مرة أخرى.', 'error'); return; }
+        currentArenaChallengeId = row.id;
+        broadcastMatchEvent('challenge_invite', {
+            id: row.id, type: 'arena', status: 'pending',
+            challengerName: username, challengerId: getCurrentUserId(),
+            targetName: targetName, targetId: row.opponent_id, stake: stake, seed: row.seed
+        });
+        trackDirectChallenge(row.id, targetName, 'arena');
+    });
 
     showToast(`🚀 تم إرسال إشعار التحدي إلى ${targetName}!`, 'info');
 }
 
-// متابعة حالة قبول التحدي المباشر في الساحة عبر المؤقت المرئي والـ Realtime
+// متابعة حالة قبول التحدي المباشر في الساحة (نفس محرك المتابعة الموحّد)
 function trackArenaDirectChallenge(challengeId, targetName, initialTime = 25) {
-    if (arenaDirectSearchInterval) clearInterval(arenaDirectSearchInterval);
-    let timeLeft = initialTime;
-    const lobby = document.getElementById('arena-search-lobby');
-
-    arenaDirectSearchInterval = setInterval(() => {
-        timeLeft--;
-        if (timeLeft > 0) {
-            const percent = Math.max(0, (timeLeft / 25) * 100);
-            if (lobby && lobby.style.display !== 'none') {
-                const subEl = lobby.querySelector('div[style*="monospace"]');
-                const barEl = lobby.querySelector('div[style*="linear-gradient"]');
-                if (subEl) subEl.textContent = `بانتظار قبول النزال: ${timeLeft} ثانية (الرهان: ${phantomArenaState.stake ? phantomArenaState.stake + ' نقطة' : 'نزال شرف'})`;
-                if (barEl) barEl.style.width = `${percent}%`;
-            }
-        } else {
-            clearInterval(arenaDirectSearchInterval);
-            arenaDirectSearchInterval = null;
-            cancelMatching();
-            if (lobby) {
-                lobby.style.display = 'block';
-                lobby.innerHTML = `
-                    <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:14px;">
-                        <div style="font-size:2.2rem;">⏱️</div>
-                        <div style="font-weight:900; color:#ef4444; font-size:1.1rem; margin:6px 0;">لم يقبل ${escapeHTML(targetName)} التحدي خلال المهلة. حاول مرة أخرى.</div>
-                        <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:10px;">
-                            <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="sendDirectArenaChallenge('${escapeHTML(targetName)}')">
-                                🔄 إعادة إرسال التحدي
-                            </button>
-                            <button type="button" class="btn-secondary" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelMatching()">
-                                إغلاق
-                            </button>
-                        </div>
-                    </div>
-                `;
-            }
-        }
-    }, 1000);
+    trackDirectChallenge(challengeId, targetName, 'arena', initialTime);
 }
 
 // ========================================================
@@ -10429,101 +10471,67 @@ function renderPopularityClanMembers() {
 }
 
 // إرسال تحدٍ مباشر في معركة الشعبية
-function sendDirectPopularityChallenge(targetName) {
+async function sendDirectPopularityChallenge(targetName) {
     const username = getCurrentUsername() || 'المحارب';
-    const lobby = document.getElementById('popularity-search-lobby');
-    let timeLeft = 25;
+    if (!targetName) return;
 
-    if (lobby) {
-        lobby.style.display = 'block';
-        lobby.innerHTML = `
-            <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
-                <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚔️</div>
-                <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري إرسال إشعار معركة الشعبية إلى <span style="color:#00f2fe;">${escapeHTML(targetName)}</span>...</div>
-                <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">بانتظار قبول التحدي: ${timeLeft} ثانية</div>
-                <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:14px;">
-                    <button type="button" class="btn-danger" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelPopularitySearch()">
-                        ❌ إلغاء التحدي
-                    </button>
-                </div>
-            </div>
-        `;
+    // 💰 حد أدنى للدخول 500 نقطة
+    if (getUserBalance() < PHANTOM_MIN_STAKE) {
+        showToast(`⚠️ الحد الأدنى لدخول معركة الشعبية ${PHANTOM_MIN_STAKE} نقطة.`, 'error');
+        return;
     }
 
-    fetch('/api/battles/challenge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            type: 'popularity',
-            challengerName: username,
-            challengerId: getCurrentUserId(),
-            targetName: targetName
-        })
-    }).then(res => res.json()).then(data => {
-        if (data.success && data.challenge) {
-            currentPopularityChallengeId = data.challenge.id;
-            // 🚀 بث فوري لإشعار معركة الشعبية عبر Supabase Realtime
-            broadcastMatchEvent('challenge_invite', data.challenge);
-            trackPopularityDirectChallenge(data.challenge.id, targetName, timeLeft);
-        }
-    }).catch(() => {});
+    // 🧊 الواجهة تُرسم مرة واحدة قبل أي انتظار شبكة → لا تجمّد
+    const myToken = ++matchRequestToken;
+    renderChallengeWaiting('popularity', targetName, 'معركة الشعبية');
 
+    ensureSeasonStatsRow();
+    const targetMember = (typeof getFullRoster === 'function' ? getFullRoster() : [])
+        .find(m => m && m.name && normalizeName(m.name) === normalizeName(targetName));
+
+    const row = await insertMatchRow({
+        type: 'popularity',
+        opponentName: targetName,
+        opponentId: (targetMember && (targetMember.userId || targetMember.id)) || null,
+        stake: PHANTOM_MIN_STAKE,
+        status: 'pending'
+    });
+
+    if (myToken !== matchRequestToken) { if (row && row.id) cancelMatchRow(row.id); return; }
+    if (!row) { showToast('⚠️ تعذّر إرسال التحدي، حاول مرة أخرى.', 'error'); return; }
+
+    currentPopularityChallengeId = row.id;
+    // 📨 إرسال فوري + الصف محفوظ في game_matches فيصل الإشعار مضموناً
+    broadcastMatchEvent('challenge_invite', {
+        id: row.id, type: 'popularity', status: 'pending',
+        challengerName: username, challengerId: getCurrentUserId(),
+        targetName: targetName, targetId: row.opponent_id,
+        stake: PHANTOM_MIN_STAKE
+    });
+    trackDirectChallenge(row.id, targetName, 'popularity');
     showToast(`🚀 تم إرسال إشعار معركة الشعبية إلى ${targetName}!`, 'info');
 }
 
 function trackPopularityDirectChallenge(challengeId, targetName, initialTime = 25) {
-    if (popularityDirectSearchInterval) clearInterval(popularityDirectSearchInterval);
-    let timeLeft = initialTime;
-    const lobby = document.getElementById('popularity-search-lobby');
-    const username = getCurrentUsername() || 'المحارب';
-
-    popularityDirectSearchInterval = setInterval(() => {
-        timeLeft--;
-        if (timeLeft > 0) {
-            if (lobby && lobby.style.display !== 'none') {
-                const subEl = lobby.querySelector('div[style*="monospace"]');
-                if (subEl) subEl.textContent = `بانتظار قبول التحدي: ${timeLeft} ثانية`;
-            }
-        } else {
-            clearInterval(popularityDirectSearchInterval);
-            popularityDirectSearchInterval = null;
-            cancelPopularitySearch();
-            if (lobby) {
-                lobby.style.display = 'block';
-                lobby.innerHTML = `
-                    <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:14px;">
-                        <div style="font-size:2.2rem;">⏱️</div>
-                        <div style="font-weight:900; color:#ef4444; font-size:1.1rem; margin:6px 0;">لم يقبل ${escapeHTML(targetName)} التحدي خلال المهلة. حاول مرة أخرى.</div>
-                        <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:10px;">
-                            <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="sendDirectPopularityChallenge('${escapeHTML(targetName)}')">
-                                🔄 إعادة إرسال التحدي
-                            </button>
-                            <button type="button" class="btn-secondary" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelPopularitySearch()">
-                                إغلاق
-                            </button>
-                        </div>
-                    </div>
-                `;
-            }
-        }
-    }, 1000);
+    trackDirectChallenge(challengeId, targetName, 'popularity', initialTime);
 }
 
 function cancelPopularitySearch() {
+    // ⚡ إلغاء فوري (بدون انتظار الشبكة) ثم إشعار الخصم
+    matchRequestToken++;
     if (popularityDirectSearchInterval) {
         clearInterval(popularityDirectSearchInterval);
         popularityDirectSearchInterval = null;
     }
-    if (currentPopularityChallengeId) {
-        fetch('/api/battles/dismiss', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ challengeId: currentPopularityChallengeId, username: getCurrentUsername() })
-        }).catch(() => {});
-        currentPopularityChallengeId = null;
+    if (directChallengeTimers.popularity) {
+        clearInterval(directChallengeTimers.popularity);
+        directChallengeTimers.popularity = null;
     }
+    cancelMatchRow(currentPopularityChallengeId);
+    currentPopularityChallengeId = null;
+
     const lobby = document.getElementById('popularity-search-lobby');
-    if (lobby) {
+    if (lobby && !popularityBattleState.active) {
         lobby.style.display = 'none';
         lobby.innerHTML = '';
     }
@@ -10531,51 +10539,11 @@ function cancelPopularitySearch() {
 
 function startInstantPopularityMatch(opponentName) {
     cancelPopularitySearch();
-    const lobby = document.getElementById('battle-lobby');
-    const arena = document.getElementById('battle-arena');
     const username = getCurrentUsername() || 'المحارب';
     const opponent = opponentName || 'المتحدي الشبح';
 
-    popularityBattleState = {
-        active: true,
-        secondsLeft: 60,
-        playerA: { name: username, votes: 50 },
-        playerB: { name: opponent, votes: 50 },
-        userVotedChoice: null,
-        userBet: 0,
-        crowdInterval: null
-    };
-
-    if (lobby) lobby.style.display = 'none';
-    if (arena) arena.style.display = 'flex';
-
-    const nameAEl = document.getElementById('fighter-name-a');
-    const nameBEl = document.getElementById('fighter-name-b');
-    const voteAEl = document.getElementById('vote-btn-a');
-    const voteBEl = document.getElementById('vote-btn-b');
-
-    if (nameAEl) nameAEl.textContent = username;
-    if (nameBEl) nameBEl.textContent = opponent;
-    if (voteAEl) voteAEl.textContent = `🔵 صوّت لـ ${username}`;
-    if (voteBEl) voteBEl.textContent = `🔴 صوّت لـ ${opponent}`;
-
-    updatePopularityPKBar();
-    updatePopularityBattleBalance();
-
-    if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
-    popularityBattleState.timer = setInterval(popularityBattleTick, 1000);
-
-    if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
-    popularityBattleState.crowdInterval = setInterval(() => {
-        if (!popularityBattleState.active) return;
-        const addA = Math.floor(Math.random() * 8);
-        const addB = Math.floor(Math.random() * 8);
-        popularityBattleState.playerA.votes += addA;
-        popularityBattleState.playerB.votes += addB;
-        updatePopularityPKBar();
-    }, 2800);
-
-    showToast(`⚔️ انطلقت معركة الشعبية 1v1 بين ${username} و ${opponent}!`, 'success');
+    // تمرّ عبر نفس محرك المزامنة (بدون أصوات عشوائية لتطابق النتيجة على الجهازين)
+    startLivePopularityBattle(username, opponent, null);
 }
 
 // تهيئة التواجد وقنوات التحديث اللحظي عند تحميل الصفحة بدون أي استطلاع دوري
@@ -10583,6 +10551,14 @@ document.addEventListener('DOMContentLoaded', () => {
     sendPresenceHeartbeat();
     if (typeof setupMatchmakingRealtime === 'function') {
         setupMatchmakingRealtime();
+    }
+    // 🔗 قناة مزامنة المواجهات من الجداول (game_matches / popularity_votes)
+    if (typeof setupMatchesRealtime === 'function') {
+        setupMatchesRealtime();
+    }
+    // 🛟 احتياطي ضامن للإشعارات ومزامنة المواجهات
+    if (typeof startMatchPollingFallback === 'function') {
+        startMatchPollingFallback();
     }
     // فحص إعادة الاتصال بمكالمة Agora عند Refresh بالخطأ إذا كانت الغرفة ما زالت نشطة
     setTimeout(checkAgoraAutoReconnectOnRefresh, 1500);
@@ -10747,6 +10723,11 @@ let phantomArenaState = {
     mode: 'ai', // 'ai' or 'duel'
     aiDiff: 'medium', // 'easy', 'medium', 'hard'
     stake: 0,
+    challengeId: null,   // معرّف صف game_matches
+    matchRow: null,      // صف المواجهة الحالي (مصدر الحقيقة الموحد)
+    seed: null,          // بذرة توليد مواضع الأهداف المتطابقة
+    iAmP1: true,         // هل أنا اللاعب الأول في الصف؟
+    finalResult: null,
     currentRound: 1,
     maxRounds: 3,
     p1Score: 0,
@@ -10982,6 +10963,15 @@ function updateCombatHud() {
     const roundEl = document.getElementById('arena-hud-round');
     const timerEl = document.getElementById('arena-hud-timer');
 
+    // 🔄 في النزال الحقيقي: نتيجة الخصم تُقرأ من الصف المشترك (لا صفر ولا تفرّق)
+    const row = (phantomArenaState.mode === 'duel') ? phantomArenaState.matchRow : null;
+    if (row) {
+        const myScore = phantomArenaState.iAmP1 ? Number(row.p1_score) || 0 : Number(row.p2_score) || 0;
+        const oppScore = phantomArenaState.iAmP1 ? Number(row.p2_score) || 0 : Number(row.p1_score) || 0;
+        phantomArenaState.p1Score = myScore;
+        phantomArenaState.p2Score = oppScore;
+    }
+
     if (p1El) p1El.textContent = `أنت: ${phantomArenaState.p1Score}`;
     if (p2El) p2El.textContent = `الخصم: ${phantomArenaState.p2Score}`;
     if (roundEl) roundEl.textContent = `الجولة ${phantomArenaState.currentRound} من ${phantomArenaState.maxRounds}`;
@@ -10998,8 +10988,10 @@ function spawnNextTarget() {
     const oldTarget = playfield.querySelector('.arena-target');
     if (oldTarget) oldTarget.remove();
 
-    // اختيار نوع الهدف (70% عادي، 15% فائق، 15% لغم)
-    const rand = Math.random();
+    // 🎯 نوع الهدف وموضعه يُشتقّان من بذرة الصف (نفس الموضع على كل الأجهزة)
+    const isDuel = phantomArenaState.mode === 'duel' && !!phantomArenaState.seed;
+    const step = (phantomArenaState.currentRound * 1000) + (arenaTargetStep++);
+    const rand = isDuel ? seededRandom(phantomArenaState.seed, step) : Math.random();
     let type = 'core';
     let pts = 100;
     let icon = '🎯';
@@ -11021,9 +11013,11 @@ function spawnNextTarget() {
     const width = fieldRect.width || 340;
     const height = fieldRect.height || 360;
 
-    // حساب إحداثيات عشوائية آمنة مع هوامش
-    const posX = Math.floor(40 + Math.random() * (width - 80));
-    const posY = Math.floor(40 + Math.random() * (height - 80));
+    // حساب إحداثيات آمنة مع هوامش (مشتقة من البذرة في النزال الحقيقي)
+    const rx = isDuel ? seededRandom(phantomArenaState.seed, step + ':x') : Math.random();
+    const ry = isDuel ? seededRandom(phantomArenaState.seed, step + ':y') : Math.random();
+    const posX = Math.floor(40 + rx * (width - 80));
+    const posY = Math.floor(40 + ry * (height - 80));
 
     const targetEl = document.createElement('div');
     targetEl.className = `arena-target ${cssClass}`;
@@ -11073,6 +11067,7 @@ function handleUserTargetClick(type, pts, x, y) {
     if (speedHud) speedHud.textContent = `⚡ الاستجابة: ${reactionMs}ms`;
 
     updateCombatHud();
+    syncArenaScoreToRow();   // ⬆️ رفع نتيجتي للصف المشترك
     cleanupCurrentTarget();
 
     // توليد الهدف التالي بعد مهلة قصيرة
@@ -11182,25 +11177,59 @@ function endCurrentRound() {
     }
 }
 
-// 🏆 حسم النزال النهائي وإعلان الفائز
+// 🏆 حسم النزال النهائي وإعلان الفائز (نتيجة موحّدة على الجهازين)
 function concludeArenaMatch() {
     clearActiveCombatTimers();
     cleanupCurrentTarget();
     switchArenaView('result');
 
-    const p1 = phantomArenaState.p1Score;
-    const p2 = phantomArenaState.p2Score;
-    const stats = getArenaStats();
-    stats.totalMatches++;
+    const row = phantomArenaState.matchRow;
+    const isDuel = phantomArenaState.mode === 'duel';
 
-    let isWin = p1 > p2;
-    let isDraw = p1 === p2;
-    let rewardPoints = 0;
+    // 🔄 النقاط تُقرأ من الصف المشترك في النزال الحقيقي
+    let myScore = phantomArenaState.p1Score;
+    let oppScore = phantomArenaState.p2Score;
+    if (isDuel && row) {
+        myScore = phantomArenaState.iAmP1 ? Number(row.p1_score) || 0 : Number(row.p2_score) || 0;
+        oppScore = phantomArenaState.iAmP1 ? Number(row.p2_score) || 0 : Number(row.p1_score) || 0;
+        phantomArenaState.p1Score = myScore;
+        phantomArenaState.p2Score = oppScore;
+    }
 
-    // حساب أسرع سرعة استجابة
-    const bestInMatch = phantomArenaState.reactionTimes.length > 0 
-        ? Math.min(...phantomArenaState.reactionTimes) 
+    // 🎯 الفائز مُشتق من الصف نفسه → يظهر نفس الفائز على الجهازين
+    const meNow = myIdentity();
+    const outcome = (isDuel && row && row.winner_id)
+        ? (isSameUser(row.winner_id, row.winner_name, meNow.id, meNow.name) ? 'win' : 'loss')
+        : (myScore === oppScore ? 'draw' : (myScore > oppScore ? 'win' : 'loss'));
+    const bestInMatch = phantomArenaState.reactionTimes.length > 0
+        ? Math.min(...phantomArenaState.reactionTimes)
         : 0;
+
+    if (isDuel && row && row.id && !row.winner_id) {
+        const iAmP1 = !!phantomArenaState.iAmP1;
+        const iWon = outcome === 'win';
+        const isDraw = outcome === 'draw';
+        finalizeArenaRow({
+            p1_score: iAmP1 ? myScore : oppScore,
+            p2_score: iAmP1 ? oppScore : myScore,
+            winner_id: iWon ? getCurrentUserId() : (iAmP1 ? row.p2_id : row.p1_id),
+            winner_name: iWon ? getCurrentUsername() : phantomArenaState.opponent.name,
+            p1_result: isDraw ? 'draw' : ((iAmP1 && iWon) || (!iAmP1 && !iWon) ? 'win' : 'loss'),
+            p2_result: isDraw ? 'draw' : ((iAmP1 && iWon) || (!iAmP1 && !iWon) ? 'loss' : 'win')
+        });
+    }
+
+    renderArenaResultUI(outcome, myScore, oppScore, bestInMatch);
+}
+
+/* 🖼️ رسم شاشة النتيجة (تُستخدم من الجهازين ومن المزامنة اللحظية) */
+function renderArenaResultUI(outcome, p1, p2, bestInMatch) {
+    const stats = getArenaStats();
+    stats.totalMatches = (Number(stats.totalMatches) || 0) + 1;
+
+    const isWin = outcome === 'win';
+    const isDraw = outcome === 'draw';
+    let rewardPoints = 0;
 
     if (bestInMatch > 0) {
         if (!stats.bestReactionMs || bestInMatch < stats.bestReactionMs) {
@@ -11228,11 +11257,12 @@ function concludeArenaMatch() {
         ArenaAudio.playVictory();
         if (typeof triggerConfetti === 'function') triggerConfetti();
 
-        // مكافأة الفوز
+        // مكافأة الفوز: ضعف الرهان في النزال (والرهان خُصم عند الدخول)
         if (phantomArenaState.mode === 'ai') {
             rewardPoints = 25; // تدريب مجاني
         } else {
-            rewardPoints = phantomArenaState.stake > 0 ? phantomArenaState.stake * 2 : 50;
+            rewardPoints = (Number(phantomArenaState.stake) || 0) * 2;
+            if (rewardPoints === 0) rewardPoints = 50; // نزال شرف
         }
 
         if (resIcon) resIcon.textContent = '🏆';
@@ -11270,9 +11300,9 @@ function concludeArenaMatch() {
         if (resDesc) resDesc.textContent = `كان ${phantomArenaState.opponent.name} أسرع في هذه المواجهة. استعد وتدرب لجولة الثأر!`;
         if (resReward) resReward.textContent = '+0';
 
-        if (phantomArenaState.stake > 0) {
-            addPoints(currentUsername, -phantomArenaState.stake);
-            showToast(`⚠️ خسرت رهان الساحة (-${phantomArenaState.stake} نقطة).`, 'error');
+        if (phantomArenaState.mode === 'duel') {
+            // خسارة: الرهان خُصم عند الدخول ولا يُعاد منه شيء
+            showToast(`⚠️ خسرت النزال، الرهان (${Number(phantomArenaState.stake) || 0} نقطة) لا يُعاد.`, 'error');
         }
     }
 
@@ -11291,23 +11321,23 @@ function concludeArenaMatch() {
     if (stats.history.length > 20) stats.history.pop();
 
     saveArenaStats(stats);
+}
 
-    // ⚔️ إنشاء سجل مواجهة واحد موحد للطرفين الحقيقيين على السيرفر
-    if (phantomArenaState.challengeId || phantomArenaState.mode === 'duel') {
-        const winner = isWin ? currentUsername : (isDraw ? 'تعادل' : (phantomArenaState.opponent ? phantomArenaState.opponent.name : 'الخصم'));
-        fetch('/api/battles/finish', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                challengeId: phantomArenaState.challengeId || `duel_${Date.now()}`,
-                winnerName: winner,
-                myScore: p1,
-                oppScore: p2,
-                bestSpeed: bestInMatch,
-                mode: 'arena'
-            })
-        }).catch(() => {});
-    }
+/* 📡 تطبيق نتيجة النزال القادمة من الجهاز الآخر (Realtime) */
+function applyArenaResultFromRow(row) {
+    if (!row) return;
+    phantomArenaState.matchRow = row;
+    const me = myIdentity();
+    const myScore = phantomArenaState.iAmP1 ? Number(row.p1_score) || 0 : Number(row.p2_score) || 0;
+    const oppScore = phantomArenaState.iAmP1 ? Number(row.p2_score) || 0 : Number(row.p1_score) || 0;
+    // 🎯 النتيجة تأتي من الصف أولاً (تغطي حالة الاستسلام) ثم من المقارنة
+    const outcome = row.winner_id
+        ? (isSameUser(row.winner_id, row.winner_name, me.id, me.name) ? 'win' : 'loss')
+        : (myScore === oppScore ? 'draw' : (myScore > oppScore ? 'win' : 'loss'));
+    clearActiveCombatTimers();
+    cleanupCurrentTarget();
+    switchArenaView('result');
+    renderArenaResultUI(outcome, myScore, oppScore, 0);
 }
 
 // 🏳️ استسلام من النزال
@@ -11319,6 +11349,18 @@ function surrenderArenaMatch(silent = false) {
         stats.losses++;
         stats.streak = 0;
         saveArenaStats(stats);
+
+        // 🏳️ الاستسلام نتيجة موحّدة أيضاً: الخصم يفوز على الجهازين
+        const row = phantomArenaState.matchRow;
+        if (phantomArenaState.mode === 'duel' && row && row.id && !row.winner_id) {
+            const iAmP1 = !!phantomArenaState.iAmP1;
+            finalizeArenaRow({
+                winner_id: iAmP1 ? row.p2_id : row.p1_id,
+                winner_name: phantomArenaState.opponent.name,
+                p1_result: iAmP1 ? 'surrender' : 'win',
+                p2_result: iAmP1 ? 'win' : 'surrender'
+            });
+        }
         showToast('🏳️ لقد استسلمت من النزال.', 'info');
         switchArenaView('lobby');
     }
@@ -11333,22 +11375,48 @@ function replayArenaMatch() {
     }
 }
 
-// 📜 عرض لوحة أبطال الساحة وسجل النزالات
-function renderArenaLeaderboard() {
+// 📜 عرض لوحة أبطال الساحة (أعضاء الكلان الحقيقيون من جدول members فقط)
+async function renderArenaLeaderboard() {
     const list = document.getElementById('arena-leaderboard-list');
     if (!list) return;
 
     const stats = getArenaStats();
     const myName = getCurrentUsername() || 'المحارب';
 
-    // قائمة أبطال افتراضية تكتيكية مع العضو الحالي
-    const warriors = [
-        { name: 'PH 5oM•D8', title: 'أسطورة الساحة', wins: Math.max(18, stats.wins + 4), speed: '175ms', avatar: '👑' },
-        { name: 'PH•GHOST_01', title: 'قناص فانتوم', wins: Math.max(14, stats.wins + 2), speed: '195ms', avatar: '⚡' },
-        { name: myName, title: 'محارب الساحة', wins: stats.wins, speed: stats.bestReactionMs ? `${stats.bestReactionMs}ms` : '240ms', avatar: '⚔️', isMe: true },
-        { name: 'PH•SHADOW', title: 'سفاح الظلال', wins: 9, speed: '280ms', avatar: '🗡️' },
-        { name: 'PH•VIPER', title: 'مدافع الرومات', wins: 6, speed: '310ms', avatar: '🛡️' }
-    ];
+    list.innerHTML = `<div style="text-align:center; padding:14px; color:#94a3b8; font-size:0.82rem;">جاري تحميل أعضاء الكلان...</div>`;
+
+    // 📋 المصدر: جدول members في Supabase (مع سجل الكلان كاحتياط)
+    let members = [];
+    try {
+        const rows = await serverGetMembers();
+        if (Array.isArray(rows)) members = rows;
+    } catch (e) {}
+    if (!members.length && typeof getFullRoster === 'function') {
+        members = getFullRoster();
+    }
+
+    // 🚫 استبعاد أي اسم غير موجود في سجل الكلان الحقيقي
+    const rosterNames = new Set((typeof getFullRoster === 'function' ? getFullRoster() : []).map(m => normalizeName(m.name)));
+    const seen = new Set();
+    const warriors = members
+        .filter(m => m && m.name && !seen.has(normalizeName(m.name)) && seen.add(normalizeName(m.name)))
+        .filter(m => rosterNames.size === 0 || rosterNames.has(normalizeName(m.name)))
+        .map(m => {
+            const isMe = normalizeName(m.name) === normalizeName(myName);
+            return {
+                name: String(m.name),
+                title: m.rank || 'محارب',
+                wins: isMe ? (Number(stats.wins) || 0) : 0,
+                speed: isMe && stats.bestReactionMs ? `${stats.bestReactionMs}ms` : '--',
+                avatar: (m.avatar && String(m.avatar).length <= 4) ? m.avatar : '⚔️',
+                isMe: isMe
+            };
+        });
+
+    if (!warriors.length) {
+        list.innerHTML = `<div style="text-align:center; padding:16px; color:#94a3b8; font-size:0.85rem;">لا يوجد أعضاء في سجل الكلان بعد.</div>`;
+        return;
+    }
 
     warriors.sort((a, b) => b.wins - a.wins);
 
@@ -11454,6 +11522,8 @@ function initPopularityBattle() {
 
     updatePopularityBattleBalance();
     renderPopularityClanMembers();
+    mountPopularitySeasonLeaderboard();
+    setupMatchesRealtime();
 }
 
 function updatePopularityBattleBalance() {
@@ -11472,21 +11542,29 @@ function startPopularityBattle() {
     const resultMsg = document.getElementById('battle-result-msg');
     if (resultMsg) { resultMsg.style.display = 'none'; resultMsg.textContent = ''; }
 
+    // 💰 حد أدنى للدخول: 500 نقطة (يُرفض أي لاعب أقل من ذلك)
+    const entryStake = PHANTOM_MIN_STAKE;
+    if (getUserBalance() < entryStake) {
+        showToast(`⚠️ الحد الأدنى لدخول معركة الشعبية ${entryStake} نقطة، ورصيدك ${getUserBalance()} نقطة فقط.`, 'error');
+        return;
+    }
+
     if (lobby) {
         lobby.style.display = 'block';
     }
 
     let timeLeft = 20;
+    // 🧊 تُرسم مرة واحدة ثم يُحدَّث العدّاد فقط → زر "إلغاء البحث" يستجيب فوراً
     const renderPopLobby = () => {
         const percent = Math.max(0, (timeLeft / 20) * 100);
         if (!lobby) return;
         lobby.innerHTML = `
             <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
                 <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚔️</div>
-                <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري الاتصال بالسيرفر والبحث عن منافس في معركة الشعبية...</div>
-                <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">مهلة الانتظار: ${timeLeft} ثانية (بث التحدي لجميع أعضاء الكلان)</div>
+                <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري البحث عن منافس حقيقي في معركة الشعبية...</div>
+                <div data-queue-timer style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">مهلة الانتظار: ${timeLeft} ثانية (مطابقة مع لاعب حقيقي آخر)</div>
                 <div style="width:100%; height:6px; background:rgba(255,255,255,0.1); border-radius:10px; overflow:hidden; margin:10px 0 12px;">
-                    <div style="width:${percent}%; height:100%; background:linear-gradient(90deg, #00f2fe, #00ff88); transition:width 1s linear;"></div>
+                    <div data-queue-bar style="width:${percent}%; height:100%; background:linear-gradient(90deg, #00f2fe, #00ff88); transition:width 1s linear;"></div>
                 </div>
                 <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
                     <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="launchRivalPopularityMatch()">
@@ -11503,40 +11581,24 @@ function startPopularityBattle() {
     renderPopLobby();
     showToast("📡 دخلت طابور مطابقة معركة الشعبية...", "info");
 
-    // الدخول في طابور السيرفر الحقيقي
-    fetch('/api/battles/queue/join', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            type: 'popularity',
-            username: username,
-            userId: getCurrentUserId(),
-            stake: 0
-        })
-    }).then(res => res.json()).then(joinData => {
-        if (joinData.matched && joinData.challenge) {
-            cancelPopularityMatchmaking();
-            // 🚀 بث فوري للطرف الآخر عبر Supabase Realtime ليدخل المواجهة فوراً
-            broadcastMatchEvent('match_found', { challenge: joinData.challenge });
-            const opp = joinData.challenge.challengerName === username ? joinData.challenge.targetName : joinData.challenge.challengerName;
-            showToast(`🔥 تم التوفيق مع ${opp}! تبدأ معركة الشعبية الآن...`, 'success');
-            startLivePopularityBattle(username, opp, joinData.challenge.id);
-        }
-    }).catch(() => {});
+    // 🤝 المطابقة المتبادلة: لاعبان حقيقيان يضغطان "استعد" فيُطابَقان على نفس صف game_matches
+    const myToken = ++matchRequestToken;
+    ensureSeasonStatsRow();
+    startMutualQueue('popularity', entryStake, myToken, (row) => {
+        const opp = isSameUser(row.p1_id, row.p1_name, getCurrentUserId(), username) ? (row.p2_name || row.opponent_name) : (row.p1_name || row.created_by_name);
+        showToast(`🔥 تم التوفيق مع ${opp}! تبدأ معركة الشعبية الآن...`, 'success');
+        startSyncPopularityBattle(row);
+    });
 
     if (popularityMatchmakingInterval) clearInterval(popularityMatchmakingInterval);
     popularityMatchmakingInterval = setInterval(() => {
         timeLeft--;
         if (timeLeft > 0) {
-            renderPopLobby();
+            paintQueueLobby('popularity', timeLeft, 20);
         } else {
             clearInterval(popularityMatchmakingInterval);
             popularityMatchmakingInterval = null;
-            fetch('/api/battles/queue/leave', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'popularity', username, userId: getCurrentUserId() })
-            }).catch(() => {});
+            cancelMatchRow(queuedTypes.popularity);
 
             if (lobby) {
                 lobby.innerHTML = `
@@ -11559,26 +11621,17 @@ function startPopularityBattle() {
 }
 
 function cancelPopularityMatchmaking() {
+    // ⚡ إلغاء فوري: أوقف المؤقتات ثم أخبر الخادم بلا انتظار (لا تجمّد للواجهة)
+    matchRequestToken++;
     if (popularityMatchmakingInterval) {
         clearInterval(popularityMatchmakingInterval);
         popularityMatchmakingInterval = null;
     }
-    const username = getCurrentUsername();
-    const userId = getCurrentUserId();
-    fetch('/api/battles/queue/leave', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'popularity', username, userId })
-    }).catch(() => {});
+    cancelMatchRow(queuedTypes.popularity);
+    queuedTypes.popularity = null;
+    cancelMatchRow(currentPopularityChallengeId);
+    currentPopularityChallengeId = null;
 
-    if (currentPopularityChallengeId) {
-        fetch('/api/battles/dismiss', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ challengeId: currentPopularityChallengeId, username: getCurrentUsername() })
-        }).catch(() => {});
-        currentPopularityChallengeId = null;
-    }
     const lobby = document.getElementById('popularity-search-lobby');
     if (lobby) {
         lobby.style.display = 'none';
@@ -11590,21 +11643,98 @@ function launchRivalPopularityMatch() {
     startPopularityBattle();
 }
 
+/* 🤝 طابور متبادل مشترك (شعبية + ساحة): لا يبدأ إلا بمطابقة طرفين حقيقيين */
+async function startMutualQueue(type, stake, myToken, onMatched) {
+    const row = await insertMatchRow({ type, stake, status: 'queued' });
+    if (myToken !== matchRequestToken) {
+        // أُلغي الطلب أثناء الإرسال → أنظف الصف فوراً
+        if (row && row.id) cancelMatchRow(row.id);
+        return;
+    }
+    if (!row) {
+        // لا يوجد اتصال بجدول المطابقة → لا مطابقة ممكنة
+        showToast('⚠️ تعذّر الاتصال بخادم المطابقة، حاول مرة أخرى.', 'error');
+        const lobby = challengeLobbyEl(type);
+        if (lobby) { lobby.style.display = 'none'; lobby.innerHTML = ''; }
+        return;
+    }
+    queuedTypes[type] = row.id;
+
+    // محاولة فورية ثم إعادة المحاولة كل 2 ثانية حتى انتهاء المهلة
+    const attempt = async () => {
+        if (myToken !== matchRequestToken) return true;
+        const matched = await claimQueuedOpponent(type, stake);
+        if (matched) {
+            queuedTypes[type] = null;
+            onMatched(matched);
+            return true;
+        }
+        return false;
+    };
+
+    if (await attempt()) return;
+    const poll = setInterval(async () => {
+        if (myToken !== matchRequestToken) { clearInterval(poll); return; }
+        if (await attempt()) clearInterval(poll);
+    }, 2000);
+
+    // لا يبقى الطابور مفتوحاً أكثر من مهلة البحث
+    setTimeout(() => {
+        clearInterval(poll);
+        if (myToken === matchRequestToken && queuedTypes[type]) {
+            cancelMatchRow(queuedTypes[type]);
+            queuedTypes[type] = null;
+        }
+    }, 22000);
+}
+
 function startLivePopularityBattle(playerAName, playerBName, challengeId = null) {
+    const existing = activeMatchRow && (!challengeId || activeMatchRow.id === challengeId) ? activeMatchRow : null;
+    const row = existing || {
+        id: challengeId || `local_${Date.now()}`,
+        game_type: 'popularity',
+        status: 'active',
+        p1_name: playerAName, p2_name: playerBName,
+        p1_score: 0, p2_score: 0,
+        stake: Number(PHANTOM_MIN_STAKE) || 0,
+        seed: challengeId || String(Date.now())
+    };
+    startSyncPopularityBattle(row);
+}
+
+/* 🎯 تهيئة معركة الشعبية من صف game_matches (مصدر الحقيقة الموحد) */
+function startSyncPopularityBattle(row) {
+    if (!row) return;
+    activeMatchRow = row;
+    activeMatchType = 'popularity';
+
+    const me = myIdentity();
+    const iAmPlayer = row.id ? isMatchPlayer(row, me) : false;
+    const aName = row.p1_name || row.created_by_name || 'اللاعب أ';
+    const bName = row.p2_name || row.opponent_name || 'اللاعب ب';
+
     const lobby = document.getElementById('battle-lobby');
     const arena = document.getElementById('battle-arena');
     const resultMsg = document.getElementById('battle-result-msg');
     if (resultMsg) { resultMsg.style.display = 'none'; resultMsg.textContent = ''; }
 
+    // 💰 خصم رهان الدخول مرة واحدة لكل لاعب عندما تكون المعركة حقيقية
+    const stake = Number(row.stake) || 0;
+    if (iAmPlayer && stake > 0 && row.id && !deductedMatchIds.has(row.id)) {
+        deductedMatchIds.add(row.id);
+        deductUserPoints(stake);
+    }
+
     popularityBattleState = {
         active: true,
+        timer: null,
         secondsLeft: 60,
-        playerA: { name: playerAName, votes: 50 },
-        playerB: { name: playerBName, votes: 50 },
+        playerA: { name: aName, votes: 0 },
+        playerB: { name: bName, votes: 0 },
         userVotedChoice: null,
         userBet: 0,
         crowdInterval: null,
-        challengeId: challengeId
+        challengeId: row.id
     };
 
     if (lobby) lobby.style.display = 'none';
@@ -11615,33 +11745,85 @@ function startLivePopularityBattle(playerAName, playerBName, challengeId = null)
     const voteAEl = document.getElementById('vote-btn-a');
     const voteBEl = document.getElementById('vote-btn-b');
 
-    if (nameAEl) nameAEl.textContent = playerAName;
-    if (nameBEl) nameBEl.textContent = playerBName;
-    if (voteAEl) voteAEl.textContent = `🔵 صوّت لـ ${playerAName}`;
-    if (voteBEl) voteBEl.textContent = `🔴 صوّت لـ ${playerBName}`;
+    if (nameAEl) nameAEl.textContent = aName;
+    if (nameBEl) nameBEl.textContent = bName;
+    if (voteAEl) voteAEl.textContent = `🔵 صوّت لـ ${aName}`;
+    if (voteBEl) voteBEl.textContent = `🔴 صوّت لـ ${bName}`;
 
-    updatePopularityPKBar();
+    // 👁️ زر التصويت للمشاهدين فقط — المتنافسان لا يرونه
+    setVoteButtonsVisibility(iAmPlayer);
+    loadPopularityVotes(row.id);
+    setupMatchesRealtime();
     updatePopularityBattleBalance();
 
     if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
+    if (popularityBattleState.crowdInterval) { clearInterval(popularityBattleState.crowdInterval); popularityBattleState.crowdInterval = null; }
     popularityBattleState.timer = setInterval(popularityBattleTick, 1000);
 
-    if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
-    popularityBattleState.crowdInterval = setInterval(() => {
-        if (!popularityBattleState.active) return;
-        const addA = Math.floor(Math.random() * 8);
-        const addB = Math.floor(Math.random() * 8);
-        popularityBattleState.playerA.votes += addA;
-        popularityBattleState.playerB.votes += addB;
-        updatePopularityPKBar();
-    }, 2800);
+    showToast(`⚔️ انطلقت معركة الشعبية بين ${aName} و ${bName}!`, "info");
+}
 
-    showToast(`⚔️ انطلقت معركة الشعبية بين ${playerAName} و ${playerBName}!`, "info");
+function setVoteButtonsVisibility(isPlayer) {
+    [document.getElementById('vote-btn-a'), document.getElementById('vote-btn-b')].forEach(el => {
+        if (!el) return;
+        el.style.display = isPlayer ? 'none' : '';
+        el.disabled = !!isPlayer;
+    });
+}
+
+async function loadPopularityVotes(matchId) {
+    popularityVoters = [];
+    const client = ensureSupabaseClient();
+    if (client && matchId) {
+        try {
+            const { data } = await client.from(VOTES_TABLE).select('*').eq('match_id', matchId);
+            popularityVoters = Array.isArray(data) ? data : [];
+        } catch (e) { popularityVoters = []; }
+    }
+    renderPopularityVoters();
+    updatePopularityPKBar();
+}
+
+/* 🗳️ قائمة من صوّت لمن وبكم نقطة — تُضاف أسفل مساحة المعركة الحالية */
+function renderPopularityVoters() {
+    const arena = document.getElementById('battle-arena');
+    if (!arena) return;
+    let box = document.getElementById('popularity-voters-list');
+    if (!box) {
+        box = document.createElement('div');
+        box.id = 'popularity-voters-list';
+        box.style.cssText = 'margin-top:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(0,242,254,0.25); border-radius:12px; padding:10px;';
+        arena.appendChild(box);
+    }
+    const isPlayer = !!(activeMatchRow && activeMatchRow.id && isMatchPlayer(activeMatchRow));
+    const rows = popularityVoters.slice().sort((a, b) => (Number(b.points) || 0) - (Number(a.points) || 0));
+    const totalA = popularityVoters.filter(v => v.choice === 'A').reduce((s, v) => s + (Number(v.points) || 0), 0);
+    const totalB = popularityVoters.filter(v => v.choice === 'B').reduce((s, v) => s + (Number(v.points) || 0), 0);
+
+    const header = `<div style="font-weight:900; color:#00f2fe; margin-bottom:8px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px;">
+            <span>🗳️ سجل التصويت (${popularityVoters.length})</span>
+            <span style="font-family:monospace; font-size:0.78rem;">${escapeHTML((activeMatchRow && activeMatchRow.p1_name) || 'أ')}: ${totalA} · ${escapeHTML((activeMatchRow && activeMatchRow.p2_name) || 'ب')}: ${totalB}</span>
+        </div>`;
+    const body = rows.length ? rows.map(v => {
+        const side = v.choice === 'A' ? (activeMatchRow && activeMatchRow.p1_name) : (activeMatchRow && activeMatchRow.p2_name);
+        return `<div style="display:flex; justify-content:space-between; gap:8px; font-size:0.78rem; padding:5px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+                <span style="color:#fff;">${escapeHTML(v.voter_name || 'عضو')}</span>
+                <span style="color:#94a3b8;">صوّت لـ ${escapeHTML(side || (v.choice === 'A' ? 'اللاعب أ' : 'اللاعب ب'))}</span>
+                <span style="color:${v.choice === 'A' ? '#00f2fe' : '#ef4444'}; font-weight:900;">${Number(v.points) || 0} نقطة</span>
+            </div>`;
+    }).join('') : `<div style="text-align:center; color:#94a3b8; font-size:0.78rem; padding:8px;">لا توجد أصوات حتى الآن.</div>`;
+    const note = isPlayer ? `<div style="margin-top:8px; font-size:0.72rem; color:#facc15;">👁️ أنت أحد طرفي المواجهة — التصويت متاح للمشاهدين فقط.</div>` : '';
+    box.innerHTML = header + body + note;
 }
 
 function updatePopularityPKBar() {
-    const total = popularityBattleState.playerA.votes + popularityBattleState.playerB.votes;
-    const pctA = total > 0 ? Math.round((popularityBattleState.playerA.votes / total) * 100) : 50;
+    // الأصوات الحقيقية فقط (من popularity_votes) — نفس النتيجة على كل الأجهزة
+    const sumA = popularityVoters.filter(v => v.choice === 'A').reduce((s, v) => s + (Number(v.points) || 0), 0);
+    const sumB = popularityVoters.filter(v => v.choice === 'B').reduce((s, v) => s + (Number(v.points) || 0), 0);
+    popularityBattleState.playerA.votes = sumA;
+    popularityBattleState.playerB.votes = sumB;
+    const total = sumA + sumB;
+    const pctA = total > 0 ? Math.round((sumA / total) * 100) : 50;
     const pctB = 100 - pctA;
 
     const fillEl = document.getElementById('pk-bar-fill');
@@ -11653,56 +11835,76 @@ function updatePopularityPKBar() {
     if (fillEl) fillEl.style.width = pctA + '%';
     if (labelA) labelA.textContent = `${popularityBattleState.playerA.name} ${pctA}%`;
     if (labelB) labelB.textContent = `${popularityBattleState.playerB.name} ${pctB}%`;
-    if (ptsA) ptsA.textContent = `+${popularityBattleState.playerA.votes} صوت`;
-    if (ptsB) ptsB.textContent = `+${popularityBattleState.playerB.votes} صوت`;
+    if (ptsA) ptsA.textContent = `+${sumA} نقطة`;
+    if (ptsB) ptsB.textContent = `+${sumB} نقطة`;
 }
 
-function votePopularityBattle(choice) {
+/* 🗳️ التصويت: للمشاهدين فقط، بحد أدنى 500 نقطة، ويُحفظ في popularity_votes */
+async function votePopularityBattle(choice) {
     if (!popularityBattleState.active) {
         showToast("المعركة غير نشطة حالياً!", "error");
         return;
     }
-    const betInput = document.getElementById('bet-amount');
-    const betVal = Math.max(1, parseInt(betInput ? betInput.value : 10, 10) || 10);
-    const username = getCurrentUsername();
-    const balance = getUserBalance();
+    const row = activeMatchRow;
+    const me = myIdentity();
 
-    if (balance < betVal) {
-        showToast(`⚠️ رصيدك (${balance} نقطة) لا يكفي لرهان ${betVal} نقطة!`, "error");
+    if (row && row.id && isMatchPlayer(row, me)) {
+        showToast("🚫 لا يمكنك التصويت في مواجهة أنت أحد طرفيها.", "error");
+        return;
+    }
+    if (popularityBattleState.userVotedChoice) {
+        showToast("لقد قمت بالتصويت في هذه المواجهة بالفعل!", "error");
         return;
     }
 
-    deductPoints(username, betVal);
-    updatePopularityBattleBalance();
-    updateVaultBalanceUI();
+    const betInput = document.getElementById('bet-amount');
+    const betVal = Math.max(0, parseInt(betInput ? betInput.value : '0', 10) || 0);
 
+    // 💰 الحد الأدنى للدخول 500 نقطة
+    if (betVal < PHANTOM_MIN_STAKE) {
+        showToast(`⚠️ الحد الأدنى للتصويت ${PHANTOM_MIN_STAKE} نقطة!`, "error");
+        return;
+    }
+    if (getUserBalance() < betVal) {
+        showToast(`⚠️ رصيدك (${getUserBalance()} نقطة) لا يكفي لرهان ${betVal} نقطة!`, "error");
+        return;
+    }
+
+    deductUserPoints(betVal);   // الرهان يُخصم عند الدخول
     popularityBattleState.userVotedChoice = choice;
-    popularityBattleState.userBet += betVal;
+    popularityBattleState.userBet = betVal;
 
-    const voteWeight = betVal * 2;
-    if (choice === 'A') {
-        popularityBattleState.playerA.votes += voteWeight;
-        showToast(`🔵 دعمت ${popularityBattleState.playerA.name} بـ ${voteWeight} نقطة شعبية!`, "success");
-    } else {
-        popularityBattleState.playerB.votes += voteWeight;
-        showToast(`🔴 دعمت ${popularityBattleState.playerB.name} بـ ${voteWeight} نقطة شعبية!`, "success");
+    const votedFor = choice === 'A'
+        ? { id: row && row.p1_id, name: popularityBattleState.playerA.name }
+        : { id: row && row.p2_id, name: popularityBattleState.playerB.name };
+
+    const voteRow = {
+        match_id: row ? row.id : null,
+        voter_id: me.id,
+        voter_name: me.name,
+        voted_for_id: votedFor.id || null,
+        voted_for_name: votedFor.name,
+        choice: choice,
+        points: betVal,
+        payout: 0,
+        status: 'staked',
+        created_at: new Date().toISOString()
+    };
+
+    let saved = voteRow;
+    const client = ensureSupabaseClient();
+    if (client && voteRow.match_id) {
+        try {
+            const { data, error } = await client.from(VOTES_TABLE).insert(voteRow).select();
+            if (!error && data && data[0]) saved = data[0];
+        } catch (e) {}
     }
+
+    if (!popularityVoters.some(v => v.id && saved.id && v.id === saved.id)) popularityVoters.push(saved);
+    renderPopularityVoters();
     updatePopularityPKBar();
+    showToast(`✅ دعمت ${votedFor.name} بـ ${betVal} نقطة رهان!`, "success");
     playCodoSound('send');
-
-    // مزامنة التصويت مع السيرفر إن كان التحدي نشطاً عبر السيرفر
-    if (popularityBattleState.challengeId) {
-        fetch('/api/battles/vote', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                challengeId: popularityBattleState.challengeId,
-                choice: choice,
-                voterName: username,
-                amount: betVal
-            })
-        }).catch(() => {});
-    }
 }
 
 function popularityBattleTick() {
@@ -11724,12 +11926,130 @@ function cancelPopularityBattle() {
     if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
     popularityBattleState.active = false;
 
+    const row = activeMatchRow;
+    const me = myIdentity();
+    const iAmPlaying = !!(row && row.id && isMatchPlayer(row, me));
+
+    if (iAmPlaying) {
+        // 🏳️ استسلام طوعي: خسارة نصف النقاط المراهنة + نتيجة موحّدة على الجهازين
+        const iAmP1 = isSameUser(row.p1_id, row.p1_name, me.id, me.name);
+        const finished = {
+            ...row,
+            status: 'finished',
+            winner_id: iAmP1 ? row.p2_id : row.p1_id,
+            winner_name: iAmP1 ? (row.p2_name || row.opponent_name) : (row.p1_name || row.created_by_name),
+            p1_result: iAmP1 ? 'surrender' : 'win',
+            p2_result: iAmP1 ? 'win' : 'surrender'
+        };
+        activeMatchRow = finished;
+        updateMatchRow(row.id, {
+            status: 'finished', winner_id: finished.winner_id, winner_name: finished.winner_name,
+            p1_result: finished.p1_result, p2_result: finished.p2_result,
+            finished_at: new Date().toISOString()
+        });
+        settlePopularityMatch(finished, 'surrender');
+        showPopularityResult(finished.winner_name || 'الخصم');
+    } else {
+        cancelMatchRow(row && row.id);
+    }
+
     const lobby = document.getElementById('battle-lobby');
     const arena = document.getElementById('battle-arena');
     if (arena) arena.style.display = 'none';
     if (lobby) lobby.style.display = 'block';
+    const box = document.getElementById('popularity-voters-list');
+    if (box) box.remove();
+    leaveActiveMatch('surrender');
     renderPopularityClanMembers();
+    renderPopularitySeasonLeaderboard();
     showToast("تم الانسحاب من جولة معركة الشعبية.", "info");
+}
+
+/* 💸 توزيع الأرباح والغرامات لطرفي المواجهة والمصوّتين */
+function settlePopularityMatch(row, forcedMode) {
+    if (!row || !row.id) return;
+    if (settledMatchIds.has(row.id)) return;
+    settledMatchIds.add(row.id);
+
+    const sumA = popularityVoters.filter(v => v.choice === 'A').reduce((s, v) => s + (Number(v.points) || 0), 0);
+    const sumB = popularityVoters.filter(v => v.choice === 'B').reduce((s, v) => s + (Number(v.points) || 0), 0);
+    const p1Score = Number(row.p1_score) || sumA;
+    const p2Score = Number(row.p2_score) || sumB;
+
+    const mode = forcedMode || ((row.p1_result === 'surrender' || row.p2_result === 'surrender') ? 'surrender' : 'normal');
+    const winnerIsA = row.winner_id
+        ? isSameUser(row.winner_id, row.winner_name, row.p1_id, row.p1_name)
+        : p1Score >= p2Score;
+
+    const me = myIdentity();
+    const stake = Number(row.stake) || 0;
+
+    // 1) اللاعبان: فوز = ضعف الرهان | خسارة = كل الرهان | استسلام = النصف
+    if (isMatchPlayer(row, me)) {
+        const iAmP1 = isSameUser(row.p1_id, row.p1_name, me.id, me.name);
+        const iAmWinner = (iAmP1 && winnerIsA) || (!iAmP1 && !winnerIsA);
+        let gain = 0;
+        if (mode === 'surrender' && !iAmWinner) gain = Math.floor(stake / 2);
+        else if (iAmWinner) gain = stake * 2;
+        if (gain > 0) addUserPoints(gain);
+        commitSeasonResult(iAmWinner);
+    }
+
+    // 2) المصوّتون: فوز المتنافس المختار = ضعف الرهان | خسارته = خسارة الرهان | استسلامه = استرداد الرهان ناقص 25%
+    let voterGain = 0;
+    popularityVoters.filter(v => isSameUser(v.voter_id, v.voter_name, me.id, me.name)).forEach(v => {
+        const votedForA = v.choice === 'A';
+        const won = (votedForA && winnerIsA) || (!votedForA && !winnerIsA);
+        const pts = Number(v.points) || 0;
+        if (mode === 'surrender' && !won) voterGain += Math.floor(pts * 0.75);
+        else if (won) voterGain += pts * 2;
+    });
+    if (voterGain > 0) addUserPoints(voterGain);
+
+    persistVotePayouts(winnerIsA, mode);
+    renderPopularitySeasonLeaderboard();
+}
+
+async function persistVotePayouts(winnerIsA, mode) {
+    const client = ensureSupabaseClient();
+    if (!client) return;
+    for (const v of popularityVoters) {
+        if (!v.id) continue;
+        const votedForA = v.choice === 'A';
+        const won = (votedForA && winnerIsA) || (!votedForA && !winnerIsA);
+        const pts = Number(v.points) || 0;
+        let payout = 0;
+        let status = 'lost';
+        if (mode === 'surrender' && !won) { payout = Math.floor(pts * 0.75); status = 'refunded'; }
+        else if (won) { payout = pts * 2; status = 'won'; }
+        try {
+            await client.from(VOTES_TABLE).update({ payout, status }).eq('id', v.id);
+        } catch (e) {}
+    }
+}
+
+function showPopularityResult(winnerName) {
+    const resultMsg = document.getElementById('battle-result-msg');
+    if (!resultMsg) return;
+    resultMsg.style.display = 'block';
+    resultMsg.style.background = 'rgba(0,242,254,0.12)';
+    resultMsg.style.border = '1px solid #00f2fe';
+    resultMsg.style.color = '#00f2fe';
+    resultMsg.innerHTML = `🏆 الفائز: <strong>${escapeHTML(winnerName)}</strong>!<br>النتيجة موحّدة على كل الأجهزة · راجع سجل التصويت أدناه.`;
+}
+
+function afterPopularityBattle() {
+    setTimeout(() => {
+        const lobby = document.getElementById('battle-lobby');
+        const arena = document.getElementById('battle-arena');
+        if (arena) arena.style.display = 'none';
+        if (lobby) lobby.style.display = 'block';
+        const box = document.getElementById('popularity-voters-list');
+        if (box) box.remove();
+        leaveActiveMatch('finished');
+        renderPopularityClanMembers();
+        renderPopularitySeasonLeaderboard();
+    }, 6000);
 }
 
 function endPopularityBattle() {
@@ -11737,61 +12057,38 @@ function endPopularityBattle() {
     if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
     popularityBattleState.active = false;
 
-    const votesA = popularityBattleState.playerA.votes;
-    const votesB = popularityBattleState.playerB.votes;
-    const username = getCurrentUsername();
+    const sumA = popularityVoters.filter(v => v.choice === 'A').reduce((s, v) => s + (Number(v.points) || 0), 0);
+    const sumB = popularityVoters.filter(v => v.choice === 'B').reduce((s, v) => s + (Number(v.points) || 0), 0);
+    const winnerIsA = sumA >= sumB;
+    const winnerName = winnerIsA ? popularityBattleState.playerA.name : popularityBattleState.playerB.name;
 
-    let winnerName = '';
-    let userWonReward = 0;
-    const resultMsg = document.getElementById('battle-result-msg');
-
-    if (votesA > votesB) {
-        winnerName = popularityBattleState.playerA.name;
-        userWonReward += 500;
-        if (popularityBattleState.userVotedChoice === 'A') {
-            userWonReward += Math.round(popularityBattleState.userBet * 1.8);
-        }
-    } else if (votesB > votesA) {
-        winnerName = popularityBattleState.playerB.name;
-        if (popularityBattleState.userVotedChoice === 'B') {
-            userWonReward += Math.round(popularityBattleState.userBet * 1.8);
-        }
-    } else {
-        winnerName = 'تعادل بطولي!';
-        userWonReward += popularityBattleState.userBet;
-    }
-
-    if (userWonReward > 0) {
-        addPoints(username, userWonReward);
-        updatePopularityBattleBalance();
-        updateVaultBalanceUI();
-        renderLeaderboard();
-        triggerConfetti();
-        playCodoSound('complete');
-    }
-
-    if (resultMsg) {
-        resultMsg.style.display = 'block';
-        if (userWonReward > 0) {
-            resultMsg.style.background = 'rgba(0, 255, 136, 0.15)';
-            resultMsg.style.border = '1px solid #00ff88';
-            resultMsg.style.color = '#00ff88';
-            resultMsg.innerHTML = `🏆 الفائز: ${winnerName}!<br>🎉 مبروك كسبت <strong>+${userWonReward}</strong> نقطة شعبية ومكافأة!`;
-        } else {
-            resultMsg.style.background = 'rgba(239, 68, 68, 0.15)';
-            resultMsg.style.border = '1px solid #ef4444';
-            resultMsg.style.color = '#ef4444';
-            resultMsg.innerHTML = `🏆 الفائز: ${winnerName}!<br>حظاً أوفر في الجولة القادمة.`;
+    const row = activeMatchRow;
+    let finished = row;
+    if (row && row.id) {
+        finished = {
+            ...row,
+            status: 'finished',
+            p1_score: sumA, p2_score: sumB,
+            winner_id: winnerIsA ? row.p1_id : row.p2_id,
+            winner_name: winnerName,
+            p1_result: winnerIsA ? 'win' : 'loss',
+            p2_result: winnerIsA ? 'loss' : 'win'
+        };
+        activeMatchRow = finished;
+        // ✍️ كتابة النتيجة الموحّدة في game_matches ليراها الجهاز الآخر
+        if (row.status !== 'finished') {
+            updateMatchRow(row.id, {
+                status: 'finished', p1_score: sumA, p2_score: sumB,
+                winner_id: finished.winner_id, winner_name: winnerName,
+                p1_result: finished.p1_result, p2_result: finished.p2_result,
+                finished_at: new Date().toISOString()
+            });
         }
     }
 
-    setTimeout(() => {
-        const lobby = document.getElementById('battle-lobby');
-        const arena = document.getElementById('battle-arena');
-        if (arena) arena.style.display = 'none';
-        if (lobby) lobby.style.display = 'block';
-        renderPopularityClanMembers();
-    }, 6000);
+    settlePopularityMatch(finished, 'normal');
+    showPopularityResult(winnerName);
+    afterPopularityBattle();
 }
 
 window.startPopularityBattle = startPopularityBattle;
@@ -11820,15 +12117,16 @@ function startMatching() {
     lobby.style.display = 'block';
 
     let timeLeft = 20;
+    // 🧊 تُرسم مرة واحدة ثم يُحدَّث العدّاد فقط → زر إلغاء البحث يستجيب فوراً
     const renderSearchLobby = () => {
         const percent = Math.max(0, (timeLeft / 20) * 100);
         lobby.innerHTML = `
             <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
                 <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚔️</div>
-                <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري البحث عن لاعب حقيقي في قائمة الانتظار بالسيرفر...</div>
-                <div style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">مهلة الانتظار: ${timeLeft} ثانية (الرهان: ${phantomArenaState.stake ? phantomArenaState.stake + ' نقطة' : 'نزال شرف'})</div>
+                <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري البحث عن منافس حقيقي في قائمة انتظار ساحة النزال...</div>
+                <div data-queue-timer style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">مهلة الانتظار: ${timeLeft} ثانية (الرهان: ${phantomArenaState.stake ? phantomArenaState.stake + ' نقطة' : 'نزال شرف'})</div>
                 <div style="width:100%; height:6px; background:rgba(255,255,255,0.1); border-radius:10px; overflow:hidden; margin:10px 0 12px;">
-                    <div style="width:${percent}%; height:100%; background:linear-gradient(90deg, #00f2fe, #00ff88); transition:width 1s linear;"></div>
+                    <div data-queue-bar style="width:${percent}%; height:100%; background:linear-gradient(90deg, #00f2fe, #00ff88); transition:width 1s linear;"></div>
                 </div>
                 <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
                     <button type="button" class="btn-danger" style="padding:8px 16px; font-size:0.85rem;" onclick="cancelMatching()">
@@ -11843,48 +12141,27 @@ function startMatching() {
     ArenaAudio.playCountdown(false);
     showToast("📡 دخلت قائمة انتظار ساحة النزال بالسيرفر...", "info");
 
-    // الدخول في طابور السيرفر الحقيقي
-    fetch('/api/battles/queue/join', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            type: 'arena',
-            username: username,
-            userId: userId,
-            stake: phantomArenaState.stake
-        })
-    }).then(res => res.json()).then(joinData => {
-        if (joinData.matched && joinData.challenge) {
-            cancelMatching();
-            const opp = joinData.challenge.challengerName === username ? joinData.challenge.targetName : joinData.challenge.challengerName;
-            phantomArenaState.mode = 'duel';
-            phantomArenaState.challengeId = joinData.challenge.id;
-            phantomArenaState.opponent = {
-                name: opp,
-                avatar: '⚔️',
-                sub: `منافس حقيقي من قائمة الانتظار · رهان: ${phantomArenaState.stake} نقطة`
-            };
-            // 🚀 بث فوري للمنافس في الطابور عبر Supabase Realtime
-            broadcastMatchEvent('match_found', { challenge: joinData.challenge });
-            showToast(`🔥 تم التوفيق مع ${opp}! يبدأ النزال الآن...`, 'success');
-            launchVersusCountdown();
-        }
-    }).catch(() => {});
+    // 🤝 المطابقة المتبادلة: لاعبان حقيقيان يضغطان "استعد" فيُطابَقان على نفس الصف
+    const myToken = ++matchRequestToken;
+    startMutualQueue('arena', phantomArenaState.stake, myToken, (row) => {
+        const me = { id: getCurrentUserId(), name: username };
+        const iAmP1 = isSameUser(row.p1_id, row.p1_name, me.id, me.name);
+        const opp = iAmP1 ? (row.p2_name || row.opponent_name) : (row.p1_name || row.created_by_name);
+        if (arenaSearchInterval) { clearInterval(arenaSearchInterval); arenaSearchInterval = null; }
+        showToast(`🔥 تم التوفيق مع ${opp}! يبدأ النزال الآن...`, 'success');
+        enterActiveMatch(row);
+    });
 
     if (arenaSearchInterval) clearInterval(arenaSearchInterval);
     arenaSearchInterval = setInterval(() => {
         timeLeft--;
         if (timeLeft > 0) {
-            renderSearchLobby();
+            paintQueueLobby('arena', timeLeft, 20);
             ArenaAudio.playTone(380, 'sine', 0.05, 0.08);
         } else {
             clearInterval(arenaSearchInterval);
             arenaSearchInterval = null;
-            fetch('/api/battles/queue/leave', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'arena', username, userId })
-            }).catch(() => {});
+            cancelMatchRow(queuedTypes.arena);
 
             lobby.innerHTML = `
                 <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:14px;">
@@ -11905,6 +12182,8 @@ function startMatching() {
 }
 
 function cancelMatching() {
+    // ⚡ إلغاء فوري: أوقف المؤقتات ثم أبلغ الخادم بلا انتظار
+    matchRequestToken++;
     if (arenaSearchInterval) {
         clearInterval(arenaSearchInterval);
         arenaSearchInterval = null;
@@ -11913,22 +12192,15 @@ function cancelMatching() {
         clearInterval(arenaDirectSearchInterval);
         arenaDirectSearchInterval = null;
     }
-    const username = getCurrentUsername();
-    const userId = getCurrentUserId();
-    fetch('/api/battles/queue/leave', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'arena', username, userId })
-    }).catch(() => {});
-
-    if (currentArenaChallengeId) {
-        fetch('/api/battles/dismiss', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ challengeId: currentArenaChallengeId, username: username })
-        }).catch(() => {});
-        currentArenaChallengeId = null;
+    if (directChallengeTimers.arena) {
+        clearInterval(directChallengeTimers.arena);
+        directChallengeTimers.arena = null;
     }
+    cancelMatchRow(queuedTypes.arena);
+    queuedTypes.arena = null;
+    cancelMatchRow(currentArenaChallengeId);
+    currentArenaChallengeId = null;
+
     const lobby = document.getElementById('arena-search-lobby');
     if (lobby) {
         lobby.style.display = 'none';
@@ -11967,6 +12239,572 @@ window.renderPopularityClanMembers = renderPopularityClanMembers;
 window.filterPopularityClanMembers = filterPopularityClanMembers;
 window.sendDirectPopularityChallenge = sendDirectPopularityChallenge;
 window.startLivePopularityBattle = startLivePopularityBattle;
+
+
+/* ========================================================
+   🔗 PHANTOM MATCH SYNC ENGINE
+   مصدر الحقيقة الوحيد لكل من معركة الشعبية وساحة النزال:
+   game_matches / popularity_votes / popularity_season_stats
+   ======================================================== */
+
+const PHANTOM_MIN_STAKE = 500;               // الحد الأدنى لدخول معركة الشعبية
+const PHANTOM_ARENA_MIN_STAKE = 100;         // الحد الأدنى لرهان الساحة
+const MATCHES_TABLE = 'game_matches';
+const VOTES_TABLE = 'popularity_votes';
+const SEASON_STATS_TABLE = 'popularity_season_stats';
+
+let matchesRealtimeChannel = null;
+let activeMatchRow = null;        // صف game_matches الذي يخصّني الآن
+let activeMatchType = null;       // 'popularity' | 'arena'
+let popularityVoters = [];        // أصوات المواجهة الحالية (من popularity_votes)
+let matchRequestToken = 0;        // يُبطل أي رد متأخر (يمنع تجمّد نافذة التحدي)
+let queuedTypes = { popularity: null, arena: null }; // صفوف الطابور الخاصة بي
+let arenaTargetStep = 0;          // عدّاد الأهداف لتوليد مواضع متطابقة على الأجهزة
+const settledMatchIds = new Set();  // منع تكرار صرف الجوائز لنفس المواجهة
+const deductedMatchIds = new Set(); // منع خصم رهان الدخول أكثر من مرة
+const directChallengeTimers = { popularity: null, arena: null };
+
+/* ⏳ نافذة انتظار التحدي: تُرسم مرة واحدة فقط ثم يُحدَّث النص/الشريط مباشرة
+   (بدون إعادة كتابة innerHTML كل ثانية) — لذلك زر "إلغاء التحدي" يستجيب فوراً. */
+function challengeLobbyEl(type) {
+    return document.getElementById(type === 'popularity' ? 'popularity-search-lobby' : 'arena-search-lobby');
+}
+
+function renderChallengeWaiting(type, targetName, label, seconds = 25) {
+    const lobby = challengeLobbyEl(type);
+    if (!lobby) return;
+    lobby.style.display = 'block';
+    const cancelCall = type === 'popularity' ? 'cancelPopularitySearch()' : 'cancelMatching()';
+    lobby.innerHTML = `
+        <div style="text-align:center; padding:18px; background:rgba(0,242,254,0.06); border:1px solid rgba(0,242,254,0.3); border-radius:14px;">
+            <div style="font-size:2.4rem; animation:pulse 1.2s infinite;">⚔️</div>
+            <div style="font-weight:900; color:#fff; font-size:1.15rem; margin:8px 0 4px;">جاري إرسال إشعار ${label} إلى <span style="color:#00f2fe;">${escapeHTML(targetName)}</span>...</div>
+            <div data-challenge-timer style="color:#ffd700; font-family:monospace; font-weight:800; font-size:0.95rem;">بانتظار قبول ${escapeHTML(targetName)}: ${seconds} ثانية</div>
+            <div style="width:100%; height:6px; background:rgba(255,255,255,0.1); border-radius:10px; overflow:hidden; margin:10px 0 12px;">
+                <div data-challenge-bar style="width:100%; height:100%; background:linear-gradient(90deg,#00f2fe,#00ff88); transition:width 1s linear;"></div>
+            </div>
+            <button type="button" class="btn-danger" style="padding:8px 16px; font-size:0.85rem;" onclick="${cancelCall}">❌ إلغاء التحدي</button>
+        </div>
+    `;
+}
+
+function renderChallengeExpired(type, targetName) {
+    const lobby = challengeLobbyEl(type);
+    if (!lobby) return;
+    const retryCall = type === 'popularity'
+        ? `sendDirectPopularityChallenge('${escapeHTML(targetName)}')`
+        : `sendDirectArenaChallenge('${escapeHTML(targetName)}')`;
+    const closeCall = type === 'popularity' ? 'cancelPopularitySearch()' : 'cancelMatching()';
+    lobby.style.display = 'block';
+    lobby.innerHTML = `
+        <div style="text-align:center; padding:18px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:14px;">
+            <div style="font-size:2.2rem;">⏱️</div>
+            <div style="font-weight:900; color:#ef4444; font-size:1.1rem; margin:6px 0;">لم يقبل ${escapeHTML(targetName)} التحدي خلال المهلة.</div>
+            <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:10px;">
+                <button type="button" class="btn-primary" style="padding:8px 16px; font-size:0.85rem;" onclick="${retryCall}">🔄 إعادة إرسال التحدي</button>
+                <button type="button" class="btn-secondary" style="padding:8px 16px; font-size:0.85rem;" onclick="${closeCall}">إغلاق</button>
+            </div>
+        </div>
+    `;
+}
+
+/* ⏱️ تحديث عدّاد الطابور مباشرة على العقد (بدون إعادة رسم → لا تجمّد) */
+function paintQueueLobby(type, timeLeft, seconds) {
+    const lobby = challengeLobbyEl(type);
+    if (!lobby) return;
+    const t = lobby.querySelector('[data-queue-timer]');
+    const b = lobby.querySelector('[data-queue-bar]');
+    if (t) t.textContent = `مهلة الانتظار: ${timeLeft} ثانية`;
+    if (b) b.style.width = `${Math.max(0, (timeLeft / seconds) * 100)}%`;
+}
+
+/* 🏆 تركيب لوحة صدارة الموسم داخل منطقة معركة الشعبية (إضافة قسم جديد أسفل الموجود) */
+function mountPopularitySeasonLeaderboard() {
+    const host = document.getElementById('popularity-clan-members-list');
+    if (!host || !host.parentNode) return;
+    if (document.getElementById('popularity-season-leaderboard')) {
+        renderPopularitySeasonLeaderboard();
+        return;
+    }
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-top:14px; background:rgba(255,255,255,0.03); border:1px solid rgba(212,175,55,0.35); border-radius:12px; padding:10px;';
+    wrap.innerHTML = '<div style="font-weight:900; color:#d4af37; margin-bottom:8px;">🏆 صدارة معركة الشعبية (الموسم الحالي)</div>';
+    const list = document.createElement('div');
+    list.id = 'popularity-season-leaderboard';
+    wrap.appendChild(list);
+    host.parentNode.insertBefore(wrap, host.nextSibling);
+    renderPopularitySeasonLeaderboard();
+}
+
+function trackDirectChallenge(matchId, targetName, type, seconds = 25) {
+    if (directChallengeTimers[type]) clearInterval(directChallengeTimers[type]);
+    let timeLeft = seconds;
+
+    directChallengeTimers[type] = setInterval(async () => {
+        timeLeft--;
+        const lobby = challengeLobbyEl(type);
+
+        if (timeLeft > 0) {
+            if (lobby && lobby.style.display !== 'none') {
+                const sub = lobby.querySelector('[data-challenge-timer]');
+                const bar = lobby.querySelector('[data-challenge-bar]');
+                if (sub) sub.textContent = `بانتظار قبول ${targetName}: ${timeLeft} ثانية`;
+                if (bar) bar.style.width = `${Math.max(0, (timeLeft / seconds) * 100)}%`;
+            }
+            return;
+        }
+
+        clearInterval(directChallengeTimers[type]);
+        directChallengeTimers[type] = null;
+        cancelMatchRow(matchId);
+        if (type === 'popularity') currentPopularityChallengeId = null; else currentArenaChallengeId = null;
+        renderChallengeExpired(type, targetName);
+    }, 1000);
+}
+
+function myIdentity() {
+    return { id: getCurrentUserId(), name: getCurrentUsername() };
+}
+
+function isSameUser(aId, aName, bId, bName) {
+    if (aId && bId && String(aId) === String(bId)) return true;
+    if (!aName || !bName) return false;
+    return normalizeName(aName) === normalizeName(bName);
+}
+
+function isMatchPlayer(row, who) {
+    const me = who || myIdentity();
+    if (!row) return false;
+    return isSameUser(row.p1_id, row.p1_name, me.id, me.name)
+        || isSameUser(row.p2_id, row.p2_name, me.id, me.name)
+        || isSameUser(row.created_by_id, row.created_by_name, me.id, me.name)
+        || isSameUser(row.opponent_id, row.opponent_name, me.id, me.name);
+}
+
+/* سطر من صف game_matches إلى كائن "تحدٍّ" بالشكل القديم للتوافق */
+function matchRowFromChallenge(challenge) {
+    return {
+        id: challenge.id,
+        game_type: challenge.type || 'popularity',
+        status: challenge.status || 'active',
+        created_by_id: challenge.challengerId || null,
+        created_by_name: challenge.challengerName || null,
+        opponent_id: challenge.targetId || null,
+        opponent_name: challenge.targetName || null,
+        p1_id: (challenge.playerA && challenge.playerA.id) || challenge.challengerId || null,
+        p1_name: (challenge.playerA && challenge.playerA.name) || challenge.challengerName || null,
+        p2_id: (challenge.playerB && challenge.playerB.id) || null,
+        p2_name: (challenge.playerB && challenge.playerB.name) || challenge.acceptedBy || null,
+        p1_score: 0, p2_score: 0,
+        stake: Number(challenge.stake) || 0,
+        seed: challenge.seed || challenge.id,
+        details: challenge.details || {}
+    };
+}
+
+/* ------- الموسم: نقاط البداية تُسجَّل مرة واحدة فقط في أول لعب ------- */
+function currentSeasonId(date = new Date()) {
+    return `${date.getFullYear()}-S${Math.floor(date.getMonth() / 2) + 1}`;
+}
+
+async function ensureSeasonStatsRow() {
+    const client = ensureSupabaseClient();
+    const me = myIdentity();
+    if (!me.name) return null;
+    const season = currentSeasonId();
+    const key = me.id || me.name;
+    if (!client) return { user_id: key, username: me.name, season, season_start_points: getUserBalance(), wins: 0, losses: 0 };
+    try {
+        const { data: existing } = await client.from(SEASON_STATS_TABLE).select('*').eq('user_id', key).maybeSingle();
+        if (existing && existing.season === season) return existing;
+
+        const row = {
+            user_id: key,
+            username: me.name,
+            season,
+            // 🔒 أول مرة فقط في الموسم: تُثبَّت نقاط الدخول ولا تتغير بعد ذلك
+            season_start_points: Number(getUserBalance()) || 0,
+            wins: existing ? Number(existing.wins) || 0 : 0,
+            losses: existing ? Number(existing.losses) || 0 : 0,
+            current_points: Number(getUserBalance()) || 0,
+            updated_at: new Date().toISOString()
+        };
+        const { data } = await client.from(SEASON_STATS_TABLE).upsert(row, { onConflict: 'user_id' }).select();
+        return (data && data[0]) || row;
+    } catch (e) {
+        return { user_id: key, username: me.name, season, season_start_points: getUserBalance(), wins: 0, losses: 0 };
+    }
+}
+
+async function commitSeasonResult(isWin) {
+    const client = ensureSupabaseClient();
+    const me = myIdentity();
+    if (!me.name) return;
+    const row = await ensureSeasonStatsRow();
+    const payload = {
+        user_id: me.id || me.name,
+        username: me.name,
+        season: currentSeasonId(),
+        season_start_points: row ? Number(row.season_start_points) || 0 : 0,
+        wins: (row ? Number(row.wins) || 0 : 0) + (isWin ? 1 : 0),
+        losses: (row ? Number(row.losses) || 0 : 0) + (isWin ? 0 : 1),
+        current_points: Number(getUserBalance()) || 0,
+        updated_at: new Date().toISOString()
+    };
+    if (!client) return;
+    try {
+        await client.from(SEASON_STATS_TABLE).upsert(payload, { onConflict: 'user_id' });
+    } catch (e) {}
+}
+
+/* ------- كتابة/تحديث صف game_matches ------- */
+async function insertMatchRow({ type, opponentName, opponentId, stake, status, details }) {
+    const client = ensureSupabaseClient();
+    const me = myIdentity();
+    if (!me.name) return null;
+
+    const row = {
+        game_type: type,
+        status: status || (opponentName ? 'pending' : 'queued'),
+        created_by_id: me.id,
+        created_by_name: me.name,
+        opponent_id: opponentId || null,
+        opponent_name: opponentName || null,
+        stake: Number(stake) || 0,
+        p1_id: me.id, p1_name: me.name, p1_score: 0,
+        p2_id: opponentId || null, p2_name: opponentName || null, p2_score: 0,
+        // 🎯 بذرة موحّدة: تضمن تطابق مواضع الأهداف على كل الأجهزة
+        seed: `${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
+        details: details || {},
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 25 * 1000).toISOString()
+    };
+
+    if (!client) return null;
+    try {
+        const { data, error } = await client.from(MATCHES_TABLE).insert(row).select();
+        if (error) throw error;
+        return data && data[0];
+    } catch (e) {
+        console.warn('⚠️ [MatchSync] insert failed:', e && e.message);
+        return null;
+    }
+}
+
+async function updateMatchRow(matchId, patch) {
+    if (!matchId || !patch) return null;
+    const client = ensureSupabaseClient();
+    if (!client) return null;
+    try {
+        const { data } = await client.from(MATCHES_TABLE)
+            .update({ ...patch, updated_at: new Date().toISOString() })
+            .eq('id', matchId).select();
+        return data && data[0];
+    } catch (e) {
+        return null;
+    }
+}
+
+/* ❌ إلغاء فوري (لا ينتظر الشبكة) — يحل مشكلة بطء/تجمّد زر إلغاء التحدي */
+function cancelMatchRow(matchId) {
+    matchRequestToken++;                 // إبطال أي رد متأخر قادم من الشبكة
+    if (!matchId) return;
+    if (activeMatchRow && activeMatchRow.id === matchId) activeMatchRow = null;
+    queuedTypes.popularity = (queuedTypes.popularity === matchId) ? null : queuedTypes.popularity;
+    queuedTypes.arena = (queuedTypes.arena === matchId) ? null : queuedTypes.arena;
+    broadcastMatchEvent('challenge_dismissed', { challengeId: matchId });
+    updateMatchRow(matchId, { status: 'cancelled' }); // fire-and-forget
+}
+
+/* ------- المطابقة المتبادلة: لاعبان يضغطان "استعد" ------- */
+async function claimQueuedOpponent(type, stake) {
+    const client = ensureSupabaseClient();
+    const me = myIdentity();
+    if (!client || !me.name) return null;
+    try {
+        const { data: waiting } = await client.from(MATCHES_TABLE)
+            .select('*')
+            .eq('game_type', type)
+            .eq('status', 'queued')
+            .order('created_at', { ascending: true })
+            .limit(10);
+
+        const opponent = (waiting || []).find(r =>
+            !isSameUser(r.created_by_id, r.created_by_name, me.id, me.name) && r.seed !== undefined
+        );
+        if (!opponent) return null;
+
+        // .eq('status','queued') = قفل متفائل: طرف واحد فقط ينجح في الحجز
+        const { data: activated, error } = await client.from(MATCHES_TABLE).update({
+            status: 'active',
+            opponent_id: me.id,
+            opponent_name: me.name,
+            p2_id: me.id,
+            p2_name: me.name,
+            p2_score: 0,
+            stake: Math.max(Number(opponent.stake) || 0, Number(stake) || 0),
+            started_at: new Date().toISOString(),
+            expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+        }).eq('id', opponent.id).eq('status', 'queued').select();
+
+        if (error || !activated || !activated[0]) return null;
+        return activated[0];
+    } catch (e) {
+        return null;
+    }
+}
+
+/* ------- قناة المزامنة الحقيقية من الجداول (وليست Broadcast فقط) ------- */
+function setupMatchesRealtime() {
+    const client = ensureSupabaseClient();
+    if (!client || matchesRealtimeChannel) return;
+    try {
+        matchesRealtimeChannel = client.channel('phantom_matches_realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: MATCHES_TABLE },
+                payload => handleMatchRowChange(payload && payload.new))
+            .on('postgres_changes', { event: '*', schema: 'public', table: VOTES_TABLE },
+                payload => handleVoteRowChange(payload && payload.new))
+            .subscribe(status => {
+                if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                    try { client.removeChannel(matchesRealtimeChannel); } catch (_) {}
+                    matchesRealtimeChannel = null;
+                    setTimeout(() => { if (ensureSupabaseClient()) setupMatchesRealtime(); }, 3000);
+                }
+            });
+    } catch (e) {
+        console.warn('⚠️ [MatchSync] realtime setup error:', e);
+    }
+}
+
+function handleMatchRowChange(row) {
+    if (!row || !row.id) return;
+    const me = myIdentity();
+    if (!me.name || !isMatchPlayer(row, me)) return;
+
+    // 1) إشعار التحدي أعلى الشاشة (وصل الآن من قاعدة البيانات) — يظهر عند كل جهاز
+    if (row.status === 'pending'
+        && !isSameUser(row.created_by_id, row.created_by_name, me.id, me.name)
+        && (isSameUser(row.opponent_id, row.opponent_name, me.id, me.name) || !row.opponent_name)) {
+        showTelegramBattleNotification({
+            id: row.id,
+            type: row.game_type,
+            challengerName: row.created_by_name,
+            stake: row.stake,
+            matchRow: row
+        });
+        return;
+    }
+
+    // 2) طابور مشترك: الطرف الذي لم يبدأ بعد يدخل المواجهة عند تفعيل الصف
+    if (row.status === 'active' && (!activeMatchRow || activeMatchRow.id !== row.id)) {
+        enterActiveMatch(row);
+        return;
+    }
+
+    // 3) مزامنة الحالة بين الجهازين للمواجهة الجارية
+    if (activeMatchRow && activeMatchRow.id === row.id) {
+        activeMatchRow = row;
+        applyMatchRowToBattle(row);
+        if (row.status === 'finished' && activeMatchType === 'popularity') {
+            // 💸 صرف الجوائز على الجهاز الآخر بنفس النتيجة الموحّدة
+            settlePopularityMatch(row);
+            showPopularityResult(row.winner_name || 'الخصم');
+        }
+        if (row.status === 'finished' && activeMatchType === 'arena') {
+            // 🏆 نفس الفائز ونفس النقاط على الجهاز الآخر
+            applyArenaResultFromRow(row);
+        }
+        if (row.status === 'cancelled' || row.status === 'finished') leaveActiveMatch(row.status);
+    }
+}
+
+/* 🛟 احتياطي ضامن لتسليم الإشعارات ودخول المواجهة لو تعطّلت قناة الـ Realtime */
+let matchPollInterval = null;
+function startMatchPollingFallback() {
+    if (matchPollInterval) return;
+    matchPollInterval = setInterval(async () => {
+        const client = ensureSupabaseClient();
+        const me = myIdentity();
+        if (!client || !me.name) return;
+        try {
+            const { data } = await client.from(MATCHES_TABLE)
+                .select('*')
+                .in('status', ['pending', 'active'])
+                .order('created_at', { ascending: false })
+                .limit(10);
+            const rows = Array.isArray(data) ? data : [];
+
+            // 1) تحدٍّ معلّق موجّه لي ⇒ إشعار أعلى الشاشة
+            const invite = rows.find(r => r.status === 'pending'
+                && !isSameUser(r.created_by_id, r.created_by_name, me.id, me.name)
+                && (isSameUser(r.opponent_id, r.opponent_name, me.id, me.name) || !r.opponent_name));
+            if (invite && (!pendingBattleInvite || pendingBattleInvite.id !== invite.id)) {
+                showTelegramBattleNotification({
+                    id: invite.id, type: invite.game_type,
+                    challengerName: invite.created_by_name, stake: invite.stake, matchRow: invite
+                });
+            }
+
+            // 2) مواجهة نشطة تخصّني وبدأت حديثاً ⇒ دخول مضمون
+            if (!activeMatchRow) {
+                const fresh = rows.find(r => r.status === 'active' && isMatchPlayer(r, me)
+                    && (Date.now() - new Date(r.started_at || r.created_at || Date.now()).getTime()) < 120000);
+                if (fresh) enterActiveMatch(fresh);
+            }
+        } catch (e) {}
+    }, 8000);
+}
+
+function handleVoteRowChange(row) {
+    if (!row || !row.match_id) return;
+    if (!activeMatchRow || row.match_id !== activeMatchRow.id) return;
+    if (!popularityVoters.some(v => v.id === row.id)) popularityVoters.push(row);
+    renderPopularityVoters();
+    updatePopularityPKBar();
+}
+
+function enterActiveMatch(row) {
+    activeMatchRow = row;
+    activeMatchType = row.game_type === 'arena' ? 'arena' : 'popularity';
+
+    if (activeMatchType === 'popularity') {
+        const overlay = document.getElementById('battle-overlay');
+        if (overlay) overlay.style.display = 'flex';
+        startSyncPopularityBattle(row);
+    } else {
+        const overlay = document.getElementById('arena-overlay');
+        if (overlay) overlay.style.display = 'flex';
+        enterArenaDuelFromRow(row);
+    }
+}
+
+/* ⚔️ تجهيز نزال الساحة من صف game_matches (نفس البذرة والنتيجة على الجهازين) */
+function enterArenaDuelFromRow(row) {
+    if (!row) return;
+    const me = myIdentity();
+    const iAmP1 = isSameUser(row.p1_id, row.p1_name, me.id, me.name)
+        || (!row.p2_name && isSameUser(row.created_by_id, row.created_by_name, me.id, me.name));
+    const oppName = iAmP1 ? (row.p2_name || row.opponent_name) : (row.p1_name || row.created_by_name);
+
+    phantomArenaState.mode = 'duel';
+    phantomArenaState.challengeId = row.id;
+    phantomArenaState.matchRow = row;
+    phantomArenaState.seed = row.seed || row.id;
+    phantomArenaState.iAmP1 = !!iAmP1;
+    phantomArenaState.opponent = {
+        name: oppName || 'منافس الكلان',
+        avatar: '⚔️',
+        sub: `نزال 1v1 · رهان: ${Number(row.stake) || 0} نقطة`
+    };
+
+    // 💰 خصم رهان الدخول مرة واحدة فقط لكل جهاز
+    const stake = Number(row.stake) || 0;
+    if (stake > 0 && row.id && !deductedMatchIds.has('arena_' + row.id)) {
+        deductedMatchIds.add('arena_' + row.id);
+        deductUserPoints(stake);
+    }
+
+    setupMatchesRealtime();
+    updateArenaStatsUI();
+    launchVersusCountdown();
+}
+
+function applyMatchRowToBattle(row) {
+    if (!row) return;
+    if (activeMatchType === 'popularity') {
+        if (row.p1_name) popularityBattleState.playerA.name = row.p1_name;
+        if (row.p2_name) popularityBattleState.playerB.name = row.p2_name;
+        updatePopularityPKBar();
+    } else if (activeMatchType === 'arena') {
+        updateCombatHud();
+    }
+}
+
+function leaveActiveMatch(reason) {
+    activeMatchRow = null;
+    activeMatchType = null;
+    popularityVoters = [];
+}
+
+/* ------- المراهنات: خصم/إضافة نقاط محلية ------- */
+function deductUserPoints(amount) {
+    const username = getCurrentUsername();
+    const value = Number(amount) || 0;
+    if (!username || value <= 0) return;
+    const points = getLocalPoints();
+    points[username] = Math.max(0, Number(points[username] || 0) - value);
+    setLocalPoints(points);
+    if (typeof updatePopularityBattleBalance === 'function') updatePopularityBattleBalance();
+    if (typeof updateVaultBalanceUI === 'function') updateVaultBalanceUI();
+}
+
+function addUserPoints(amount) {
+    const username = getCurrentUsername();
+    const value = Number(amount) || 0;
+    if (!username || value <= 0) return;
+    addPoints(username, value);
+    if (typeof updatePopularityBattleBalance === 'function') updatePopularityBattleBalance();
+    if (typeof updateVaultBalanceUI === 'function') updateVaultBalanceUI();
+    if (typeof renderLeaderboard === 'function') renderLeaderboard();
+}
+
+/* ------- لوحة الصدارة الحقيقية لمعركة الشعبية ------- */
+async function fetchPopularitySeasonLeaderboard() {
+    const client = ensureSupabaseClient();
+    if (!client) return [];
+    try {
+        const { data } = await client.from(SEASON_STATS_TABLE)
+            .select('*').eq('season', currentSeasonId());
+        return Array.isArray(data) ? data : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+async function renderPopularitySeasonLeaderboard() {
+    const container = document.getElementById('popularity-season-leaderboard');
+    if (!container) return;
+    const season = currentSeasonId();
+    const rows = await fetchPopularitySeasonLeaderboard();
+    const me = myIdentity();
+
+    if (!rows.length) {
+        container.innerHTML = `<div style="text-align:center; padding:14px; color:#94a3b8; font-size:0.82rem;">لا توجد إحصاءات بعد في ${season}. العب أول مواجهة لتُسجَّل نقاط بدايتك.</div>`;
+        return;
+    }
+
+    const sorted = rows.slice().sort((a, b) => (Number(b.wins) || 0) - (Number(a.wins) || 0));
+    container.innerHTML = sorted.map((r, idx) => {
+        const start = Number(r.season_start_points) || 0;
+        const now = Number(r.current_points) || 0;
+        const pnl = start > 0 ? Math.round(((now - start) / start) * 100) : (now > 0 ? 100 : 0);
+        const color = pnl >= 0 ? '#00ff88' : '#ef4444';
+        const isMe = isSameUser(r.user_id, r.username, me.id, me.name);
+        return `
+            <div class="arena-history-item" style="${isMe ? 'border-color:#00f2fe; background:rgba(0,242,254,0.08);' : ''}">
+                <div>
+                    <strong style="color:#fff;">#${idx + 1} ${escapeHTML(r.username || 'عضو')} ${isMe ? '<span style="color:#00f2fe; font-size:0.72rem;">(أنت)</span>' : ''}</strong>
+                    <div style="font-size:0.72rem; color:#94a3b8; margin-top:2px;">
+                        ✅ ${Number(r.wins) || 0} فوز · ❌ ${Number(r.losses) || 0} خسارة · 🎬 بداية الموسم: <span style="font-family:monospace; color:#00f2fe;">${start}</span>
+                    </div>
+                </div>
+                <div class="arena-history-badge ${pnl >= 0 ? 'arena-history-win' : 'arena-history-loss'}" style="color:${color};">
+                    ${pnl >= 0 ? '+' : ''}${pnl}%
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+/* ------- المجمّع (بوت) لا يُستخدم في المزامنة: الأصوات حقيقية فقط ------- */
+Object.assign(window, {
+    PHANTOM_MIN_STAKE,
+    renderPopularitySeasonLeaderboard,
+    setupMatchesRealtime,
+    isSameUser,
+    deductUserPoints,
+    addUserPoints
+});
 
 
 /* ========================================================

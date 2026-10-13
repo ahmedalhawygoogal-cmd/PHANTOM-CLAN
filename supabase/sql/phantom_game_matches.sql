@@ -1,0 +1,55 @@
+-- ============================================================================
+-- PHANTOM HQ — جداول مزامنة المواجهات (معركة الشعبية + ساحة النزال)
+--
+-- نفّذ السطر المضغوط الأول كما هو في: Supabase → SQL Editor → Run
+-- (آمن لإعادة التنفيذ: كل الأوامر if not exists / drop policy if exists)
+--
+-- الجداول: game_matches · popularity_votes · popularity_season_stats
+-- لا يتم تنفيذ هذا الملف تلقائياً — يُشغَّل يدوياً بواسطة مالك المشروع.
+-- ============================================================================
+
+create extension if not exists pgcrypto; create table if not exists public.game_matches (id uuid primary key default gen_random_uuid(), game_type text not null default 'popularity', status text not null default 'pending', created_by_id text, created_by_name text, opponent_id text, opponent_name text, stake integer not null default 0, p1_id text, p1_name text, p1_score integer not null default 0, p2_id text, p2_name text, p2_score integer not null default 0, winner_id text, winner_name text, p1_result text, p2_result text, seed text, details jsonb not null default '{}'::jsonb, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), started_at timestamptz, finished_at timestamptz, expires_at timestamptz); alter table public.game_matches add column if not exists game_type text not null default 'popularity', add column if not exists status text not null default 'pending', add column if not exists created_by_id text, add column if not exists created_by_name text, add column if not exists opponent_id text, add column if not exists opponent_name text, add column if not exists stake integer not null default 0, add column if not exists p1_id text, add column if not exists p1_name text, add column if not exists p1_score integer not null default 0, add column if not exists p2_id text, add column if not exists p2_name text, add column if not exists p2_score integer not null default 0, add column if not exists winner_id text, add column if not exists winner_name text, add column if not exists p1_result text, add column if not exists p2_result text, add column if not exists seed text, add column if not exists details jsonb not null default '{}'::jsonb, add column if not exists created_at timestamptz not null default now(), add column if not exists updated_at timestamptz not null default now(), add column if not exists started_at timestamptz, add column if not exists finished_at timestamptz, add column if not exists expires_at timestamptz; alter table public.game_matches enable row level security; drop policy if exists "game_matches_select" on public.game_matches; drop policy if exists "game_matches_insert" on public.game_matches; drop policy if exists "game_matches_update" on public.game_matches; drop policy if exists "game_matches_delete" on public.game_matches; create policy "game_matches_select" on public.game_matches for select to anon, authenticated using (true); create policy "game_matches_insert" on public.game_matches for insert to anon, authenticated with check (true); create policy "game_matches_update" on public.game_matches for update to anon, authenticated using (true) with check (true); create policy "game_matches_delete" on public.game_matches for delete to anon, authenticated using (true); create index if not exists game_matches_status_type_idx on public.game_matches (game_type, status, created_at); create index if not exists game_matches_p1_idx on public.game_matches (p1_name); create index if not exists game_matches_p2_idx on public.game_matches (p2_name); create table if not exists public.popularity_votes (id uuid primary key default gen_random_uuid(), match_id uuid references public.game_matches(id) on delete cascade, voter_id text, voter_name text, voted_for_id text, voted_for_name text, choice text, points integer not null default 0, payout integer not null default 0, status text not null default 'staked', created_at timestamptz not null default now()); alter table public.popularity_votes add column if not exists match_id uuid references public.game_matches(id) on delete cascade, add column if not exists voter_id text, add column if not exists voter_name text, add column if not exists voted_for_id text, add column if not exists voted_for_name text, add column if not exists choice text, add column if not exists points integer not null default 0, add column if not exists payout integer not null default 0, add column if not exists status text not null default 'staked', add column if not exists created_at timestamptz not null default now(); alter table public.popularity_votes enable row level security; drop policy if exists "popularity_votes_select" on public.popularity_votes; drop policy if exists "popularity_votes_insert" on public.popularity_votes; drop policy if exists "popularity_votes_update" on public.popularity_votes; drop policy if exists "popularity_votes_delete" on public.popularity_votes; create policy "popularity_votes_select" on public.popularity_votes for select to anon, authenticated using (true); create policy "popularity_votes_insert" on public.popularity_votes for insert to anon, authenticated with check (true); create policy "popularity_votes_update" on public.popularity_votes for update to anon, authenticated using (true) with check (true); create policy "popularity_votes_delete" on public.popularity_votes for delete to anon, authenticated using (true); create index if not exists popularity_votes_match_id_idx on public.popularity_votes (match_id); create table if not exists public.popularity_season_stats (user_id text primary key, username text, season text not null, season_start_points integer not null default 0, wins integer not null default 0, losses integer not null default 0, current_points integer not null default 0, updated_at timestamptz not null default now()); alter table public.popularity_season_stats add column if not exists username text, add column if not exists season text not null default '2026-S1', add column if not exists season_start_points integer not null default 0, add column if not exists wins integer not null default 0, add column if not exists losses integer not null default 0, add column if not exists current_points integer not null default 0, add column if not exists updated_at timestamptz not null default now(); alter table public.popularity_season_stats enable row level security; drop policy if exists "popularity_season_stats_select" on public.popularity_season_stats; drop policy if exists "popularity_season_stats_insert" on public.popularity_season_stats; drop policy if exists "popularity_season_stats_update" on public.popularity_season_stats; drop policy if exists "popularity_season_stats_delete" on public.popularity_season_stats; create policy "popularity_season_stats_select" on public.popularity_season_stats for select to anon, authenticated using (true); create policy "popularity_season_stats_insert" on public.popularity_season_stats for insert to anon, authenticated with check (true); create policy "popularity_season_stats_update" on public.popularity_season_stats for update to anon, authenticated using (true) with check (true); create policy "popularity_season_stats_delete" on public.popularity_season_stats for delete to anon, authenticated using (true); do $$ begin if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'game_matches') then alter publication supabase_realtime add table public.game_matches; end if; if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'popularity_votes') then alter publication supabase_realtime add table public.popularity_votes; end if; if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'popularity_season_stats') then alter publication supabase_realtime add table public.popularity_season_stats; end if; end $$;
+
+-- ============================================================================
+-- نسخة مقروءة (نفس المحتوى أعلاه موزّعاً على أسطر للتوضيح فقط — لا تُنفّذها)
+-- ============================================================================
+--
+-- 1) game_matches — حالة المواجهة ونقاط الطرفين والنتيجة النهائية
+--    id                     uuid  (توليد تلقائي)
+--    game_type              text  'popularity' | 'arena'
+--    status                 text  'queued' | 'pending' | 'active' | 'finished' | 'cancelled'
+--    created_by_id/name     text  صاحب التحدي (اللاعب الأول عادةً)
+--    opponent_id/name       text  الطرف المستهدف (null في الطابور المفتوح)
+--    stake                  int   النقاط المراهنة
+--    p1_id/name/score        -    اللاعب الأول
+--    p2_id/name/score        -    اللاعب الثاني
+--    winner_id/name         text  يُكتب مرة واحدة فقط (أول كاتب يفوز) → نفس الفائز على الجهازين
+--    p1_result/p2_result    text  'win' | 'loss' | 'surrender' | 'draw'
+--    seed                   text  🎯 بذرة توليد مواضع الأهداف → نفس موضع \"الكور\" على كل الأجهزة
+--    details                jsonb بيانات إضافية
+--    created_at/updated_at  tz
+--    started_at             tz
+--    finished_at            tz
+--    expires_at             tz    مهلة التحدي/المواجهة
+--
+-- 2) popularity_votes — أصوات المشاهدين ونتائج المراهنات
+--    match_id  uuid → game_matches(id) on delete cascade
+--    voter_id/voter_name           من صوّت
+--    voted_for_id/voted_for_name   لمن صوّت
+--    choice                        'A' | 'B'
+--    points                        قيمة الرهان (الحد الأدنى 500)
+--    payout                        المبلغ المصروف فعلياً بعد الحسم
+--    status                        'staked' | 'won' | 'lost' | 'refunded'
+--
+-- 3) popularity_season_stats — صدارة الموسم الحقيقي
+--    user_id              text primary key
+--    username             text
+--    season               text  مثال: 2026-S1 (موسم كل شهرين)
+--    season_start_points  int   🔒 تُسجَّل مرة واحدة فقط في أول لعب بالموسم
+--    wins / losses        int
+--    current_points       int
+--    updated_at           tz
+--
+-- قواعد الأرباح المطبَّقة في الكود (script.js):
+--   اللاعب:  فوز = ضعف الرهان | استسلام طوعي = استرداد نصف الرهان | خسارة = فقدان كل الرهان
+--   المصوّت: فوز من صوّت له = ضعف رهانه | خسارته = فقدان الرهان | استسلامه = استرداد الرهان ناقص 25%
