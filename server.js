@@ -1311,17 +1311,28 @@ async function reservePlayerStake(name, id, amount) {
   }
   await changeBattleCoins(name, id, -amount);
 }
-async function settleBattleMatch(row, { winnerName, surrenderedBy, mode, myScore, oppScore, bestSpeed } = {}) {
+async function settleBattleMatch(row, { winnerName, surrenderedBy, mode, myScore, oppScore, bestSpeed, playerName } = {}) {
   const state = row.match_state && typeof row.match_state === 'object' ? { ...row.match_state } : {};
   if (state.settlement?.completed) return state.finalRecord || null;
+  const priorSettlementStartedAt = Date.parse(state.settlement?.startedAt || '');
+  if (row.status === 'completed' && Number.isFinite(priorSettlementStartedAt) && Date.now() - priorSettlementStartedAt < 120000) {
+    return state.finalRecord || null;
+  }
   const previousSettlement = state.settlement || {};
   const previousRecord = state.finalRecord || {};
   const aName = row.player_a_name;
   const bName = row.player_b_name;
   const aId = row.player_a_id;
   const bId = row.player_b_id;
-  const winner = previousRecord.winner || winnerName || null;
   const surrendered = previousRecord.surrenderedBy || surrenderedBy || null;
+  const tallyA = Number(state.playerA?.votes) || 0;
+  const tallyB = Number(state.playerB?.votes) || 0;
+  const voteWinner = surrendered ? (String(surrendered).toLowerCase() === String(aName).toLowerCase() ? bName : aName)
+    : tallyA > tallyB ? aName : tallyB > tallyA ? bName : 'تعادل بطولي!';
+  const winner = previousRecord.winner || (row.game_type === 'popularity' ? voteWinner : winnerName || null);
+  const playerIsB = playerName && String(playerName).toLowerCase() === String(bName || '').toLowerCase();
+  const scoreA = previousRecord.scoreA ?? (row.game_type === 'popularity' ? tallyA : Number(playerIsB ? oppScore : myScore) || Number(row.score_a) || 0);
+  const scoreB = previousRecord.scoreB ?? (row.game_type === 'popularity' ? tallyB : Number(playerIsB ? myScore : oppScore) || Number(row.score_b) || 0);
   const stake = Number(row.stake) || 0;
   const wasReserved = Boolean(state.stakesReserved);
   const payouts = {};
@@ -1338,8 +1349,8 @@ async function settleBattleMatch(row, { winnerName, surrenderedBy, mode, myScore
   const now = new Date().toISOString();
   const finalRecord = {
     id: row.id, type: row.game_type || mode || 'arena', playerA: aName, playerB: bName,
-    winner: winner || 'تعادل', scoreA: Number(myScore) || Number(row.score_a) || 0,
-    scoreB: Number(oppScore) || Number(row.score_b) || 0, bestSpeed: bestSpeed || null,
+    winner: winner || 'تعادل', scoreA,
+    scoreB, bestSpeed: bestSpeed || previousRecord.bestSpeed || null,
     stake, timestamp: Date.now(), date: new Date().toLocaleDateString('ar-EG'), surrenderedBy: surrendered
   };
   // Mark settlement intent first; per-vote status is the durable idempotency marker.
@@ -1550,11 +1561,18 @@ app.post('/api/battles/vote', async (req, res) => {
     if (existing?.length) return res.status(400).json({ error: 'لقد قمت بالتصويت بالفعل في هذه المواجهة.' });
     const chosenId = choice === 'A' ? row.player_a_id : row.player_b_id;
     const chosenName = choice === 'A' ? row.player_a_name : row.player_b_name;
-    const voteRows = await battleDb('popularity_votes', { method: 'POST', body: {
-      match_id: challengeId, voter_id: voterKey, voter_name: voterName,
-      voted_for_player_id: chosenId || '', voted_for_player_name: chosenName,
-      staked_points: stake, settlement_status: 'pending', payout_points: 0
-    }, prefer: 'return=representation' });
+    await changeBattleCoins(voterName, voterId || null, -stake);
+    let voteRows;
+    try {
+      voteRows = await battleDb('popularity_votes', { method: 'POST', body: {
+        match_id: challengeId, voter_id: voterKey, voter_name: voterName,
+        voted_for_player_id: chosenId || '', voted_for_player_name: chosenName,
+        staked_points: stake, settlement_status: 'pending', payout_points: 0
+      }, prefer: 'return=representation' });
+    } catch (insertError) {
+      await changeBattleCoins(voterName, voterId || null, stake).catch(() => {});
+      throw insertError;
+    }
     const state = { ...(row.match_state || {}) };
     state.playerA = { ...(state.playerA || {}), votes: Number(state.playerA?.votes || 0) + (choice === 'A' ? stake * 2 : 0) };
     state.playerB = { ...(state.playerB || {}), votes: Number(state.playerB?.votes || 0) + (choice === 'B' ? stake * 2 : 0) };
@@ -1563,7 +1581,12 @@ app.post('/api/battles/vote', async (req, res) => {
     state.voters = voters;
     const scorePatch = choice === 'A' ? { score_a: Number(row.score_a) + 1 } : { score_b: Number(row.score_b) + 1 };
     const updated = await updateBattleMatch(challengeId, { ...scorePatch, match_state: state }, '&status=eq.active');
-    return res.json({ success: true, vote: voteRows?.[0], challenge: asChallenge(updated || row), votesA: Number(state.playerA.votes) || 0, votesB: Number(state.playerB.votes) || 0, votersCount: Object.keys(voters).length });
+    if (!updated) {
+      await battleDb(`popularity_votes?id=eq.${battleFilter(voteRows?.[0]?.id)}`, { method: 'DELETE', prefer: 'return=minimal' }).catch(() => {});
+      await changeBattleCoins(voterName, voterId || null, stake).catch(() => {});
+      return res.status(409).json({ error: 'انتهت المواجهة قبل تسجيل التصويت.' });
+    }
+    return res.json({ success: true, vote: voteRows?.[0], challenge: asChallenge(updated), votesA: Number(state.playerA.votes) || 0, votesB: Number(state.playerB.votes) || 0, votersCount: Object.keys(voters).length });
   } catch (err) { return battleError(res, err); }
 });
 app.get('/api/battles/state/:id', async (req, res) => {
@@ -1581,11 +1604,11 @@ app.get('/api/battles/state/:id', async (req, res) => {
 app.post('/api/battles/finish', async (req, res) => {
   try {
     cleanupStale();
-    const { challengeId, winnerName, myScore, oppScore, bestSpeed, mode, surrenderedBy } = req.body || {};
+    const { challengeId, winnerName, myScore, oppScore, bestSpeed, mode, surrenderedBy, playerName } = req.body || {};
     if (!challengeId) return res.status(400).json({ error: 'معرف التحدي مطلوب.' });
     const row = await getBattleMatch(challengeId);
     if (!row) return res.status(404).json({ error: 'المواجهة غير موجودة.' });
-    const record = await settleBattleMatch(row, { winnerName, surrenderedBy, mode, myScore, oppScore, bestSpeed });
+    const record = await settleBattleMatch(row, { winnerName, surrenderedBy, mode, myScore, oppScore, bestSpeed, playerName });
     return res.json({ success: true, record });
   } catch (err) { return battleError(res, err); }
 });
