@@ -849,7 +849,7 @@ async function serverAddAttendance(memberName, roomId = 'general', points = 30) 
             await client.from('attendance_records').insert([{
                 member_name: memberName,
                 room_id: String(roomId || 'general'),
-                points_awarded: Number.isFinite(Number(points)) ? Number(points) : 30,
+                points_awarded: points || 30,
                 recorded_by: getCurrentUsername() || 'المشرف',
                 attended_at: new Date().toISOString()
             }]);
@@ -858,6 +858,47 @@ async function serverAddAttendance(memberName, roomId = 'general', points = 30) 
         }
     }
     return true;
+}
+
+// ✅ زر "تطبيق النقاط" (بونص): يحدّث رصيد العضو في جدول members مباشرة بدون أي تسجيل حضور
+async function applyMemberBonusPoints(memberName, amount) {
+    const client = ensureSupabaseClient();
+    if (!client) return { ok: false, error: 'no-supabase-client' };
+    if (!memberName) return { ok: false, error: 'no-member' };
+
+    const delta = Number(amount) || 0;
+
+    try {
+        // قراءة الصف الحالي لمعرفة اسم عمود الرصيد الفعلي (points / coins)
+        const { data: rows, error: readError } = await client
+            .from('members')
+            .select('*')
+            .eq('name', memberName)
+            .limit(1);
+        if (readError) return { ok: false, error: readError };
+
+        const row = Array.isArray(rows) ? rows[0] : rows;
+        if (!row) return { ok: false, error: 'member-not-found' };
+
+        let column = 'coins';
+        if (Object.prototype.hasOwnProperty.call(row, 'points')) column = 'points';
+        else if (Object.prototype.hasOwnProperty.call(row, 'coins')) column = 'coins';
+
+        const currentValue = Number(row[column] || 0);
+        const newValue = currentValue + delta;
+
+        const { data: updated, error: updateError } = await client
+            .from('members')
+            .update({ [column]: newValue })
+            .eq('name', memberName)
+            .select();
+        if (updateError) return { ok: false, error: updateError };
+        if (!updated || updated.length === 0) return { ok: false, error: 'no-row-updated' };
+
+        return { ok: true, column, value: newValue };
+    } catch (err) {
+        return { ok: false, error: err };
+    }
 }
 
 // 5. name_change_requests
@@ -2982,17 +3023,39 @@ function initAdminPage3() {
             if (!name) { showToast('⚠️ اختر العضو أولاً.', 'error'); return; }
 
             const extraPointsInput = getElement('attendance-extra-points');
-            let extraPoints = extraPointsInput ? parseInt(extraPointsInput.value) || 0 : 0;
+            const amount = extraPointsInput ? parseInt(extraPointsInput.value) || 0 : 0;
+            if (!amount) { showToast('⚠️ أدخل عدد النقاط أولاً.', 'error'); return; }
 
+            applyPointsBtn.disabled = true;
             try {
-                addPoints(name, extraPoints);
-                await serverAddAttendance(name, 'general', extraPoints);
-                showToast(`✅ تم تطبيق ${extraPoints} نقطة على ${name}.`, 'success');
+                const res = await applyMemberBonusPoints(name, amount);
+                if (!res.ok) {
+                    console.warn('applyMemberBonusPoints failed:', res.error);
+                    showToast('❌ تعذّر تطبيق النقاط، حاول مرة أخرى.', 'error');
+                    return;
+                }
+                // تحديث الكاش المحلي ليعكس الرصيد الجديد فوراً
+                const syncCache = (key) => {
+                    let list = getStorage(key, []);
+                    if (!Array.isArray(list)) return;
+                    list = list.map(m => {
+                        if (m && normalizeName(m.name) === normalizeName(name)) {
+                            m[res.column] = res.value;
+                            m.points = res.value;
+                        }
+                        return m;
+                    });
+                    setStorage(key, list);
+                };
+                syncCache('phantom_server_members');
+                syncCache('phantom_custom_roster');
+                showToast(`✅ تم تطبيق ${amount} نقطة على ${name}.`, 'success');
                 renderAll();
-                updateAttendanceRate();
             } catch (err) {
-                console.warn('applyAttendancePoints error:', err);
+                console.warn('applyMemberBonusPoints button error:', err);
                 showToast('❌ تعذّر تطبيق النقاط، حاول مرة أخرى.', 'error');
+            } finally {
+                applyPointsBtn.disabled = false;
             }
         };
     }
