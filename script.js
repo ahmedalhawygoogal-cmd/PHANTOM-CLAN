@@ -862,27 +862,49 @@ async function serverAddAttendance(memberName, roomId = 'general', points = 30) 
 
 // ✅ زر "تطبيق النقاط" (بونص): يحدّث رصيد العضو في جدول members مباشرة بدون أي تسجيل حضور
 async function applyMemberBonusPoints(memberName, amount) {
-    const client = ensureSupabaseClient();
-    if (!client) return { ok: false, error: 'no-supabase-client' };
     if (!memberName) return { ok: false, error: 'no-member' };
 
     const delta = Number(amount) || 0;
+    const roster = getFullRoster();
+    const member = roster.find(m => normalizeName(m.name) === normalizeName(memberName));
+    const userId = (member && (member.userId || member.user_id || member.id)) || null;
+
+    // 1) تحديث النقاط المحلية (نفس المصدر الذي يقرأ منه البروفايل واللوحة)
+    const localPoints = getLocalPoints();
+    const newLocalValue = Number(localPoints[memberName] || 0) + delta;
+
+    const client = ensureSupabaseClient();
+    if (!client) {
+        // لا يوجد اتصال: نكتفي بالتحديث المحلي حتى لا يضيع الرصيد
+        localPoints[memberName] = newLocalValue;
+        setLocalPoints(localPoints);
+        return { ok: true, column: 'local', value: newLocalValue, local: newLocalValue, offline: true };
+    }
 
     try {
-        // قراءة الصف الحالي لمعرفة اسم عمود الرصيد الفعلي (points / coins)
-        const { data: rows, error: readError } = await client
-            .from('members')
-            .select('*')
-            .eq('name', memberName)
-            .limit(1);
-        if (readError) return { ok: false, error: readError };
+        // 2) قراءة الصف الحالي لمعرفة اسم عمود الرصيد الفعلي
+        let rows = null, readError = null;
+        ({ data: rows, error: readError } = await client.from('members').select('*').eq('name', memberName).limit(1));
+        let row = Array.isArray(rows) ? rows[0] : rows;
 
-        const row = Array.isArray(rows) ? rows[0] : rows;
-        if (!row) return { ok: false, error: 'member-not-found' };
+        if ((!row || readError) && userId) {
+            const fallback = await client.from('members').select('*').eq('id', userId).limit(1);
+            if (!fallback.error && Array.isArray(fallback.data) && fallback.data[0]) {
+                row = fallback.data[0];
+                readError = null;
+            }
+        }
 
+        if (readError || !row) {
+            console.warn('⚠️ [applyMemberBonusPoints] تعذّر قراءة العضو:', readError || 'member-not-found');
+            return { ok: false, error: readError || 'member-not-found' };
+        }
+
+        // اكتشاف عمود الرصيد: coins هو العمود المستخدم في باقي الميزات (المتجر/الخزنة/العجلة)
         let column = 'coins';
-        if (Object.prototype.hasOwnProperty.call(row, 'points')) column = 'points';
-        else if (Object.prototype.hasOwnProperty.call(row, 'coins')) column = 'coins';
+        for (const c of ['coins', 'points', 'season_points', 'score']) {
+            if (Object.prototype.hasOwnProperty.call(row, c)) { column = c; break; }
+        }
 
         const currentValue = Number(row[column] || 0);
         const newValue = currentValue + delta;
@@ -890,13 +912,24 @@ async function applyMemberBonusPoints(memberName, amount) {
         const { data: updated, error: updateError } = await client
             .from('members')
             .update({ [column]: newValue })
-            .eq('name', memberName)
+            .eq('name', row.name || memberName)
             .select();
-        if (updateError) return { ok: false, error: updateError };
-        if (!updated || updated.length === 0) return { ok: false, error: 'no-row-updated' };
 
-        return { ok: true, column, value: newValue };
+        console.log('✅ [applyMemberBonusPoints] استجابة التحديث:', {
+            column, currentValue, newValue, error: updateError, updatedRows: updated
+        });
+
+        if (updateError || !updated || updated.length === 0) {
+            return { ok: false, error: updateError || 'no-row-updated' };
+        }
+
+        // 3) تحديث النقاط المحلية (نفس سلوك زر +30: إضافة تراكمية) حتى يظهر البروفايل الرصيد فوراً
+        localPoints[memberName] = newLocalValue;
+        setLocalPoints(localPoints);
+
+        return { ok: true, column, value: newValue, local: newLocalValue };
     } catch (err) {
+        console.warn('❌ [applyMemberBonusPoints] خطأ غير متوقع:', err);
         return { ok: false, error: err };
     }
 }
@@ -3029,9 +3062,10 @@ function initAdminPage3() {
             applyPointsBtn.disabled = true;
             try {
                 const res = await applyMemberBonusPoints(name, amount);
+                console.log('✅ [تطبيق النقاط] النتيجة:', res);
                 if (!res.ok) {
-                    console.warn('applyMemberBonusPoints failed:', res.error);
-                    showToast('❌ تعذّر تطبيق النقاط، حاول مرة أخرى.', 'error');
+                    const details = res.error && res.error.message ? res.error.message : (res.error || 'خطأ غير معروف');
+                    showToast(`❌ فشل حفظ النقاط في السيرفر: ${details}`, 'error');
                     return;
                 }
                 // تحديث الكاش المحلي ليعكس الرصيد الجديد فوراً
@@ -3041,7 +3075,6 @@ function initAdminPage3() {
                     list = list.map(m => {
                         if (m && normalizeName(m.name) === normalizeName(name)) {
                             m[res.column] = res.value;
-                            m.points = res.value;
                         }
                         return m;
                     });
@@ -3051,6 +3084,13 @@ function initAdminPage3() {
                 syncCache('phantom_custom_roster');
                 showToast(`✅ تم تطبيق ${amount} نقطة على ${name}.`, 'success');
                 renderAll();
+                // إعادة رسم البروفايل فوراً إذا كان مفتوحاً على نفس العضو
+                const overlay = document.getElementById('profile-overlay');
+                const shownName = document.getElementById('profile-username');
+                if (overlay && overlay.style.display !== 'none' && shownName &&
+                    normalizeName(shownName.textContent) === normalizeName(name)) {
+                    await openProfile(name);
+                }
             } catch (err) {
                 console.warn('applyMemberBonusPoints button error:', err);
                 showToast('❌ تعذّر تطبيق النقاط، حاول مرة أخرى.', 'error');
