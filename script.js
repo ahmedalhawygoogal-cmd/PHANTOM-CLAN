@@ -860,6 +860,80 @@ async function serverAddAttendance(memberName, roomId = 'general', points = 30) 
     return true;
 }
 
+// ✅ زر "تطبيق النقاط" (بونص): يحدّث رصيد العضو في جدول members مباشرة بدون أي تسجيل حضور
+async function applyMemberBonusPoints(memberName, amount) {
+    if (!memberName) return { ok: false, error: 'no-member' };
+
+    const delta = Number(amount) || 0;
+    const roster = getFullRoster();
+    const member = roster.find(m => normalizeName(m.name) === normalizeName(memberName));
+    const userId = (member && (member.userId || member.user_id || member.id)) || null;
+
+    // 1) تحديث النقاط المحلية (نفس المصدر الذي يقرأ منه البروفايل واللوحة)
+    const localPoints = getLocalPoints();
+    const newLocalValue = Number(localPoints[memberName] || 0) + delta;
+
+    const client = ensureSupabaseClient();
+    if (!client) {
+        // لا يوجد اتصال: نكتفي بالتحديث المحلي حتى لا يضيع الرصيد
+        localPoints[memberName] = newLocalValue;
+        setLocalPoints(localPoints);
+        return { ok: true, column: 'local', value: newLocalValue, local: newLocalValue, offline: true };
+    }
+
+    try {
+        // 2) قراءة الصف الحالي لمعرفة اسم عمود الرصيد الفعلي
+        let rows = null, readError = null;
+        ({ data: rows, error: readError } = await client.from('members').select('*').eq('name', memberName).limit(1));
+        let row = Array.isArray(rows) ? rows[0] : rows;
+
+        if ((!row || readError) && userId) {
+            const fallback = await client.from('members').select('*').eq('id', userId).limit(1);
+            if (!fallback.error && Array.isArray(fallback.data) && fallback.data[0]) {
+                row = fallback.data[0];
+                readError = null;
+            }
+        }
+
+        if (readError || !row) {
+            console.warn('⚠️ [applyMemberBonusPoints] تعذّر قراءة العضو:', readError || 'member-not-found');
+            return { ok: false, error: readError || 'member-not-found' };
+        }
+
+        // اكتشاف عمود الرصيد: coins هو العمود المستخدم في باقي الميزات (المتجر/الخزنة/العجلة)
+        let column = 'coins';
+        for (const c of ['coins', 'points', 'season_points', 'score']) {
+            if (Object.prototype.hasOwnProperty.call(row, c)) { column = c; break; }
+        }
+
+        const currentValue = Number(row[column] || 0);
+        const newValue = currentValue + delta;
+
+        const { data: updated, error: updateError } = await client
+            .from('members')
+            .update({ [column]: newValue })
+            .eq('name', row.name || memberName)
+            .select();
+
+        console.log('✅ [applyMemberBonusPoints] استجابة التحديث:', {
+            column, currentValue, newValue, error: updateError, updatedRows: updated
+        });
+
+        if (updateError || !updated || updated.length === 0) {
+            return { ok: false, error: updateError || 'no-row-updated' };
+        }
+
+        // 3) تحديث النقاط المحلية (نفس سلوك زر +30: إضافة تراكمية) حتى يظهر البروفايل الرصيد فوراً
+        localPoints[memberName] = newLocalValue;
+        setLocalPoints(localPoints);
+
+        return { ok: true, column, value: newValue, local: newLocalValue };
+    } catch (err) {
+        console.warn('❌ [applyMemberBonusPoints] خطأ غير متوقع:', err);
+        return { ok: false, error: err };
+    }
+}
+
 // 5. name_change_requests
 async function serverGetNameChangeRequests() {
     const client = ensureSupabaseClient();
@@ -2973,6 +3047,59 @@ function initAdminPage3() {
         };
     }
 
+    const applyPointsBtn = getElement('apply-attendance-points-btn');
+    if (applyPointsBtn) {
+        applyPointsBtn.onclick = async function() {
+            const memberSelect = getElement('attendance-member-select');
+            if (!memberSelect) return;
+            const name = memberSelect.value;
+            if (!name) { showToast('⚠️ اختر العضو أولاً.', 'error'); return; }
+
+            const extraPointsInput = getElement('attendance-extra-points');
+            const amount = extraPointsInput ? parseInt(extraPointsInput.value) || 0 : 0;
+            if (!amount) { showToast('⚠️ أدخل عدد النقاط أولاً.', 'error'); return; }
+
+            applyPointsBtn.disabled = true;
+            try {
+                const res = await applyMemberBonusPoints(name, amount);
+                console.log('✅ [تطبيق النقاط] النتيجة:', res);
+                if (!res.ok) {
+                    const details = res.error && res.error.message ? res.error.message : (res.error || 'خطأ غير معروف');
+                    showToast(`❌ فشل حفظ النقاط في السيرفر: ${details}`, 'error');
+                    return;
+                }
+                // تحديث الكاش المحلي ليعكس الرصيد الجديد فوراً
+                const syncCache = (key) => {
+                    let list = getStorage(key, []);
+                    if (!Array.isArray(list)) return;
+                    list = list.map(m => {
+                        if (m && normalizeName(m.name) === normalizeName(name)) {
+                            m[res.column] = res.value;
+                        }
+                        return m;
+                    });
+                    setStorage(key, list);
+                };
+                syncCache('phantom_server_members');
+                syncCache('phantom_custom_roster');
+                showToast(`✅ تم تطبيق ${amount} نقطة على ${name}.`, 'success');
+                renderAll();
+                // إعادة رسم البروفايل فوراً إذا كان مفتوحاً على نفس العضو
+                const overlay = document.getElementById('profile-overlay');
+                const shownName = document.getElementById('profile-username');
+                if (overlay && overlay.style.display !== 'none' && shownName &&
+                    normalizeName(shownName.textContent) === normalizeName(name)) {
+                    await openProfile(name);
+                }
+            } catch (err) {
+                console.warn('applyMemberBonusPoints button error:', err);
+                showToast('❌ تعذّر تطبيق النقاط، حاول مرة أخرى.', 'error');
+            } finally {
+                applyPointsBtn.disabled = false;
+            }
+        };
+    }
+
     const minusBtn = getElement('attendance-minus-btn');
     const plusBtn = getElement('attendance-plus-btn');
     const extraInput = getElement('attendance-extra-points');
@@ -4984,32 +5111,15 @@ async function openProfile(memberName) {
 
     const giveHeartBtn = document.getElementById('give-heart-btn');
     const complaintBtn = document.getElementById('profile-complaint-btn');
-    const challengeFriendBtn = document.getElementById('profile-challenge-friend-btn');
 
     if (isMe) { 
         giveHeartBtn.style.display = 'none'; 
         complaintBtn.style.display = 'none'; 
-        if (challengeFriendBtn) challengeFriendBtn.style.display = 'none';
     } else { 
         giveHeartBtn.style.display = 'block'; 
         complaintBtn.style.display = 'block'; 
         giveHeartBtn.onclick = () => giveHeart(memberName); 
         complaintBtn.onclick = () => showComplaintForm(memberName);
-        if (challengeFriendBtn) {
-            challengeFriendBtn.style.display = 'block';
-            challengeFriendBtn.onclick = () => {
-                if (!isMemberOnline(memberName)) {
-                    showToast(`🔴 ${memberName} غير متصل حالياً في الموقع لبدء المواجهة.`, "warning");
-                    return;
-                }
-                const overlay = document.getElementById('profile-overlay');
-                if (overlay) overlay.style.display = 'none';
-                const arenaOverlay = document.getElementById('arena-overlay');
-                if (arenaOverlay) arenaOverlay.style.display = 'flex';
-                if (typeof switchArenaView === 'function') switchArenaView('lobby');
-                sendDirectArenaChallenge(memberName);
-            };
-        }
     }
 }
 
@@ -8838,8 +8948,18 @@ async function getUserInventory(userId) {
     const localInv = getStorage("phantom_user_inventory", []);
     const localItems = localInv.filter(item => item.user_id === userId || item.userId === userId || (username && item.username === username));
 
+    // منع تكرار العناصر في المخزون: نفس المستخدم + نفس المنتج يُحتسب مرة واحدة فقط
     const combined = [...serverItems, ...localItems];
-    return combined;
+    const seen = new Set();
+    const unique = [];
+    for (const entry of combined) {
+        const owner = entry.user_id || entry.userId || (username && entry.username) || userId;
+        const key = `${owner}::${Number(entry.item_id)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unique.push(entry);
+    }
+    return unique;
 }
 
 // ✅ دالة مساعدة موحدة للتحقق من تجهيز أي عنصر
