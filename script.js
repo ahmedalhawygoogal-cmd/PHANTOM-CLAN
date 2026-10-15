@@ -849,7 +849,7 @@ async function serverAddAttendance(memberName, roomId = 'general', points = 30) 
             await client.from('attendance_records').insert([{
                 member_name: memberName,
                 room_id: String(roomId || 'general'),
-                points_awarded: points || 30,
+                points_awarded: Number.isFinite(Number(points)) ? Number(points) : 30,
                 recorded_by: getCurrentUsername() || 'المشرف',
                 attended_at: new Date().toISOString()
             }]);
@@ -2973,6 +2973,30 @@ function initAdminPage3() {
         };
     }
 
+    const applyPointsBtn = getElement('apply-attendance-points-btn');
+    if (applyPointsBtn) {
+        applyPointsBtn.onclick = async function() {
+            const memberSelect = getElement('attendance-member-select');
+            if (!memberSelect) return;
+            const name = memberSelect.value;
+            if (!name) { showToast('⚠️ اختر العضو أولاً.', 'error'); return; }
+
+            const extraPointsInput = getElement('attendance-extra-points');
+            let extraPoints = extraPointsInput ? parseInt(extraPointsInput.value) || 0 : 0;
+
+            try {
+                addPoints(name, extraPoints);
+                await serverAddAttendance(name, 'general', extraPoints);
+                showToast(`✅ تم تطبيق ${extraPoints} نقطة على ${name}.`, 'success');
+                renderAll();
+                updateAttendanceRate();
+            } catch (err) {
+                console.warn('applyAttendancePoints error:', err);
+                showToast('❌ تعذّر تطبيق النقاط، حاول مرة أخرى.', 'error');
+            }
+        };
+    }
+
     const minusBtn = getElement('attendance-minus-btn');
     const plusBtn = getElement('attendance-plus-btn');
     const extraInput = getElement('attendance-extra-points');
@@ -4984,32 +5008,15 @@ async function openProfile(memberName) {
 
     const giveHeartBtn = document.getElementById('give-heart-btn');
     const complaintBtn = document.getElementById('profile-complaint-btn');
-    const challengeFriendBtn = document.getElementById('profile-challenge-friend-btn');
 
     if (isMe) { 
         giveHeartBtn.style.display = 'none'; 
         complaintBtn.style.display = 'none'; 
-        if (challengeFriendBtn) challengeFriendBtn.style.display = 'none';
     } else { 
         giveHeartBtn.style.display = 'block'; 
         complaintBtn.style.display = 'block'; 
         giveHeartBtn.onclick = () => giveHeart(memberName); 
         complaintBtn.onclick = () => showComplaintForm(memberName);
-        if (challengeFriendBtn) {
-            challengeFriendBtn.style.display = 'block';
-            challengeFriendBtn.onclick = () => {
-                if (!isMemberOnline(memberName)) {
-                    showToast(`🔴 ${memberName} غير متصل حالياً في الموقع لبدء المواجهة.`, "warning");
-                    return;
-                }
-                const overlay = document.getElementById('profile-overlay');
-                if (overlay) overlay.style.display = 'none';
-                const arenaOverlay = document.getElementById('arena-overlay');
-                if (arenaOverlay) arenaOverlay.style.display = 'flex';
-                if (typeof switchArenaView === 'function') switchArenaView('lobby');
-                sendDirectArenaChallenge(memberName);
-            };
-        }
     }
 }
 
@@ -8838,8 +8845,18 @@ async function getUserInventory(userId) {
     const localInv = getStorage("phantom_user_inventory", []);
     const localItems = localInv.filter(item => item.user_id === userId || item.userId === userId || (username && item.username === username));
 
+    // منع تكرار العناصر في المخزون: نفس المستخدم + نفس المنتج يُحتسب مرة واحدة فقط
     const combined = [...serverItems, ...localItems];
-    return combined;
+    const seen = new Set();
+    const unique = [];
+    for (const entry of combined) {
+        const owner = entry.user_id || entry.userId || (username && entry.username) || userId;
+        const key = `${owner}::${Number(entry.item_id)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unique.push(entry);
+    }
+    return unique;
 }
 
 // ✅ دالة مساعدة موحدة للتحقق من تجهيز أي عنصر
