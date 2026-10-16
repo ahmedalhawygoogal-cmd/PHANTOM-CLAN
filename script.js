@@ -451,6 +451,11 @@ async function serverGetMembers() {
     return result || getStorage("phantom_server_members", []);
 }
 
+/* ✅ هل الرتبة قيادية؟ (متاحة مبكراً قبل تعريف isLeaderRank) */
+function isLeadershipRank(rank) {
+    return rank === "رئيس" || rank === "قائد" || rank === "مؤسس";
+}
+
 async function serverCreateMember(username, rank, userId = null, gameId = null) {
     if (supabaseClient) {
         try {
@@ -459,6 +464,10 @@ async function serverCreateMember(username, rank, userId = null, gameId = null) 
                 const updates = {};
                 if (!existing[0].userId && userId) updates.userId = userId;
                 if (!existing[0].gameId && gameId) updates.gameId = gameId;
+                // ✅ تثبيت رتبة القيادة في عمود rank دون أي تخفيض للرتبة القيادية الحالية
+                if (rank && existing[0].rank !== rank && isLeadershipRank(rank) && !isLeadershipRank(existing[0].rank)) {
+                    updates.rank = rank;
+                }
                 if (Object.keys(updates).length > 0) {
                     await supabaseClient.from('members').update(updates).eq('name', username);
                     Object.assign(existing[0], updates);
@@ -1515,7 +1524,15 @@ async function syncCurrentUserWithServer(username, gameId = null) {
     if (!username) return null;
     try {
         const userId = getCurrentUserId();
-        const rank = isFounderSession() ? "رئيس" : "عضو";
+        // ✅ رتبة القيادة من الجلسة الحالية أو من الرتبة المحفوظة رسمياً في جدول members
+        let rank = isFounderSession() ? "رئيس" : "عضو";
+        if (rank !== "رئيس") {
+            const serverMembers = getStorage("phantom_server_members", []);
+            const me = Array.isArray(serverMembers)
+                ? serverMembers.find(m => m && m.name && normalizeName(m.name) === normalizeName(username))
+                : null;
+            if (me && isLeadershipRank(me.rank)) rank = me.rank;
+        }
         const member = await serverCreateMember(username, rank, userId, gameId);
         if (member) {
             setStorage("phantom_current_server_member", member);
@@ -1668,6 +1685,9 @@ if (username) {
     startBanSystem();
 
     await loadServerData();
+
+    // 👑 استرجاع صلاحية القيادة من الرتبة المحفوظة في عمود members.rank
+    restoreFounderStatus();
 
     renderAll();
 
@@ -3705,7 +3725,7 @@ function getFullRoster() {
 }
 
 function isLeaderRank(rank) {
-    return rank === "رئيس" || rank === "قائد" || rank === "مؤسس";
+    return isLeadershipRank(rank);
 }
 
 function renderRosterAndLeadership() {
@@ -10708,6 +10728,33 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(checkAgoraAutoReconnectOnRefresh, 1500);
 });
 
+/* 🔎 هل المكالمة المحفوظة ما زالت نشطة؟
+   المصدر الأساسي: جدول active_calls في Supabase، والاحتياطي: خادم Express المؤقت */
+async function isSavedCallStillActive(callId) {
+    if (callId == null || callId === '') return false;
+    const target = String(callId);
+
+    // 1) المصدر الأساسي: Supabase active_calls
+    try {
+        if (typeof serverGetActiveCalls === 'function') {
+            const rows = await serverGetActiveCalls();
+            if (Array.isArray(rows) && rows.some(c => c && String(c.id) === target)) return true;
+        }
+    } catch (_) {}
+
+    // 2) احتياطي: خادم Express المؤقت
+    try {
+        const res = await fetch('/api/calls/active');
+        if (res.ok) {
+            const data = await res.json();
+            const list = Array.isArray(data.activeCalls) ? data.activeCalls : (data.activeCall ? [data.activeCall] : []);
+            return list.some(c => c && String(c.id) === target && (c.status === 'active' || c.active));
+        }
+    } catch (_) {}
+
+    return false;
+}
+
 async function checkAgoraAutoReconnectOnRefresh() {
     try {
         const savedRaw = sessionStorage.getItem('phantom_active_agora_session');
@@ -10715,33 +10762,43 @@ async function checkAgoraAutoReconnectOnRefresh() {
         const savedSession = JSON.parse(savedRaw);
         if (!savedSession || !savedSession.callId) return;
 
-        // التحقق من المصدر الحقيقي: السيرفر
-        const res = await fetch('/api/calls/active');
-        if (res.ok) {
-            const data = await res.json();
-            const activeCalls = Array.isArray(data.activeCalls) ? data.activeCalls : (data.activeCall ? [data.activeCall] : []);
-            const stillActive = activeCalls.some(c => c.id === savedSession.callId && (c.status === 'active' || c.active));
+        // لا نعيد الاتصال إلا بعد تسجيل دخول المستخدم
+        const username = (typeof getCurrentUsername === 'function') ? getCurrentUsername() : '';
+        if (!username) return;
 
-            if (stillActive) {
-                showToast("🔄 جاري إعادة الاتصال التلقائي بغرفة Agora الصوتية...", "info");
-                try {
-                    if (savedSession.mode === 'direct') {
-                        await startInAppCall(savedSession.callId, savedSession.host, savedSession.room);
-                    } else {
-                        await joinAgoraRoom(savedSession.channel, savedSession.callId, savedSession.host, savedSession.room);
-                    }
-                } catch (reconnectErr) {
-                    sessionStorage.removeItem('phantom_active_agora_session');
-                    showToast("⚠️ تعذر إعادة الاتصال: انتهت صلاحية التوكن أو الغرفة غير متاحة.", "error");
-                }
+        const stillActive = await isSavedCallStillActive(savedSession.callId);
+
+        if (!stillActive) {
+            // المكالمة انتهت فعلاً → نمسح الجلسة المحفوظة
+            sessionStorage.removeItem('phantom_active_agora_session');
+            showToast("⚠️ تعذر إعادة الاتصال: انتهت المكالمة أو تم إغلاق الغرفة.", "warning");
+            return;
+        }
+
+        showToast("🔄 جاري إعادة الاتصال التلقائي بغرفة Agora...", "info");
+
+        let rejoined = false;
+        try {
+            if (savedSession.mode === 'direct') {
+                rejoined = await startInAppCall(savedSession.callId, savedSession.host, savedSession.room);
             } else {
-                sessionStorage.removeItem('phantom_active_agora_session');
-                showToast("⚠️ تعذر إعادة الاتصال: انتهت المكالمة أو تم إغلاق الغرفة.", "warning");
+                rejoined = await joinAgoraRoom(savedSession.channel, savedSession.callId, savedSession.host, savedSession.room);
             }
+        } catch (reconnectErr) {
+            rejoined = false;
+        }
+
+        if (!rejoined) {
+            // فشل مؤقت (توكن/شبكة) → نبقي الجلسة لإعادة المحاولة لاحقاً
+            showToast("⚠️ تعذر إعادة الاتصال الآن، سيتم إعادة المحاولة تلقائياً.", "error");
         }
     } catch (e) {
-        try { sessionStorage.removeItem('phantom_active_agora_session'); } catch (_) {}
+        // خطأ غير متوقع → لا نمسح الجلسة حتى لا نفقد إمكانية الاسترجاع
     }
+}
+if (typeof window !== "undefined") {
+    window.checkAgoraAutoReconnectOnRefresh = checkAgoraAutoReconnectOnRefresh;
+    window.isSavedCallStillActive = isSavedCallStillActive;
 }
 
 /* ========================================================
@@ -12563,12 +12620,43 @@ function isFounderSession() {
     const username = getCurrentUsername();
     if (!username) return false;
     
-    const roster = getFullRoster();
-    const member = roster.find(m => normalizeName(m.name) === normalizeName(username));
-    if (member && (member.rank === 'رئيس' || member.rank === 'قائد' || member.rank === 'مؤسس')) {
-        return true;
+    const normalized = normalizeName(username);
+
+    // ✅ أولاً: الرتبة القيادية المحفوظة رسمياً في جدول members (لها الأولوية على الكاش المحلي)
+    const serverMembers = getStorage("phantom_server_members", []);
+    if (Array.isArray(serverMembers)) {
+        const serverMember = serverMembers.find(m => m && m.name && normalizeName(m.name) === normalized);
+        if (serverMember && isLeadershipRank(serverMember.rank)) return true;
     }
+
+    const roster = getFullRoster();
+    const member = roster.find(m => m && m.name && normalizeName(m.name) === normalized);
+    return !!(member && isLeadershipRank(member.rank));
+}
+
+/* 👑 استرجاع صلاحية القيادة من عمود rank المحفوظ رسمياً في جدول members */
+function restoreFounderStatus() {
+    try {
+        const username = (typeof getCurrentUsername === 'function') ? getCurrentUsername() : '';
+        if (!username) return false;
+
+        const serverMembers = getStorage("phantom_server_members", []);
+        const me = Array.isArray(serverMembers)
+            ? serverMembers.find(m => m && m.name && normalizeName(m.name) === normalizeName(username))
+            : null;
+
+        if (me && isLeadershipRank(me.rank)) {
+            // تثبيت صلاحية القيادة في الجلسة الحالية (تصمد عبر تحديث الصفحة)
+            sessionStorage.setItem('admin_authenticated', 'true');
+            console.log("👑 تم استرجاع صلاحية القيادة للمستخدم " + username + " (الرتبة: " + me.rank + ")");
+            return true;
+        }
+    } catch (_) {}
     return false;
+}
+if (typeof window !== "undefined") {
+    window.restoreFounderStatus = restoreFounderStatus;
+    window.isLeadershipRank = isLeadershipRank;
 }
 
 // ✅ ربط الزر في قائمة الشبح (من غير ما نكسر الدالة)

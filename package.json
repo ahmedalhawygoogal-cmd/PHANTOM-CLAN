@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "node server.js",
     "build": "node scripts/build-static.mjs",
-    "lint": "node -c script.js data.js server.js sw.js",
-    "test": "node -c script.js data.js server.js sw.js && node tests/call-participants.test.mjs",
+    "lint": "node -c script.js && node -c data.js && node -c server.js && node -c sw.js",
+    "test": "node -c script.js && node -c data.js && node -c server.js && node -c sw.js && node tests/call-participants.test.mjs && node tests/fix-medium.test.mjs",
     "start": "node server.js"
   },
   "dependencies": {
