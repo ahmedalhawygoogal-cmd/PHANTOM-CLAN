@@ -1527,6 +1527,70 @@ async function syncCurrentUserWithServer(username, gameId = null) {
     }
 }
 
+// ✅ جلب رتبة العضو من جدول members في Supabase كمصدر حقيقي للصلاحية
+async function fetchMemberRoleFromServer(username) {
+    if (!username) return null;
+    const client = ensureSupabaseClient();
+    if (!client) return null;
+    const columns = ['rank', 'role', 'is_founder'];
+    try {
+        const { data, error } = await client
+            .from('members')
+            .select('*')
+            .eq('name', username)
+            .limit(1);
+        const row = Array.isArray(data) ? data[0] : data;
+        if (error || !row) {
+            console.warn(`⚠️ [Role] تعذّر جلب رتبة ${username} من السيرفر:`, error || 'member-not-found');
+            return null;
+        }
+
+        let role = row.rank || row.role || null;
+        if (!role && row.is_founder === true) role = 'مؤسس';
+        console.log(`🎖️ [Role] رتبة ${username} من Supabase:`, { rank: row.rank, role: row.role, is_founder: row.is_founder, resolved: role, columns: columns.filter(c => c in row) });
+
+        // تحديث الكاش المحلي بالرتبة القادمة من السيرفر (لا نمسحها بقيمة فارغة)
+        if (!role) return null;
+        const normalized = normalizeName(username);
+        const syncList = (key) => {
+            let list = getStorage(key, []);
+            if (!Array.isArray(list)) return;
+            let found = false;
+            list = list.map(m => {
+                if (m && normalizeName(m.name) === normalized) { m.rank = role; found = true; }
+                return m;
+            });
+            setStorage(key, list);
+            return found;
+        };
+        syncList('phantom_server_members');
+        syncList('phantom_custom_roster');
+
+        const current = getStorage('phantom_current_server_member', null);
+        if (current && normalizeName(current.name) === normalized) {
+            current.rank = role;
+            setStorage('phantom_current_server_member', current);
+        }
+        return role;
+    } catch (e) {
+        console.warn('⚠️ [Role] fetchMemberRoleFromServer error:', e);
+        return null;
+    }
+}
+
+// ✅ مزامنة رتبة المستخدم الحالي من السيرفر ثم إعادة رسم الواجهة
+async function refreshCurrentUserRoleFromServer() {
+    const username = getCurrentUsername();
+    if (!username) return null;
+    const role = await fetchMemberRoleFromServer(username);
+    if (role) {
+        if (typeof updateCurrentUser === 'function') updateCurrentUser(username);
+        if (typeof renderAll === 'function') renderAll();
+        console.log(`✅ [Role] تم تطبيق رتبة ${username} من السيرفر: ${role}`);
+    }
+    return role;
+}
+
 async function serverKickMember(usernameOrId) {
     if (!supabaseClient) return false;
     try {
@@ -1668,6 +1732,11 @@ if (username) {
     startBanSystem();
 
     await loadServerData();
+
+    // ✅ مزامنة رتبة المستخدم الحالي من السيرفر بعد تحميل البيانات (منع اختفاء رتبة المؤسس)
+    if (typeof refreshCurrentUserRoleFromServer === 'function') {
+        await refreshCurrentUserRoleFromServer();
+    }
 
     renderAll();
 
@@ -2060,7 +2129,9 @@ function setupSecurityGate() {
         updateCurrentUser(username);
         registerPresence(username);
         gate.classList.add("unlocked");
-        syncCurrentUserWithServer(username, savedIdentity.gameId).catch(() => {});
+        syncCurrentUserWithServer(username, savedIdentity.gameId)
+            .then(() => refreshCurrentUserRoleFromServer())
+            .catch(() => {});
         
         return;
     }
@@ -2129,7 +2200,10 @@ function setupSecurityGate() {
         } else if (localMember) {
             setStorage("phantom_current_server_member", localMember);
         }
-        
+
+        // ✅ تطبيق الرتبة القادمة من السيرفر فوراً بعد تسجيل الدخول
+        await refreshCurrentUserRoleFromServer();
+
         renderAll();
         
     });
@@ -2753,16 +2827,22 @@ function setupAdminPanel() {
                 serverMembers = serverMembers.map(m => { if (m && m.name === username) { m.rank = 'رئيس'; } return m; });
                 setStorage("phantom_server_members", serverMembers);
 
-                // تحديث في السيرفر (Supabase)
+                // تحديث في السيرفر (Supabase) كمصدر دائم للصلاحية
                 if (supabaseClient) {
                     safePostgrest(supabaseClient.from('members').update({ rank: 'رئيس' }).eq('name', username))
                         .then(() => console.log("✅ تم ترقية الرتبة في السيرفر"))
-                        .catch(err => console.warn("⚠️ فشل ترقية الرتبة في السيرفر:", err));
+                        .catch(err => console.warn("⚠️ فشل ترقية الرتبة في السيرفر:", err))
+                        .finally(async () => {
+                            // ✅ إعادة جلب الرتبة من السيرفر وإعادة رسم الواجهة
+                            await fetchMemberRoleFromServer(username);
+                            if (typeof updateCurrentUser === 'function') updateCurrentUser(username);
+                            if (typeof renderAll === 'function') renderAll();
+                        });
+                } else {
+                    // إعادة رسم الواجهة بالكامل (الأعضاء، البروفايل، الشات، الصدارة)
+                    renderAll();
+                    updateCurrentUser(username);
                 }
-
-                // إعادة رسم الواجهة بالكامل (الأعضاء، البروفايل، الشات، الصدارة)
-                renderAll();
-                updateCurrentUser(username);
             }
         } else {
             adminPassError.style.display = 'block';
@@ -3697,9 +3777,26 @@ function getFullRoster() {
         return true;
     });
     
+    // ترتيب أهمية الرتبة لمنع رتبة أدنى من طمس رتبة قيادية (مشكلة اختفاء المؤسس)
+    const rankWeight = (r) => {
+        if (r === 'مؤسس') return 3;
+        if (r === 'رئيس' || r === 'قائد') return 2;
+        if (!r) return -1;
+        return (r === 'عضو') ? 0 : 1;
+    };
     const map = new Map();
     all.forEach(member => {
-        if (member && member.name) map.set(normalizeName(member.name), member);
+        if (!member || !member.name) return;
+        const key = normalizeName(member.name);
+        const existing = map.get(key);
+        if (!existing) {
+            map.set(key, { ...member });
+            return;
+        }
+        const merged = { ...existing, ...member };
+        // الرتبة الأعلى تفوز دائماً
+        merged.rank = rankWeight(existing.rank) >= rankWeight(member.rank) ? existing.rank : member.rank;
+        map.set(key, merged);
     });
     return Array.from(map.values());
 }
@@ -6912,6 +7009,47 @@ function closeGoogleMeetModal() {
    ======================================================== */
 const AGORA_APP_ID = "129b4ba5126742d6973d17c9cbf2d5f3";
 const AGORA_CHANNEL = "phantom_hq";
+
+/* ========================================================
+   💾 حفظ حالة المكالمة لاستعادة الاتصال تلقائياً بعد تحديث الصفحة
+   ======================================================== */
+const AGORA_CALL_STATE_KEY = "phantom_agora_call_state";
+let agoraRestoreAttempted = false;
+
+function saveAgoraCallState(state = {}) {
+    try {
+        const payload = {
+            is_in_call: true,
+            channel_name: state.channel_name || AGORA_CHANNEL,
+            uid: state.uid != null ? state.uid : null,
+            call_id: state.call_id != null ? state.call_id : null,
+            mode: state.mode || 'agora',
+            host: state.host || null,
+            room: state.room || null,
+            timestamp: Date.now()
+        };
+        localStorage.setItem(AGORA_CALL_STATE_KEY, JSON.stringify(payload));
+        return payload;
+    } catch (e) {
+        console.warn('[Agora] saveAgoraCallState error:', e);
+        return null;
+    }
+}
+
+function getAgoraCallState() {
+    try {
+        const raw = localStorage.getItem(AGORA_CALL_STATE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || parsed.is_in_call !== true) return null;
+        return parsed;
+    } catch (_) { return null; }
+}
+
+function clearAgoraCallState() {
+    try { localStorage.removeItem(AGORA_CALL_STATE_KEY); } catch (_) {}
+}
+
 let agoraClient = null;
 let agoraLocalAudioTrack = null;
 let agoraLocalVideoTrack = null;
@@ -7605,7 +7743,11 @@ async function joinRtcRoom(options = {}) {
         return false;
     }
 
-    const uid = Math.floor(Math.random() * 90000) + 10000;
+    // إعادة استخدام نفس الـ uid عند الاستعادة حتى يبقى نفس العضو في الغرفة
+    const savedUid = Number(options.uid);
+    const uid = (Number.isFinite(savedUid) && savedUid > 0)
+        ? savedUid
+        : Math.floor(Math.random() * 90000) + 10000;
     if (joinBtn) joinBtn.textContent = '⏳ جاري طلب التوكن من خادم Supabase...';
 
     try {
@@ -7709,17 +7851,16 @@ async function joinRtcRoom(options = {}) {
         updateFullCallParticipantsUI();
         showToast(withVideo ? '🎉 تم الاتصال بمكالمة الفيديو بنجاح!' : '🎉 تم الاتصال بغرفة Agora بنجاح!', 'success');
 
-        // 7. حفظ الجلسة لإعادة الاتصال التلقائي عند تحديث الصفحة
-        try {
-            sessionStorage.setItem('phantom_active_agora_session', JSON.stringify({
-                mode,
-                channel: activeChannel,
-                callId: numericCallId,
-                host: actualHost,
-                room: actualRoom,
-                timestamp: Date.now()
-            }));
-        } catch (_) {}
+        // 7. حفظ حالة المكالمة في localStorage لإعادة الاتصال التلقائي عند تحديث الصفحة
+        saveAgoraCallState({
+            is_in_call: true,
+            channel_name: activeChannel,
+            uid: agoraSelfUid != null ? agoraSelfUid : uid,
+            call_id: numericCallId,
+            mode,
+            host: actualHost,
+            room: actualRoom
+        });
 
         // 8. فتح صفحة المكالمة الكاملة
         openFullCallView(mode, {
@@ -7768,7 +7909,7 @@ async function joinRtcRoom(options = {}) {
 
     } catch (err) {
         console.error('Agora join error:', err);
-        try { sessionStorage.removeItem('phantom_active_agora_session'); } catch (_) {}
+        clearAgoraCallState();
         const statusPill = document.getElementById('call-connection-status');
         if (statusPill && activeCallMode === mode) {
             statusPill.textContent = '🔴 فشل الاتصال';
@@ -7861,7 +8002,7 @@ async function leaveAgoraRoom() {
     agoraRemoteUsers.clear();
     const callGrid = document.getElementById('call-participants-grid');
     if (callGrid) callGrid.innerHTML = '';
-    try { sessionStorage.removeItem('phantom_active_agora_session'); } catch (_) {}
+    clearAgoraCallState();
 
     const statusPill = document.getElementById('call-connection-status');
     if (statusPill && activeCallMode === 'agora') {
@@ -10704,43 +10845,68 @@ document.addEventListener('DOMContentLoaded', () => {
     if (typeof setupMatchmakingRealtime === 'function') {
         setupMatchmakingRealtime();
     }
-    // فحص إعادة الاتصال بمكالمة Agora عند Refresh بالخطأ إذا كانت الغرفة ما زالت نشطة
-    setTimeout(checkAgoraAutoReconnectOnRefresh, 1500);
+    // ✅ استعادة الاتصال بالمكالمة تلقائياً بعد تحديث الصفحة
+    setTimeout(restoreAgoraCallOnLoad, 1500);
 });
 
-async function checkAgoraAutoReconnectOnRefresh() {
+// ✅ استعادة المكالمة بعد Refresh: توكن جديد + نفس القناة ونفس uid + استرجاع الواجهة
+async function restoreAgoraCallOnLoad() {
+    if (agoraRestoreAttempted) return;
+    agoraRestoreAttempted = true;
+
+    const saved = getAgoraCallState();
+    if (!saved || !saved.channel_name || saved.uid == null) {
+        clearAgoraCallState();
+        return;
+    }
+    if (!getCurrentUsername()) return;
+
     try {
-        const savedRaw = sessionStorage.getItem('phantom_active_agora_session');
-        if (!savedRaw) return;
-        const savedSession = JSON.parse(savedRaw);
-        if (!savedSession || !savedSession.callId) return;
+        showToast("🔄 جاري إعادة الاتصال بالمكالمة...", "info");
 
-        // التحقق من المصدر الحقيقي: السيرفر
-        const res = await fetch('/api/calls/active');
-        if (res.ok) {
-            const data = await res.json();
-            const activeCalls = Array.isArray(data.activeCalls) ? data.activeCalls : (data.activeCall ? [data.activeCall] : []);
-            const stillActive = activeCalls.some(c => c.id === savedSession.callId && (c.status === 'active' || c.active));
+        const mode = saved.mode === 'direct' ? 'direct' : 'agora';
+        const channel = saved.channel_name || AGORA_CHANNEL;
+        const room = saved.room || (mode === 'direct' ? 'مكالمة المقر المباشرة' : 'غرفة Agora الصوتية');
 
-            if (stillActive) {
-                showToast("🔄 جاري إعادة الاتصال التلقائي بغرفة Agora الصوتية...", "info");
+        // تأمين صف active_calls لمتابعة التواجد (يُعاد إنشاؤه إن حُذف عند الـ unload)
+        let callId = toNumericCallId(saved.call_id);
+        let rowWasCreated = false;
+        const client = ensureSupabaseClient();
+        if (client) {
+            let exists = false;
+            if (callId != null) {
                 try {
-                    if (savedSession.mode === 'direct') {
-                        await startInAppCall(savedSession.callId, savedSession.host, savedSession.room);
-                    } else {
-                        await joinAgoraRoom(savedSession.channel, savedSession.callId, savedSession.host, savedSession.room);
-                    }
-                } catch (reconnectErr) {
-                    sessionStorage.removeItem('phantom_active_agora_session');
-                    showToast("⚠️ تعذر إعادة الاتصال: انتهت صلاحية التوكن أو الغرفة غير متاحة.", "error");
-                }
-            } else {
-                sessionStorage.removeItem('phantom_active_agora_session');
-                showToast("⚠️ تعذر إعادة الاتصال: انتهت المكالمة أو تم إغلاق الغرفة.", "warning");
+                    const { data } = await client.from('active_calls').select('id').eq('id', callId).maybeSingle();
+                    exists = !!data;
+                } catch (_) {}
+            }
+            if (!exists) {
+                const row = await insertActiveCallRow(mode, channel);
+                callId = (row && row.id != null) ? toNumericCallId(row.id) : null;
+                rowWasCreated = !!row;
             }
         }
+
+        const ok = await joinRtcRoom({
+            mode,
+            channel,
+            callId,
+            uid: saved.uid,
+            host: saved.host,
+            room,
+            // صف جديد يُنشأ بعدّاد 1؛ الصف الموجود يجب زيادته (كان ناقصاً بعد الـ unload)
+            isHost: rowWasCreated,
+            restore: true
+        });
+
+        if (!ok) throw new Error('rejoin-failed');
+
+        console.log('[Agora] ✅ تمت إعادة الاتصال بالمكالمة بعد تحديث الصفحة.');
+        showToast("✅ تمت إعادة الاتصال بالمكالمة.", "success");
     } catch (e) {
-        try { sessionStorage.removeItem('phantom_active_agora_session'); } catch (_) {}
+        console.warn('[Agora] ❌ فشل إعادة الاتصال بالمكالمة:', e);
+        clearAgoraCallState();
+        showToast("⚠️ تعذّر إعادة الاتصال بالمكالمة (انتهت الغرفة أو التوكن).", "error");
     }
 }
 
@@ -12559,15 +12725,29 @@ function renderFounderNotifications() {
 }
 function isFounderSession() {
     if (sessionStorage.getItem('admin_authenticated') === 'true') return true;
-    
+
     const username = getCurrentUsername();
     if (!username) return false;
-    
+
+    const normalized = normalizeName(username);
+
+    // مصدر أساسي: العضو الحالي القادم من السيرفر
+    const current = getStorage('phantom_current_server_member', null);
+    if (current && normalizeName(current.name) === normalized && isLeaderRankValue(current)) return true;
+
+    // احتياط: القائمة الكاملة (السيرفر + المحلي) بعد الدمج
     const roster = getFullRoster();
-    const member = roster.find(m => normalizeName(m.name) === normalizeName(username));
-    if (member && (member.rank === 'رئيس' || member.rank === 'قائد' || member.rank === 'مؤسس')) {
-        return true;
-    }
+    const member = roster.find(m => m && normalizeName(m.name) === normalized);
+    if (member && isLeaderRankValue(member)) return true;
+    return false;
+}
+
+// ✅ التحقق من كون العضو قيادياً (رئيس/قائد/مؤسس) مع دعم role/is_founder
+function isLeaderRankValue(member) {
+    if (!member) return false;
+    const rank = member.rank || member.role;
+    if (rank === 'رئيس' || rank === 'قائد' || rank === 'مؤسس') return true;
+    if (member.is_founder === true || member.isFounder === true) return true;
     return false;
 }
 
