@@ -1217,7 +1217,7 @@ app.get('/api/presence', (req, res) => {
   res.json({ success: true, onlineUsers: Array.from(onlineUsers.values()) });
 });
 
-// ⚔️ 2. Battles & Challenges API (Popularity Battle & 1v1 Arena & Real Queue)
+// ⚔️ 2. Battles & Challenges API (Popularity Battle & Real Queue)
 const matchmakingQueue = new Map(); // type -> Map of userId/name -> { name, id, queuedAt, stake }
 const battleHistoryRecords = []; // سجل موحد للمواجهات الحقيقية بين الطرفين
 
@@ -1354,7 +1354,7 @@ app.post('/api/battles/challenge', (req, res) => {
 
   const challenge = {
     id: challengeId,
-    type: type || 'popularity', // 'popularity' | 'arena'
+    type: type || 'popularity',
     challengerName,
     challengerId: challengerId || null,
     targetName: targetName || 'ALL', // 'ALL' or specific username
@@ -1379,6 +1379,7 @@ app.get('/api/battles/challenges', (req, res) => {
 
   for (const ch of activeChallenges.values()) {
     if (ch.status !== 'pending') continue;
+    if (ch.type === 'arena') continue;
     if (currentUser && ch.challengerName.toLowerCase() === currentUser) continue;
     if (!ch.targetName || ch.targetName === 'ALL' || (currentUser && ch.targetName.toLowerCase() === currentUser)) {
       list.push(ch);
@@ -1514,7 +1515,7 @@ app.post('/api/battles/finish', (req, res) => {
       const p2 = ch.targetName !== 'ALL' ? (ch.targetName || ch.acceptedBy) : (ch.acceptedBy || 'اللاعب 2');
       ch.finalRecord = {
         id: challengeId,
-        type: ch.type || mode || 'arena',
+        type: ch.type || mode || 'popularity',
         playerA: p1,
         playerB: p2,
         winner: winnerName,
@@ -1534,7 +1535,7 @@ app.post('/api/battles/finish', (req, res) => {
   // إذا لم يكن التحدي موجوداً في الذاكرة ولكن تم إرسال نتيجته
   const fallbackRecord = {
     id: challengeId,
-    type: mode || 'arena',
+    type: mode || 'popularity',
     winner: winnerName,
     scoreA: myScore || 0,
     scoreB: oppScore || 0,
