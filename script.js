@@ -10343,7 +10343,8 @@ function hideTelegramBattleNotification(dismissOnServer = false) {
 }
 
 // انضمام مباشر لمعركة الشعبية من الإشعار
-function joinActivePopularityBattle(challenge) {
+async function joinActivePopularityBattle(challenge) {
+    if (!(await ensurePopularityEntryPoints())) return;
     const lobby = document.getElementById('battle-lobby');
     const arena = document.getElementById('battle-arena');
     const username = getCurrentUsername() || 'المحارب';
@@ -10356,7 +10357,8 @@ function joinActivePopularityBattle(challenge) {
         playerB: { name: username, votes: 50 },
         userVotedChoice: null,
         userBet: 0,
-        crowdInterval: null
+        crowdInterval: null,
+        challengeId: challenge && challenge.id ? challenge.id : null
     };
 
     if (lobby) lobby.style.display = 'none';
@@ -10374,6 +10376,7 @@ function joinActivePopularityBattle(challenge) {
 
     updatePopularityPKBar();
     updatePopularityBattleBalance();
+    initPopularityMatchView();
 
     if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
     popularityBattleState.timer = setInterval(popularityBattleTick, 1000);
@@ -10468,7 +10471,8 @@ function renderPopularityClanMembers() {
 }
 
 // إرسال تحدٍ مباشر في معركة الشعبية
-function sendDirectPopularityChallenge(targetName) {
+async function sendDirectPopularityChallenge(targetName) {
+    if (!(await ensurePopularityEntryPoints())) return;
     const username = getCurrentUsername() || 'المحارب';
     const lobby = document.getElementById('popularity-search-lobby');
     let timeLeft = 25;
@@ -10568,7 +10572,8 @@ function cancelPopularitySearch() {
     }
 }
 
-function startInstantPopularityMatch(opponentName) {
+async function startInstantPopularityMatch(opponentName) {
+    if (!(await ensurePopularityEntryPoints())) return;
     cancelPopularitySearch();
     const lobby = document.getElementById('battle-lobby');
     const arena = document.getElementById('battle-arena');
@@ -10600,6 +10605,7 @@ function startInstantPopularityMatch(opponentName) {
 
     updatePopularityPKBar();
     updatePopularityBattleBalance();
+    initPopularityMatchView();
 
     if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
     popularityBattleState.timer = setInterval(popularityBattleTick, 1000);
@@ -10722,6 +10728,148 @@ let popularityBattleState = {
 
 let popularityMatchmakingInterval = null;
 let currentPopularityChallengeId = null;
+let popularityVotesChannel = null;
+let popularityVotersCache = [];
+const POPULARITY_MIN_ENTRY_POINTS = 500;
+
+async function getMemberPointsFromTable(username) {
+    if (!username) return 0;
+    const client = ensureSupabaseClient();
+    if (client) {
+        try {
+            const { data, error } = await client.from('members').select('*').eq('name', username).limit(1);
+            const row = Array.isArray(data) ? data[0] : data;
+            if (!error && row) {
+                for (const col of ['coins', 'points', 'season_points', 'score']) {
+                    if (Object.prototype.hasOwnProperty.call(row, col)) {
+                        return Number(row[col] || 0);
+                    }
+                }
+            }
+        } catch (e) {}
+    }
+    const local = getLocalPoints();
+    return Number((local && local[username]) || getUserBalance() || 0);
+}
+
+async function ensurePopularityEntryPoints() {
+    const username = getCurrentUsername();
+    const points = await getMemberPointsFromTable(username);
+    if (points < POPULARITY_MIN_ENTRY_POINTS) {
+        showToast('يجب أن تمتلك 500 نقطة على الأقل للدخول', 'error');
+        return false;
+    }
+    return true;
+}
+
+function isCurrentUserPopularityCompetitor() {
+    const username = getCurrentUsername();
+    if (!username || !popularityBattleState) return false;
+    const nameA = popularityBattleState.playerA && popularityBattleState.playerA.name;
+    const nameB = popularityBattleState.playerB && popularityBattleState.playerB.name;
+    return normalizeName(username) === normalizeName(nameA) || normalizeName(username) === normalizeName(nameB);
+}
+
+function updatePopularityVoteButtonsVisibility() {
+    const voteAEl = document.getElementById('vote-btn-a');
+    const voteBEl = document.getElementById('vote-btn-b');
+    const hide = isCurrentUserPopularityCompetitor();
+    if (voteAEl) voteAEl.style.display = hide ? 'none' : '';
+    if (voteBEl) voteBEl.style.display = hide ? 'none' : '';
+}
+
+function normalizePopularityVote(row) {
+    if (!row) return null;
+    const voter = row.voter_name || row.voter || row.username || row.from || row.member_name || 'عضو';
+    let target = row.target_name || row.target || row.choice_name || row.voted_for || '';
+    if (!target || target === 'A' || target === 'B') {
+        const choice = row.choice || target;
+        if (choice === 'A' && popularityBattleState.playerA) target = popularityBattleState.playerA.name;
+        else if (choice === 'B' && popularityBattleState.playerB) target = popularityBattleState.playerB.name;
+        else target = target || choice || '-';
+    }
+    const points = Number(row.points || row.amount || row.coins || row.vote_points || 0);
+    return { id: row.id, voter, target, points };
+}
+
+function renderPopularityVoters(votes) {
+    const listEl = document.getElementById('popularity-voters-list');
+    if (!listEl) return;
+    popularityVotersCache = Array.isArray(votes) ? votes : [];
+    if (popularityVotersCache.length === 0) {
+        listEl.innerHTML = '<div style="color:#94a3b8; font-size:0.82rem; text-align:center; padding:8px;">لا توجد أصوات بعد.</div>';
+        return;
+    }
+    listEl.innerHTML = popularityVotersCache.map(v => {
+        const voter = escapeHTML(String(v.voter || 'عضو'));
+        const target = escapeHTML(String(v.target || '-'));
+        const pts = Number(v.points || 0);
+        return `<div style="display:flex; justify-content:space-between; gap:8px; padding:6px 8px; background:rgba(0,0,0,0.25); border-radius:8px; font-size:0.82rem; color:#fff;"><span>${voter}</span><span style="color:var(--cyan);">${target} · ${pts} نقطة</span></div>`;
+    }).join('');
+}
+
+async function loadPopularityVoters() {
+    const listEl = document.getElementById('popularity-voters-list');
+    if (listEl && popularityVotersCache.length === 0) {
+        listEl.innerHTML = '<div style="color:#94a3b8; font-size:0.82rem; text-align:center; padding:8px;">لا توجد أصوات بعد.</div>';
+    }
+    const client = ensureSupabaseClient();
+    if (!client) return;
+    try {
+        let query = client.from('popularity_votes').select('*').order('created_at', { ascending: false });
+        const challengeId = popularityBattleState && popularityBattleState.challengeId;
+        if (challengeId) {
+            query = query.eq('challenge_id', challengeId);
+        }
+        const { data, error } = await query;
+        if (error || !data) return;
+        renderPopularityVoters(data.map(normalizePopularityVote).filter(Boolean));
+    } catch (e) {}
+}
+
+function setupPopularityVotesRealtime() {
+    const client = ensureSupabaseClient();
+    if (!client) return;
+    teardownPopularityVotesRealtime();
+    try {
+        popularityVotesChannel = client.channel('popularity_votes_realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'popularity_votes' }, (payload) => {
+                const row = payload.new || payload.record;
+                if (!row) {
+                    loadPopularityVoters();
+                    return;
+                }
+                const challengeId = popularityBattleState && popularityBattleState.challengeId;
+                if (challengeId && row.challenge_id && String(row.challenge_id) !== String(challengeId)) return;
+                const vote = normalizePopularityVote(row);
+                if (!vote) return;
+                const exists = popularityVotersCache.some(v => String(v.id) === String(vote.id) && vote.id != null);
+                if (!exists) {
+                    popularityVotersCache.unshift(vote);
+                    renderPopularityVoters(popularityVotersCache);
+                } else {
+                    loadPopularityVoters();
+                }
+            })
+            .subscribe();
+    } catch (e) {}
+}
+
+function teardownPopularityVotesRealtime() {
+    const client = ensureSupabaseClient();
+    if (popularityVotesChannel && client) {
+        try { client.removeChannel(popularityVotesChannel); } catch (e) {}
+    }
+    popularityVotesChannel = null;
+}
+
+function initPopularityMatchView() {
+    updatePopularityVoteButtonsVisibility();
+    popularityVotersCache = [];
+    renderPopularityVoters([]);
+    loadPopularityVoters();
+    setupPopularityVotesRealtime();
+}
 
 function initPopularityBattle() {
     const readyBtn = document.getElementById('battle-ready-btn');
@@ -10748,7 +10896,8 @@ function updatePopularityBattleBalance() {
 }
 
 // ⚔️ بدء ماتش ميكينغ السيرفر لمعركة الشعبية
-function startPopularityBattle() {
+async function startPopularityBattle() {
+    if (!(await ensurePopularityEntryPoints())) return;
     const username = getCurrentUsername() || 'المحارب';
     const lobby = document.getElementById('popularity-search-lobby');
     const resultMsg = document.getElementById('battle-result-msg');
@@ -10904,6 +11053,7 @@ function startLivePopularityBattle(playerAName, playerBName, challengeId = null)
 
     updatePopularityPKBar();
     updatePopularityBattleBalance();
+    initPopularityMatchView();
 
     if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
     popularityBattleState.timer = setInterval(popularityBattleTick, 1000);
@@ -10944,6 +11094,7 @@ function votePopularityBattle(choice) {
         showToast("المعركة غير نشطة حالياً!", "error");
         return;
     }
+    if (isCurrentUserPopularityCompetitor()) return;
     const betInput = document.getElementById('bet-amount');
     const betVal = Math.max(1, parseInt(betInput ? betInput.value : 10, 10) || 10);
     const username = getCurrentUsername();
@@ -10971,6 +11122,24 @@ function votePopularityBattle(choice) {
     }
     updatePopularityPKBar();
     playCodoSound('send');
+
+    const votedTarget = choice === 'A'
+        ? (popularityBattleState.playerA && popularityBattleState.playerA.name)
+        : (popularityBattleState.playerB && popularityBattleState.playerB.name);
+    const localVote = { voter: username, target: votedTarget, points: betVal };
+    popularityVotersCache = [localVote].concat(popularityVotersCache || []);
+    renderPopularityVoters(popularityVotersCache);
+    const sb = ensureSupabaseClient();
+    if (sb) {
+        sb.from('popularity_votes').insert([{
+            voter_name: username,
+            target_name: votedTarget,
+            points: betVal,
+            amount: betVal,
+            choice: choice,
+            challenge_id: popularityBattleState.challengeId || null
+        }]).then(() => {}).catch(() => {});
+    }
 
     // مزامنة التصويت مع السيرفر إن كان التحدي نشطاً عبر السيرفر
     if (popularityBattleState.challengeId) {
@@ -11004,6 +11173,7 @@ function popularityBattleTick() {
 function cancelPopularityBattle() {
     if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
     if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
+    teardownPopularityVotesRealtime();
     popularityBattleState.active = false;
 
     const lobby = document.getElementById('battle-lobby');
@@ -11017,6 +11187,7 @@ function cancelPopularityBattle() {
 function endPopularityBattle() {
     if (popularityBattleState.timer) clearInterval(popularityBattleState.timer);
     if (popularityBattleState.crowdInterval) clearInterval(popularityBattleState.crowdInterval);
+    teardownPopularityVotesRealtime();
     popularityBattleState.active = false;
 
     const votesA = popularityBattleState.playerA.votes;
