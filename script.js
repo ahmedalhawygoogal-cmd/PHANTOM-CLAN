@@ -1265,6 +1265,8 @@ async function serverCreateClipComment(commentData) {
 
 let tablesRealtimeChannel = null;
 let matchmakingRealtimeChannel = null;
+let gameMatchesRealtimeChannel = null;
+let currentGameMatchId = null;
 
 function setupTablesRealtime() {
     const client = ensureSupabaseClient();
@@ -1487,6 +1489,10 @@ function cleanupRealtimeSubscriptions() {
     if (matchmakingRealtimeChannel) {
         try { client.removeChannel(matchmakingRealtimeChannel); } catch (_) {}
         matchmakingRealtimeChannel = null;
+    }
+    if (gameMatchesRealtimeChannel) {
+        try { client.removeChannel(gameMatchesRealtimeChannel); } catch (_) {}
+        gameMatchesRealtimeChannel = null;
     }
     if (chatRealtimeChannel) {
         try { client.removeChannel(chatRealtimeChannel); } catch (_) {}
@@ -10629,6 +10635,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (typeof setupMatchmakingRealtime === 'function') {
         setupMatchmakingRealtime();
     }
+    if (typeof setupGameMatchesRealtime === 'function') {
+        setupGameMatchesRealtime();
+    }
     // ✅ استعادة الاتصال بالمكالمة تلقائياً بعد تحديث الصفحة
     setTimeout(restoreAgoraCallOnLoad, 1500);
 });
@@ -10884,6 +10893,7 @@ function initPopularityBattle() {
 
     updatePopularityBattleBalance();
     renderPopularityClanMembers();
+    setupGameMatchesRealtime();
 }
 
 function updatePopularityBattleBalance() {
@@ -10893,6 +10903,160 @@ function updatePopularityBattleBalance() {
         const points = getLocalPoints();
         balanceEl.textContent = points[username] || 0;
     }
+}
+
+function isGameMatchForCurrentUser(row) {
+    if (!row) return false;
+    const myId = String(getCurrentUserId() || '');
+    const myName = normalizeName(getCurrentUsername() || '');
+    const aId = String(row.player_a_id || '');
+    const bId = String(row.player_b_id || '');
+    const aName = normalizeName(row.player_a_name || '');
+    const bName = normalizeName(row.player_b_name || '');
+    return (myId && (aId === myId || bId === myId)) || (myName && (aName === myName || bName === myName));
+}
+
+function openPopularityMatchFromRow(row) {
+    if (!row || (popularityBattleState && popularityBattleState.active)) return;
+    currentGameMatchId = row.id || currentGameMatchId;
+    currentPopularityChallengeId = row.id || currentPopularityChallengeId;
+    if (popularityMatchmakingInterval) {
+        clearInterval(popularityMatchmakingInterval);
+        popularityMatchmakingInterval = null;
+    }
+    const searchLobby = document.getElementById('popularity-search-lobby');
+    if (searchLobby) {
+        searchLobby.style.display = 'none';
+        searchLobby.innerHTML = '';
+    }
+    const nameA = row.player_a_name || 'اللاعب أ';
+    const nameB = row.player_b_name || 'اللاعب ب';
+    startLivePopularityBattle(nameA, nameB, row.id);
+}
+
+function setupGameMatchesRealtime() {
+    const client = ensureSupabaseClient();
+    if (!client) return;
+    if (gameMatchesRealtimeChannel) return;
+    try {
+        gameMatchesRealtimeChannel = client.channel('game_matches_realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'game_matches' }, (payload) => {
+                const row = payload.new || payload.record;
+                if (!row || row.status !== 'active') return;
+                if (row.game_type && row.game_type !== 'popularity') return;
+                if (!isGameMatchForCurrentUser(row)) return;
+                openPopularityMatchFromRow(row);
+            })
+            .subscribe();
+    } catch (e) {}
+}
+
+async function joinPopularityGameMatchQueue() {
+    const client = ensureSupabaseClient();
+    const username = getCurrentUsername() || 'المحارب';
+    const userId = getCurrentUserId() || username;
+    if (!client) {
+        showToast('تعذر الاتصال بالمطابقة حالياً', 'error');
+        return;
+    }
+    setupGameMatchesRealtime();
+
+    try {
+        const { data: waitingRows, error: waitingError } = await client
+            .from('game_matches')
+            .select('*')
+            .eq('game_type', 'popularity')
+            .eq('status', 'waiting')
+            .order('created_at', { ascending: true });
+        if (waitingError) {
+            console.error(waitingError);
+        }
+
+        const waiting = (waitingRows || []).find((row) => {
+            const aId = String(row.player_a_id || '');
+            const aName = normalizeName(row.player_a_name || '');
+            return aId !== String(userId) && aName !== normalizeName(username);
+        });
+
+        if (waiting && waiting.id) {
+            const { data: updated, error: updateError } = await client
+                .from('game_matches')
+                .update({
+                    player_b_id: userId,
+                    player_b_name: username,
+                    status: 'active',
+                    started_at: new Date().toISOString()
+                })
+                .eq('id', waiting.id)
+                .eq('status', 'waiting')
+                .select();
+            if (updateError) {
+                console.error(updateError);
+            }
+            const row = Array.isArray(updated) ? updated[0] : updated;
+            if (row) {
+                currentGameMatchId = row.id;
+                openPopularityMatchFromRow(row);
+                return;
+            }
+        }
+
+        const matchId = 'gm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        const { data: inserted, error: insertError } = await client
+            .from('game_matches')
+            .insert([{
+                id: matchId,
+                game_type: 'popularity',
+                status: 'waiting',
+                player_a_id: userId,
+                player_a_name: username,
+                player_b_id: null,
+                player_b_name: null,
+                score_a: 0,
+                score_b: 0,
+                winner_id: null,
+                winner_name: null,
+                started_at: null,
+                ended_at: null,
+                created_at: new Date().toISOString()
+            }])
+            .select();
+        if (insertError) {
+            console.error(insertError);
+        }
+        const row = Array.isArray(inserted) ? inserted[0] : inserted;
+        if (row) currentGameMatchId = row.id;
+        else currentGameMatchId = matchId;
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+async function cancelWaitingGameMatch() {
+    const client = ensureSupabaseClient();
+    const username = getCurrentUsername();
+    const userId = getCurrentUserId();
+    if (!client) {
+        currentGameMatchId = null;
+        return;
+    }
+    try {
+        if (currentGameMatchId) {
+            const { error } = await client.from('game_matches').delete().eq('id', currentGameMatchId).eq('status', 'waiting');
+            if (error) console.error(error);
+        }
+        if (userId) {
+            const { error } = await client.from('game_matches').delete().eq('player_a_id', userId).eq('status', 'waiting');
+            if (error) console.error(error);
+        }
+        if (username) {
+            const { error } = await client.from('game_matches').delete().eq('player_a_name', username).eq('status', 'waiting');
+            if (error) console.error(error);
+        }
+    } catch (e) {
+        console.error(e);
+    }
+    currentGameMatchId = null;
 }
 
 // ⚔️ بدء ماتش ميكينغ السيرفر لمعركة الشعبية
@@ -10933,27 +11097,7 @@ async function startPopularityBattle() {
 
     renderPopLobby();
     showToast("📡 دخلت طابور مطابقة معركة الشعبية...", "info");
-
-    // الدخول في طابور السيرفر الحقيقي
-    fetch('/api/battles/queue/join', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            type: 'popularity',
-            username: username,
-            userId: getCurrentUserId(),
-            stake: 0
-        })
-    }).then(res => res.json()).then(joinData => {
-        if (joinData.matched && joinData.challenge) {
-            cancelPopularityMatchmaking();
-            // 🚀 بث فوري للطرف الآخر عبر Supabase Realtime ليدخل المواجهة فوراً
-            broadcastMatchEvent('match_found', { challenge: joinData.challenge });
-            const opp = joinData.challenge.challengerName === username ? joinData.challenge.targetName : joinData.challenge.challengerName;
-            showToast(`🔥 تم التوفيق مع ${opp}! تبدأ معركة الشعبية الآن...`, 'success');
-            startLivePopularityBattle(username, opp, joinData.challenge.id);
-        }
-    }).catch(() => {});
+    joinPopularityGameMatchQueue();
 
     if (popularityMatchmakingInterval) clearInterval(popularityMatchmakingInterval);
     popularityMatchmakingInterval = setInterval(() => {
@@ -10963,12 +11107,6 @@ async function startPopularityBattle() {
         } else {
             clearInterval(popularityMatchmakingInterval);
             popularityMatchmakingInterval = null;
-            fetch('/api/battles/queue/leave', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'popularity', username, userId: getCurrentUserId() })
-            }).catch(() => {});
-
             if (lobby) {
                 lobby.innerHTML = `
                     <div class="streak-header-box" style="text-align:center; padding:18px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:14px;">
@@ -10994,22 +11132,8 @@ function cancelPopularityMatchmaking() {
         clearInterval(popularityMatchmakingInterval);
         popularityMatchmakingInterval = null;
     }
-    const username = getCurrentUsername();
-    const userId = getCurrentUserId();
-    fetch('/api/battles/queue/leave', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'popularity', username, userId })
-    }).catch(() => {});
-
-    if (currentPopularityChallengeId) {
-        fetch('/api/battles/dismiss', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ challengeId: currentPopularityChallengeId, username: getCurrentUsername() })
-        }).catch(() => {});
-        currentPopularityChallengeId = null;
-    }
+    cancelWaitingGameMatch();
+    currentPopularityChallengeId = null;
     const lobby = document.getElementById('popularity-search-lobby');
     if (lobby) {
         lobby.style.display = 'none';
