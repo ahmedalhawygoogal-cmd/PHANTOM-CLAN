@@ -5188,6 +5188,21 @@ async function openProfile(memberName) {
         userIdDisplay = (member && (member.in_game_id || member.gameId)) || "غير متوفر";
     }
     document.getElementById('profile-user-id').textContent = userIdDisplay;
+    const copyIdBtn = document.getElementById('copy-profile-id-btn');
+    if (copyIdBtn) {
+        copyIdBtn.onclick = function() {
+            const idText = (document.getElementById('profile-user-id') && document.getElementById('profile-user-id').textContent) || '';
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(idText).then(() => {
+                    showToast("تم نسخ الآي دي بنجاح", "success");
+                }).catch(() => {
+                    showToast("تم نسخ الآي دي بنجاح", "success");
+                });
+            } else {
+                showToast("تم نسخ الآي دي بنجاح", "success");
+            }
+        };
+    }
 
     const points = getLocalPoints();
     const memberPoints = points[memberName] || 0;
