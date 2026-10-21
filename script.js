@@ -2874,6 +2874,7 @@ function setupAdminPanel() {
             else if (pageId === 'admin-page-2') initAdminPage2();
             else if (pageId === 'admin-page-3') initAdminPage3();
             else if (pageId === 'admin-page-4') initAdminPage4();
+            else if (pageId === 'admin-page-6') initHallOfFameAdmin();
             
         });
     });
@@ -14891,6 +14892,224 @@ function renderClanHealthCenter() {
 function initAdminPage5() {
     renderClanHealthCenter();
 }
+
+let hallCurrentRoomId = null;
+let hallCurrentRoomName = '';
+
+function switchHallAdminTab(tab) {
+    const rooms = document.getElementById('hall-tab-rooms');
+    const tournaments = document.getElementById('hall-tab-tournaments');
+    const mvp = document.getElementById('hall-tab-mvp');
+    if (rooms) rooms.style.display = tab === 'rooms' ? 'block' : 'none';
+    if (tournaments) tournaments.style.display = tab === 'tournaments' ? 'block' : 'none';
+    if (mvp) mvp.style.display = tab === 'mvp' ? 'block' : 'none';
+    document.querySelectorAll('.hall-tab-btn').forEach(btn => {
+        const active = btn.getAttribute('data-hall-tab') === tab;
+        btn.classList.toggle('btn-primary', active);
+        btn.classList.toggle('btn-secondary', !active);
+        btn.classList.toggle('active', active);
+    });
+}
+
+function initHallOfFameAdmin() {
+    switchHallAdminTab('rooms');
+}
+
+async function createHallRoom() {
+    const nameEl = document.getElementById('hall-room-name');
+    const name = nameEl ? nameEl.value.trim() : '';
+    if (!name) {
+        showToast('أدخل اسم الروم', 'error');
+        return;
+    }
+    const client = ensureSupabaseClient();
+    if (!client) {
+        showToast('تعذر الاتصال', 'error');
+        return;
+    }
+    const { data, error } = await client.from('hall_rooms').insert([{ name: name }]).select();
+    if (error) {
+        console.error(error);
+        showToast('فشل إنشاء الروم', 'error');
+        return;
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    hallCurrentRoomId = row && row.id;
+    hallCurrentRoomName = name;
+    const label = document.getElementById('hall-current-room');
+    if (label) label.textContent = 'الروم الحالي: ' + name;
+    if (nameEl) nameEl.value = '';
+    showToast('تم إنشاء الروم', 'success');
+}
+
+async function addHallMatch() {
+    if (!hallCurrentRoomId) {
+        showToast('أنشئ روم أولاً', 'error');
+        return;
+    }
+    const teamA = (document.getElementById('hall-match-team-a') || {}).value || '';
+    const teamB = (document.getElementById('hall-match-team-b') || {}).value || '';
+    const scoreA = Number((document.getElementById('hall-match-score-a') || {}).value || 0);
+    const scoreB = Number((document.getElementById('hall-match-score-b') || {}).value || 0);
+    const playersA = ((document.getElementById('hall-match-players-a') || {}).value || '').trim();
+    const playersB = ((document.getElementById('hall-match-players-b') || {}).value || '').trim();
+    const mvpA = ((document.getElementById('hall-match-mvp-a') || {}).value || '').trim();
+    const mvpB = ((document.getElementById('hall-match-mvp-b') || {}).value || '').trim();
+    if (!teamA.trim() || !teamB.trim()) {
+        showToast('أدخل اسمي الفريقين', 'error');
+        return;
+    }
+    const client = ensureSupabaseClient();
+    if (!client) {
+        showToast('تعذر الاتصال', 'error');
+        return;
+    }
+    const { error } = await client.from('hall_matches').insert([{
+        room_id: hallCurrentRoomId,
+        team_a_name: teamA.trim(),
+        team_b_name: teamB.trim(),
+        score_a: scoreA,
+        score_b: scoreB,
+        team_a_players: playersA,
+        team_b_players: playersB,
+        mvp_team_a: mvpA,
+        mvp_team_b: mvpB
+    }]);
+    if (error) {
+        console.error(error);
+        showToast('فشل حفظ الماتش', 'error');
+        return;
+    }
+    showToast('تم إضافة الماتش', 'success');
+}
+
+function pairHallParticipants(names) {
+    const players = names.map(n => n.trim()).filter(Boolean);
+    const matches = [];
+    for (let i = 0; i < players.length; i += 2) {
+        if (i + 1 < players.length) {
+            matches.push({ player_a: players[i], player_b: players[i + 1], winner: null, bye: false });
+        } else {
+            matches.push({ player_a: players[i], player_b: null, winner: players[i], bye: true });
+        }
+    }
+    return matches;
+}
+
+async function createHallTournament() {
+    const name = ((document.getElementById('hall-tournament-name') || {}).value || '').trim();
+    const raw = ((document.getElementById('hall-tournament-players') || {}).value || '');
+    const players = raw.split(',').map(n => n.trim()).filter(Boolean);
+    if (!name || players.length < 2) {
+        showToast('أدخل اسم البطولة ومشاركين', 'error');
+        return;
+    }
+    const client = ensureSupabaseClient();
+    if (!client) {
+        showToast('تعذر الاتصال', 'error');
+        return;
+    }
+    const { data, error } = await client.from('hall_tournaments').insert([{
+        name: name,
+        participants: players.join(',')
+    }]).select();
+    if (error) {
+        console.error(error);
+        showToast('فشل إنشاء البطولة', 'error');
+        return;
+    }
+    const tournament = Array.isArray(data) ? data[0] : data;
+    const pairs = pairHallParticipants(players);
+    const rows = pairs.map((m, idx) => ({
+        tournament_id: tournament.id,
+        round: 1,
+        match_index: idx,
+        player_a: m.player_a,
+        player_b: m.player_b,
+        winner: m.winner,
+        score_a: 0,
+        score_b: 0,
+        is_bye: m.bye
+    }));
+    const { data: bracketRows, error: bracketError } = await client.from('hall_bracket').insert(rows).select();
+    if (bracketError) {
+        console.error(bracketError);
+        showToast('تم إنشاء البطولة لكن فشل توليد الشجرة', 'error');
+        return;
+    }
+    renderHallBracket(bracketRows || rows);
+    showToast('تم إنشاء البطولة وتوليد الشجرة', 'success');
+}
+
+function renderHallBracket(matches) {
+    const list = document.getElementById('hall-bracket-list');
+    if (!list) return;
+    if (!matches || matches.length === 0) {
+        list.innerHTML = '';
+        return;
+    }
+    list.innerHTML = matches.map(m => {
+        const id = m.id || '';
+        const a = escapeHTML(m.player_a || '-');
+        const b = m.is_bye || !m.player_b ? 'Bye' : escapeHTML(m.player_b);
+        const byeNote = (m.is_bye || !m.player_b) ? '<div style="color:#ffd700; font-size:0.8rem;">تأهل تلقائي</div>' : '';
+        return `<div class="admin-section" style="margin-top:8px;">
+            <div style="font-weight:800; color:#fff;">${a} vs ${b}</div>
+            ${byeNote}
+            ${(!m.is_bye && m.player_b) ? `<div style="display:flex; gap:8px; margin-top:8px;">
+                <input type="number" id="hall-br-score-a-${id}" placeholder="نتيجة أ" value="${m.score_a || 0}">
+                <input type="number" id="hall-br-score-b-${id}" placeholder="نتيجة ب" value="${m.score_b || 0}">
+            </div>
+            <button type="button" class="btn-primary" style="margin-top:8px; width:100%;" onclick="updateHallBracketScore('${id}')">حفظ النتيجة</button>` : ''}
+        </div>`;
+    }).join('');
+}
+
+async function updateHallBracketScore(matchId) {
+    if (!matchId) return;
+    const scoreA = Number((document.getElementById('hall-br-score-a-' + matchId) || {}).value || 0);
+    const scoreB = Number((document.getElementById('hall-br-score-b-' + matchId) || {}).value || 0);
+    const client = ensureSupabaseClient();
+    if (!client) return;
+    const { error } = await client.from('hall_bracket').update({ score_a: scoreA, score_b: scoreB }).eq('id', matchId);
+    if (error) {
+        console.error(error);
+        showToast('فشل حفظ النتيجة', 'error');
+        return;
+    }
+    showToast('تم حفظ النتيجة', 'success');
+}
+
+async function saveHallWeeklyMvp() {
+    const name = ((document.getElementById('hall-mvp-name') || {}).value || '').trim();
+    const reason = ((document.getElementById('hall-mvp-reason') || {}).value || '').trim();
+    if (!name) {
+        showToast('أدخل اسم العضو', 'error');
+        return;
+    }
+    const client = ensureSupabaseClient();
+    if (!client) {
+        showToast('تعذر الاتصال', 'error');
+        return;
+    }
+    const { error } = await client.from('hall_weekly_mvp').insert([{
+        member_name: name,
+        reason: reason
+    }]);
+    if (error) {
+        console.error(error);
+        showToast('فشل الحفظ', 'error');
+        return;
+    }
+    showToast('تم حفظ نجم الأسبوع', 'success');
+}
+
+window.switchHallAdminTab = switchHallAdminTab;
+window.createHallRoom = createHallRoom;
+window.addHallMatch = addHallMatch;
+window.createHallTournament = createHallTournament;
+window.updateHallBracketScore = updateHallBracketScore;
+window.saveHallWeeklyMvp = saveHallWeeklyMvp;
 // 💡 نظام الاقتراحات
 function openSuggestionModal() {
     document.getElementById('suggestion-modal').style.display = 'block';
