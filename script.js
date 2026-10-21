@@ -8666,7 +8666,10 @@ document.addEventListener('DOMContentLoaded', function() {
             else if (btnId === 'open-wheel-fullscreen-btn') overlayId = 'wheel-overlay';
             else if (btnId === 'open-game-fullscreen-btn') overlayId = 'game-overlay';
             else if (btnId === 'open-store-fullscreen-btn') overlayId = 'store-overlay';
-            else if (btnId === 'open-battle-fullscreen-btn') overlayId = 'battle-overlay';
+            else if (btnId === 'open-battle-fullscreen-btn') {
+                showToast('اللعبة قيد التطوير حالياً، سيتم إصلاحها قريباً', 'info');
+                return;
+            }
 
             if (overlayId) {
                 const overlay = document.getElementById(overlayId);
@@ -10897,6 +10900,8 @@ function updatePopularityBattleBalance() {
 
 // ⚔️ بدء ماتش ميكينغ السيرفر لمعركة الشعبية
 async function startPopularityBattle() {
+    showToast('اللعبة قيد التطوير حالياً، سيتم إصلاحها قريباً', 'info');
+    return;
     if (!(await ensurePopularityEntryPoints())) return;
     const username = getCurrentUsername() || 'المحارب';
     const lobby = document.getElementById('popularity-search-lobby');
