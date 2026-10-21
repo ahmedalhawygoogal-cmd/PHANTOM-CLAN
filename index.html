@@ -320,7 +320,7 @@
             <div class="hub-card" id="open-game-fullscreen-btn"><div class="hub-card-icon">🎮</div><div class="hub-card-title">الميني جيم</div><div class="hub-card-desc">اختبار سرعة الأصابع ونقاط إضافية</div></div>
             <div class="hub-card" id="open-vault-fullscreen-btn"><div class="hub-card-icon">🔒</div><div class="hub-card-title">الخزنة الاستثمارية</div><div class="hub-card-desc">تجميد واستثمار النقاط</div></div>
             <div class="hub-card" id="open-store-fullscreen-btn"><div class="hub-card-icon">🛒</div><div class="hub-card-title">المتجر والمزايا</div><div class="hub-card-desc">ألقاب، إطارات نيون، وكروت</div></div>
-            <div class="hub-card" id="open-battle-fullscreen-btn"><div class="hub-card-icon">⚔️</div><div class="hub-card-title">معركة الشعبية 1v1</div><div class="hub-card-desc">ساحة التنافس ودعم الـ PK</div></div>
+            <div class="hub-card" id="open-battle-fullscreen-btn" style="position:relative;"><div class="hub-card-icon">⚔️</div><div class="hub-card-title">معركة الشعبية 1v1</div><div class="hub-card-desc">ساحة التنافس ودعم الـ PK</div><span class="hub-badge" style="background:#ef4444; color:#fff;">قيد التطوير</span></div>
         </div>
     </div>
 </div>
@@ -1822,7 +1822,13 @@
                 if (typeof window.renderShop === 'function') window.renderShop();
                 else if (typeof renderShop === 'function') renderShop();
             });
-            setupServiceButton('open-battle-fullscreen-btn', 'battle-overlay');
+            const battleBtn = document.getElementById('open-battle-fullscreen-btn');
+            if (battleBtn) {
+                battleBtn.addEventListener('click', function(e) {
+                    e.stopImmediatePropagation();
+                    if (typeof showToast === 'function') showToast('اللعبة قيد التطوير حالياً، سيتم إصلاحها قريباً', 'info');
+                }, true);
+            }
 
             // ✅ حل مشكلة 31 + 41: الرجوع يرجع للهب لو اتفتحت منه، ويقفل لو لاء
             function setupCloseButton(closeBtnId, overlayId, isHubPage = false) {
