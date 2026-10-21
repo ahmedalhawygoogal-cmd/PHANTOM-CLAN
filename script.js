@@ -10943,6 +10943,7 @@ function setupGameMatchesRealtime() {
             .on('postgres_changes', { event: '*', schema: 'public', table: 'game_matches' }, (payload) => {
                 const row = payload.new || payload.record;
                 if (!row || row.status !== 'active') return;
+                if (row.game_type && row.game_type !== 'popularity') return;
                 if (!isGameMatchForCurrentUser(row)) return;
                 openPopularityMatchFromRow(row);
             })
@@ -10961,11 +10962,15 @@ async function joinPopularityGameMatchQueue() {
     setupGameMatchesRealtime();
 
     try {
-        const { data: waitingRows } = await client
+        const { data: waitingRows, error: waitingError } = await client
             .from('game_matches')
             .select('*')
+            .eq('game_type', 'popularity')
             .eq('status', 'waiting')
             .order('created_at', { ascending: true });
+        if (waitingError) {
+            console.error(waitingError);
+        }
 
         const waiting = (waitingRows || []).find((row) => {
             const aId = String(row.player_a_id || '');
@@ -10974,17 +10979,20 @@ async function joinPopularityGameMatchQueue() {
         });
 
         if (waiting && waiting.id) {
-            const { data: updated } = await client
+            const { data: updated, error: updateError } = await client
                 .from('game_matches')
                 .update({
                     player_b_id: userId,
                     player_b_name: username,
                     status: 'active',
-                    start_time: new Date().toISOString()
+                    started_at: new Date().toISOString()
                 })
                 .eq('id', waiting.id)
                 .eq('status', 'waiting')
                 .select();
+            if (updateError) {
+                console.error(updateError);
+            }
             const row = Array.isArray(updated) ? updated[0] : updated;
             if (row) {
                 currentGameMatchId = row.id;
@@ -10993,18 +11001,35 @@ async function joinPopularityGameMatchQueue() {
             }
         }
 
-        const { data: inserted } = await client
+        const matchId = 'gm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        const { data: inserted, error: insertError } = await client
             .from('game_matches')
             .insert([{
+                id: matchId,
+                game_type: 'popularity',
+                status: 'waiting',
                 player_a_id: userId,
                 player_a_name: username,
-                status: 'waiting',
+                player_b_id: null,
+                player_b_name: null,
+                score_a: 0,
+                score_b: 0,
+                winner_id: null,
+                winner_name: null,
+                started_at: null,
+                ended_at: null,
                 created_at: new Date().toISOString()
             }])
             .select();
+        if (insertError) {
+            console.error(insertError);
+        }
         const row = Array.isArray(inserted) ? inserted[0] : inserted;
         if (row) currentGameMatchId = row.id;
-    } catch (e) {}
+        else currentGameMatchId = matchId;
+    } catch (e) {
+        console.error(e);
+    }
 }
 
 async function cancelWaitingGameMatch() {
@@ -11017,15 +11042,20 @@ async function cancelWaitingGameMatch() {
     }
     try {
         if (currentGameMatchId) {
-            await client.from('game_matches').delete().eq('id', currentGameMatchId).eq('status', 'waiting');
+            const { error } = await client.from('game_matches').delete().eq('id', currentGameMatchId).eq('status', 'waiting');
+            if (error) console.error(error);
         }
         if (userId) {
-            await client.from('game_matches').delete().eq('player_a_id', userId).eq('status', 'waiting');
+            const { error } = await client.from('game_matches').delete().eq('player_a_id', userId).eq('status', 'waiting');
+            if (error) console.error(error);
         }
         if (username) {
-            await client.from('game_matches').delete().eq('player_a_name', username).eq('status', 'waiting');
+            const { error } = await client.from('game_matches').delete().eq('player_a_name', username).eq('status', 'waiting');
+            if (error) console.error(error);
         }
-    } catch (e) {}
+    } catch (e) {
+        console.error(e);
+    }
     currentGameMatchId = null;
 }
 
