@@ -8685,6 +8685,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 showToast('اللعبة قيد التطوير حالياً، سيتم إصلاحها قريباً', 'info');
                 return;
             }
+            else if (btnId === 'open-hall-fullscreen-btn') overlayId = 'hall-of-fame-overlay';
 
             if (overlayId) {
                 const overlay = document.getElementById(overlayId);
@@ -8694,6 +8695,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (overlayId === 'battle-overlay') {
                         if (typeof updatePopularityBattleBalance === 'function') updatePopularityBattleBalance();
                         if (typeof renderPopularityClanMembers === 'function') renderPopularityClanMembers();
+                    }
+                    if (overlayId === 'hall-of-fame-overlay' && typeof loadHallOfFamePublic === 'function') {
+                        loadHallOfFamePublic();
                     }
                 }
             }
@@ -8731,6 +8735,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setupCloseButton('game-close-btn', 'game-overlay');
     setupCloseButton('store-close-btn', 'store-overlay');
     setupCloseButton('battle-close-btn', 'battle-overlay');
+    setupCloseButton('hall-close-btn', 'hall-of-fame-overlay');
     setupCloseButton('profile-close-btn', 'profile-overlay');
     setupCloseButton('inventory-close-btn', 'inventory-overlay');
 });
@@ -14891,6 +14896,177 @@ function renderClanHealthCenter() {
 function initAdminPage5() {
     renderClanHealthCenter();
 }
+
+function splitHallPlayers(value) {
+    if (Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean);
+    if (!value) return [];
+    return String(value).split(/[,،\n]+/).map(v => v.trim()).filter(Boolean);
+}
+
+function hallPlayerIsMvp(playerName, mvpName) {
+    if (!playerName || !mvpName) return false;
+    return String(playerName).trim().toLowerCase() === String(mvpName).trim().toLowerCase();
+}
+
+function renderHallPlayerRow(name, mvpName, teamSide) {
+    const isMvp = hallPlayerIsMvp(name, mvpName);
+    const icon = teamSide === 'a' ? '👤' : '🐺';
+    return `<div class="hall-player-row${isMvp ? ' mvp' : ''}">
+        <div class="hall-player-avatar">${icon}</div>
+        <div class="hall-player-name">${escapeHTML(name)}</div>
+        ${isMvp ? '<div class="hall-mvp-badge">⭐ MVP</div>' : ''}
+    </div>`;
+}
+
+function switchHallPublicTab(tab) {
+    const rooms = document.getElementById('hall-public-tab-rooms');
+    const mvp = document.getElementById('hall-public-tab-mvp');
+    const bracket = document.getElementById('hall-public-tab-bracket');
+    if (rooms) rooms.style.display = tab === 'rooms' ? 'block' : 'none';
+    if (mvp) mvp.style.display = tab === 'mvp' ? 'block' : 'none';
+    if (bracket) bracket.style.display = tab === 'bracket' ? 'block' : 'none';
+    document.querySelectorAll('.hall-public-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-hall-public-tab') === tab);
+    });
+}
+
+function openHallOfFame() {
+    const overlay = document.getElementById('hall-of-fame-overlay');
+    const bottomNav = document.querySelector('.bottom-dock');
+    if (overlay) overlay.style.display = 'flex';
+    if (bottomNav) bottomNav.classList.add('hidden');
+    switchHallPublicTab('rooms');
+    loadHallOfFamePublic();
+}
+
+async function loadHallOfFamePublic() {
+    await Promise.all([loadHallPublicMatches(), loadHallPublicWeeklyMvp()]);
+}
+
+async function loadHallPublicMatches() {
+    const container = document.getElementById('hall-public-tab-rooms');
+    if (!container) return;
+    const client = ensureSupabaseClient();
+    if (!client) {
+        container.innerHTML = '<div class="hall-empty">تعذر الاتصال</div>';
+        return;
+    }
+    const [{ data: rooms, error: roomsError }, { data: matches, error: matchesError }] = await Promise.all([
+        client.from('hall_rooms').select('*').order('created_at', { ascending: false }),
+        client.from('hall_matches').select('*').order('created_at', { ascending: false })
+    ]);
+    if (roomsError || matchesError) {
+        console.error(roomsError || matchesError);
+        container.innerHTML = '<div class="hall-empty">فشل تحميل النتائج</div>';
+        return;
+    }
+    const roomList = Array.isArray(rooms) ? rooms : [];
+    const matchList = Array.isArray(matches) ? matches : [];
+    if (matchList.length === 0) {
+        container.innerHTML = '<div class="hall-empty">لا توجد نتائج رومات بعد</div>';
+        return;
+    }
+    const roomMap = {};
+    roomList.forEach(r => { roomMap[r.id] = r.name || 'روم'; });
+    const grouped = {};
+    matchList.forEach(m => {
+        const key = m.room_id || 'unknown';
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(m);
+    });
+    container.innerHTML = Object.keys(grouped).map(roomId => {
+        const title = escapeHTML(roomMap[roomId] || 'روم');
+        const cards = grouped[roomId].map(m => {
+            const teamA = m.team_a_name || 'فريق أ';
+            const teamB = m.team_b_name || 'فريق ب';
+            const scoreA = m.score_a == null ? 0 : m.score_a;
+            const scoreB = m.score_b == null ? 0 : m.score_b;
+            const playersA = splitHallPlayers(m.team_a_players);
+            const playersB = splitHallPlayers(m.team_b_players);
+            const mvpA = m.mvp_team_a || '';
+            const mvpB = m.mvp_team_b || '';
+            if (mvpA && !playersA.some(p => hallPlayerIsMvp(p, mvpA))) playersA.unshift(mvpA);
+            if (mvpB && !playersB.some(p => hallPlayerIsMvp(p, mvpB))) playersB.unshift(mvpB);
+            return `<article class="hall-match-card">
+                <div class="hall-match-top">
+                    <div class="hall-team-block">
+                        <div class="hall-team-logo a">👤</div>
+                        <div class="hall-team-name a">${escapeHTML(teamA)}</div>
+                        <div class="hall-team-tag">PLAY · FIGHT · WIN</div>
+                    </div>
+                    <div class="hall-score-wrap">
+                        <div class="hall-score-box">
+                            <div><span class="hall-score-num hall-score-a">${escapeHTML(scoreA)}</span><span class="hall-score-dash">-</span><span class="hall-score-num hall-score-b">${escapeHTML(scoreB)}</span></div>
+                        </div>
+                        <div class="hall-score-label">VICTORY</div>
+                    </div>
+                    <div class="hall-team-block">
+                        <div class="hall-team-logo b">🐺</div>
+                        <div class="hall-team-name b">${escapeHTML(teamB)}</div>
+                        <div class="hall-team-tag">STRONGER TOGETHER</div>
+                    </div>
+                </div>
+                <div class="hall-roster-grid">
+                    <div class="hall-roster-col">
+                        <div class="hall-roster-head a">${escapeHTML(teamA)}</div>
+                        ${playersA.length ? playersA.map(p => renderHallPlayerRow(p, mvpA, 'a')).join('') : '<div class="hall-empty">لا يوجد لاعبون</div>'}
+                    </div>
+                    <div class="hall-roster-col">
+                        <div class="hall-roster-head b">${escapeHTML(teamB)}</div>
+                        ${playersB.length ? playersB.map(p => renderHallPlayerRow(p, mvpB, 'b')).join('') : '<div class="hall-empty">لا يوجد لاعبون</div>'}
+                    </div>
+                </div>
+            </article>`;
+        }).join('');
+        return `<div class="hall-room-title">${title}</div>${cards}`;
+    }).join('');
+}
+
+async function loadHallPublicWeeklyMvp() {
+    const container = document.getElementById('hall-public-tab-mvp');
+    if (!container) return;
+    const client = ensureSupabaseClient();
+    if (!client) {
+        container.innerHTML = '<div class="hall-empty">تعذر الاتصال</div>';
+        return;
+    }
+    let { data, error } = await client.from('hall_weekly_mvp').select('*').order('created_at', { ascending: false }).limit(1);
+    if (error) {
+        const fallback = await client.from('hall_weekly_mvp').select('*').limit(20);
+        data = fallback.data;
+        error = fallback.error;
+        if (Array.isArray(data) && data.length) data = [data[data.length - 1]];
+    }
+    if (error) {
+        console.error(error);
+        container.innerHTML = '<div class="hall-empty">فشل تحميل نجم الأسبوع</div>';
+        return;
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) {
+        container.innerHTML = '<div class="hall-empty">لا يوجد نجم أسبوع بعد</div>';
+        return;
+    }
+    const name = row.member_name || row.name || 'مجهول';
+    const reason = row.reason || 'تم اختياره لأدائه المميز هذا الأسبوع.';
+    container.innerHTML = `<article class="hall-mvp-card">
+        <div class="hall-mvp-kicker">WEEKLY</div>
+        <div class="hall-mvp-title">MVP</div>
+        <div class="hall-mvp-avatar-wrap">
+            <div class="hall-mvp-crown">👑</div>
+            <div class="hall-mvp-avatar">👤</div>
+        </div>
+        <div class="hall-mvp-name-box">${escapeHTML(name)}</div>
+        <div class="hall-mvp-reason">
+            <div class="hall-mvp-reason-label">⭐ سبب الاختيار</div>
+            <div class="hall-mvp-reason-text">${escapeHTML(reason)}</div>
+        </div>
+    </article>`;
+}
+
+window.switchHallPublicTab = switchHallPublicTab;
+window.openHallOfFame = openHallOfFame;
+window.loadHallOfFamePublic = loadHallOfFamePublic;
 // 💡 نظام الاقتراحات
 function openSuggestionModal() {
     document.getElementById('suggestion-modal').style.display = 'block';

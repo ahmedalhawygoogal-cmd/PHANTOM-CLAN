@@ -321,6 +321,7 @@
             <div class="hub-card" id="open-vault-fullscreen-btn"><div class="hub-card-icon">🔒</div><div class="hub-card-title">الخزنة الاستثمارية</div><div class="hub-card-desc">تجميد واستثمار النقاط</div></div>
             <div class="hub-card" id="open-store-fullscreen-btn"><div class="hub-card-icon">🛒</div><div class="hub-card-title">المتجر والمزايا</div><div class="hub-card-desc">ألقاب، إطارات نيون، وكروت</div></div>
             <div class="hub-card" id="open-battle-fullscreen-btn" style="position:relative;"><div class="hub-card-icon">⚔️</div><div class="hub-card-title">معركة الشعبية 1v1</div><div class="hub-card-desc">ساحة التنافس ودعم الـ PK</div><span class="hub-badge" style="background:#ef4444; color:#fff;">قيد التطوير</span></div>
+            <div class="hub-card" id="open-hall-fullscreen-btn"><div class="hub-card-icon">🏆</div><div class="hub-card-title">قاعة المجد</div><div class="hub-card-desc">نتائج الرومات ونجم الأسبوع</div></div>
         </div>
     </div>
 </div>
@@ -546,6 +547,30 @@
 
         <!-- شبكة المتجر -->
         <div id="shop-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 0 10px 20px 10px;"></div>
+    </div>
+</div>
+
+<!-- 🏆 قاعة المجد (عامة) -->
+<div id="hall-of-fame-overlay" class="fullscreen-overlay" style="display:none;">
+    <div class="fullscreen-container hall-public-container">
+        <div class="fullscreen-header">
+            <h2>قاعة المجد</h2>
+            <button id="hall-close-btn" class="fullscreen-close-btn" type="button">[PH]</button>
+        </div>
+        <div class="hall-public-tabs">
+            <button type="button" class="hall-public-tab active" data-hall-public-tab="rooms" onclick="switchHallPublicTab('rooms')">نتايج الرومات</button>
+            <button type="button" class="hall-public-tab" data-hall-public-tab="mvp" onclick="switchHallPublicTab('mvp')">نجم الأسبوع</button>
+            <button type="button" class="hall-public-tab" data-hall-public-tab="bracket" onclick="switchHallPublicTab('bracket')">شجرة البطولات</button>
+        </div>
+        <div id="hall-public-tab-rooms" class="hall-public-panel"></div>
+        <div id="hall-public-tab-mvp" class="hall-public-panel" style="display:none;"></div>
+        <div id="hall-public-tab-bracket" class="hall-public-panel" style="display:none;">
+            <div class="hall-coming-soon">
+                <div class="hall-coming-soon-icon">🏆</div>
+                <div class="hall-coming-soon-title">شجرة البطولات</div>
+                <div class="hall-coming-soon-sub">Coming Soon</div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -1822,6 +1847,9 @@
                 if (typeof window.renderShop === 'function') window.renderShop();
                 else if (typeof renderShop === 'function') renderShop();
             });
+            setupServiceButton('open-hall-fullscreen-btn', 'hall-of-fame-overlay', function() {
+                if (typeof window.openHallOfFame === 'function') window.openHallOfFame();
+            });
             const battleBtn = document.getElementById('open-battle-fullscreen-btn');
             if (battleBtn) {
                 battleBtn.addEventListener('click', function(e) {
@@ -1861,6 +1889,7 @@
             setupCloseButton('game-close-btn', 'game-overlay', true);
             setupCloseButton('store-close-btn', 'store-overlay', true);
             setupCloseButton('battle-close-btn', 'battle-overlay', true);
+            setupCloseButton('hall-close-btn', 'hall-of-fame-overlay', true);
             setupCloseButton('profile-close-btn', 'profile-overlay', false);
             setupCloseButton('inventory-close-btn', 'inventory-overlay', false);
         });
@@ -2273,6 +2302,11 @@
         <div class="ghost-menu-item color-purple" onclick="closeGhostMenu(); openSuggestionModal();">
             <span class="ghost-menu-icon">💡</span>
             <span class="ghost-menu-label">الاقتراحات</span>
+        </div>
+
+        <div class="ghost-menu-item color-hall" onclick="closeGhostMenu(); openHallOfFame();">
+            <span class="ghost-menu-icon">🏆</span>
+            <span class="ghost-menu-label">قاعة المجد</span>
         </div>
         
         <div class="ghost-menu-item color-cyan" onclick="closeGhostMenu(); openSettings();">
