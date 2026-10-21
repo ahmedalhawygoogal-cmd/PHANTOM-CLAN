@@ -15140,8 +15140,10 @@ function renderHallPlayerRow(name, mvpName, teamSide) {
 function switchHallPublicTab(tab) {
     const rooms = document.getElementById('hall-public-tab-rooms');
     const mvp = document.getElementById('hall-public-tab-mvp');
+    const bracket = document.getElementById('hall-public-tab-bracket');
     if (rooms) rooms.style.display = tab === 'rooms' ? 'block' : 'none';
     if (mvp) mvp.style.display = tab === 'mvp' ? 'block' : 'none';
+    if (bracket) bracket.style.display = tab === 'bracket' ? 'block' : 'none';
     document.querySelectorAll('.hall-public-tab').forEach(btn => {
         btn.classList.toggle('active', btn.getAttribute('data-hall-public-tab') === tab);
     });
@@ -15157,7 +15159,7 @@ function openHallOfFame() {
 }
 
 async function loadHallOfFamePublic() {
-    await Promise.all([loadHallPublicMatches(), loadHallPublicWeeklyMvp()]);
+    await Promise.all([loadHallPublicMatches(), loadHallPublicWeeklyMvp(), loadHallPublicBracket()]);
 }
 
 async function loadHallPublicMatches() {
@@ -15279,6 +15281,216 @@ async function loadHallPublicWeeklyMvp() {
             <div class="hall-mvp-reason-text">${escapeHTML(reason)}</div>
         </div>
     </article>`;
+}
+
+function hallBracketName(match, side) {
+    if (!match) return '';
+    if (side === 'a') return match.player_a || match.team_a || match.team_a_name || '';
+    return match.player_b || match.team_b || match.team_b_name || '';
+}
+
+function hallBracketIsBye(match) {
+    if (!match) return false;
+    if (match.is_bye === true || match.bye === true) return true;
+    const b = hallBracketName(match, 'b');
+    return !b || String(b).toLowerCase() === 'bye';
+}
+
+function hallBracketWinner(match) {
+    if (!match) return '';
+    if (match.winner) return String(match.winner).trim();
+    const a = hallBracketName(match, 'a');
+    const b = hallBracketName(match, 'b');
+    if (hallBracketIsBye(match)) return a;
+    const sa = Number(match.score_a || 0);
+    const sb = Number(match.score_b || 0);
+    if (sa > sb) return a;
+    if (sb > sa) return b;
+    return '';
+}
+
+function hallRoundTitle(roundValue, matchCount, totalRounds) {
+    const named = String(roundValue || '').trim();
+    if (named && isNaN(Number(named))) return named;
+    if (matchCount <= 1 || Number(roundValue) === Number(totalRounds)) return 'النهائي';
+    if (matchCount === 2) return 'نصف النهائي';
+    if (matchCount === 4) return 'ربع النهائي';
+    if (matchCount === 8) return 'دور الـ 16';
+    return 'الجولة ' + (roundValue || matchCount);
+}
+
+function hallSortMatches(list) {
+    return list.slice().sort((a, b) => {
+        const ai = a.match_index != null ? Number(a.match_index) : 0;
+        const bi = b.match_index != null ? Number(b.match_index) : 0;
+        return ai - bi;
+    });
+}
+
+function hallGroupRounds(matches) {
+    const groups = {};
+    matches.forEach(m => {
+        const key = m.round_name || m.round || 1;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(m);
+    });
+    const keys = Object.keys(groups).sort((a, b) => {
+        const na = Number(a);
+        const nb = Number(b);
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        return String(a).localeCompare(String(b));
+    });
+    return keys.map(k => ({ key: k, matches: hallSortMatches(groups[k]) }));
+}
+
+function hallAdvanceRounds(roundList) {
+    if (!roundList.length) return roundList;
+    const rounds = roundList.map(r => ({ key: r.key, matches: r.matches.slice() }));
+    let guard = 0;
+    while (guard < 8) {
+        const last = rounds[rounds.length - 1];
+        if (last.matches.length <= 1) break;
+        const winners = last.matches.map(m => hallBracketWinner(m)).filter(Boolean);
+        if (!winners.length) break;
+        const nextMatches = [];
+        for (let i = 0; i < last.matches.length; i += 2) {
+            const w1 = hallBracketWinner(last.matches[i]) || '';
+            const w2 = last.matches[i + 1] ? (hallBracketWinner(last.matches[i + 1]) || '') : '';
+            const isBye = !w2 && !!w1;
+            nextMatches.push({
+                player_a: w1,
+                player_b: w2 || null,
+                winner: isBye ? w1 : '',
+                score_a: 0,
+                score_b: 0,
+                is_bye: isBye,
+                match_index: nextMatches.length,
+                round: rounds.length + 1
+            });
+        }
+        if (!nextMatches.length) break;
+        const existing = rounds.find(r => String(r.key) === String(rounds.length + 1) || r.matches.length === nextMatches.length && r !== last);
+        if (existing && existing !== last) break;
+        rounds.push({ key: rounds.length + 1, matches: nextMatches });
+        guard += 1;
+    }
+    return rounds;
+}
+
+function hallInitials(name) {
+    const t = String(name || '').trim();
+    if (!t) return 'PH';
+    const parts = t.split(/\s+/);
+    if (parts.length === 1) return t.slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+function renderHallBracketSlot(name, score, isWinner, isBye) {
+    const empty = !name;
+    const label = empty ? 'TBD' : escapeHTML(name);
+    const cls = [
+        'hall-br-slot',
+        isWinner ? 'winner' : '',
+        isBye ? 'bye' : '',
+        empty ? 'empty' : ''
+    ].filter(Boolean).join(' ');
+    return `<div class="${cls}">
+        <div class="hall-br-slot-ico">${empty ? '—' : escapeHTML(hallInitials(name))}</div>
+        <div class="hall-br-slot-meta">
+            <div class="hall-br-slot-name">${isBye && !empty ? label + ' <span class="hall-br-bye">Bye</span>' : label}</div>
+        </div>
+        <div class="hall-br-slot-score">${empty || isBye ? '' : escapeHTML(score == null ? 0 : score)}</div>
+        ${isWinner ? '<div class="hall-br-check">✓</div>' : ''}
+    </div>`;
+}
+
+function renderHallBracketMatch(match) {
+    const a = hallBracketName(match, 'a');
+    const b = hallBracketName(match, 'b');
+    const bye = hallBracketIsBye(match);
+    const winner = hallBracketWinner(match);
+    const aWin = winner && a && winner.toLowerCase() === String(a).toLowerCase();
+    const bWin = !bye && winner && b && winner.toLowerCase() === String(b).toLowerCase();
+    return `<div class="hall-br-match">
+        ${renderHallBracketSlot(a, match.score_a, aWin, bye && !!a)}
+        ${renderHallBracketSlot(bye ? '' : b, match.score_b, bWin, false)}
+    </div>`;
+}
+
+function renderHallBracketTree(tournamentName, roundList) {
+    const total = roundList.length;
+    const lastRound = roundList[roundList.length - 1];
+    const champ = lastRound && lastRound.matches[0] ? hallBracketWinner(lastRound.matches[0]) : '';
+    const columns = roundList.map((round, idx) => {
+        const title = hallRoundTitle(round.matches[0] && (round.matches[0].round_name || round.key), round.matches.length, total);
+        const pairs = [];
+        const ms = round.matches;
+        if (ms.length === 1) {
+            pairs.push(`<div class="hall-br-pair single">${renderHallBracketMatch(ms[0])}</div>`);
+        } else {
+            for (let i = 0; i < ms.length; i += 2) {
+                const second = ms[i + 1] ? renderHallBracketMatch(ms[i + 1]) : '';
+                pairs.push(`<div class="hall-br-pair">${renderHallBracketMatch(ms[i])}${second}</div>`);
+            }
+        }
+        return `<div class="hall-br-round" data-round="${idx + 1}">
+            <div class="hall-br-round-title">${escapeHTML(title)}</div>
+            <div class="hall-br-round-body">${pairs.join('')}</div>
+        </div>`;
+    }).join('');
+    return `<section class="hall-bracket-block">
+        <div class="hall-bracket-heading">
+            <div class="hall-bracket-kicker">TOURNAMENT BRACKET</div>
+            <div class="hall-bracket-sub">${escapeHTML(tournamentName || 'KNOCKOUT STAGE')}</div>
+        </div>
+        <div class="hall-champion-box ${champ ? 'has-champ' : ''}">
+            <div class="hall-champion-trophy">🏆</div>
+            <div class="hall-champion-name">${champ ? escapeHTML(champ) : 'CHAMPION'}</div>
+            <div class="hall-champion-label">CHAMPION</div>
+        </div>
+        <div class="hall-bracket-scroll">
+            <div class="hall-bracket-tree">${columns}</div>
+        </div>
+    </section>`;
+}
+
+async function loadHallPublicBracket() {
+    const container = document.getElementById('hall-public-tab-bracket');
+    if (!container) return;
+    const client = ensureSupabaseClient();
+    if (!client) {
+        container.innerHTML = '<div class="hall-empty">تعذر الاتصال</div>';
+        return;
+    }
+    const [{ data: tournaments, error: tErr }, { data: matches, error: mErr }] = await Promise.all([
+        client.from('hall_tournaments').select('*').order('created_at', { ascending: false }),
+        client.from('hall_bracket').select('*')
+    ]);
+    if (tErr || mErr) {
+        console.error(tErr || mErr);
+        container.innerHTML = '<div class="hall-empty">فشل تحميل شجرة البطولات</div>';
+        return;
+    }
+    const tourList = Array.isArray(tournaments) ? tournaments : [];
+    const matchList = Array.isArray(matches) ? matches : [];
+    if (!tourList.length && !matchList.length) {
+        container.innerHTML = '<div class="hall-empty">لا توجد بطولات بعد</div>';
+        return;
+    }
+    const byTour = {};
+    matchList.forEach(m => {
+        const id = m.tournament_id || 'unknown';
+        if (!byTour[id]) byTour[id] = [];
+        byTour[id].push(m);
+    });
+    const order = tourList.length ? tourList : Object.keys(byTour).map(id => ({ id: id, name: 'بطولة' }));
+    const html = order.map(t => {
+        const rows = byTour[t.id] || [];
+        if (!rows.length) return '';
+        const grouped = hallAdvanceRounds(hallGroupRounds(rows));
+        return renderHallBracketTree(t.name || 'بطولة', grouped);
+    }).filter(Boolean).join('');
+    container.innerHTML = html || '<div class="hall-empty">لا توجد شجرة بطولات بعد</div>';
 }
 
 window.switchHallPublicTab = switchHallPublicTab;

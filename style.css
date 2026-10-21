@@ -10135,3 +10135,228 @@ body.disable-animations *::after {
     .hall-mvp-title { font-size: 1.8rem; }
     .hall-mvp-avatar-wrap { width: 120px; height: 120px; }
 }
+
+.hall-bracket-block {
+    margin-bottom: 24px;
+}
+
+.hall-bracket-heading {
+    text-align: center;
+    margin-bottom: 10px;
+}
+
+.hall-bracket-kicker {
+    font-weight: 900;
+    letter-spacing: 0.28em;
+    font-size: 0.95rem;
+    background: linear-gradient(90deg, #c084fc, #22d3ee);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+.hall-bracket-sub {
+    color: #64748b;
+    font-size: 0.7rem;
+    letter-spacing: 0.22em;
+    margin-top: 4px;
+}
+
+.hall-champion-box {
+    max-width: 260px;
+    margin: 8px auto 18px;
+    padding: 14px 18px 12px;
+    text-align: center;
+    border-radius: 18px;
+    border: 1px solid rgba(168, 85, 247, 0.55);
+    background: linear-gradient(180deg, rgba(124, 58, 237, 0.18), rgba(8, 10, 22, 0.95));
+    box-shadow: 0 0 28px rgba(34, 211, 238, 0.18), 0 0 22px rgba(168, 85, 247, 0.25);
+}
+
+.hall-champion-box.has-champ {
+    border-color: #22d3ee;
+    box-shadow: 0 0 30px rgba(34, 211, 238, 0.35);
+}
+
+.hall-champion-trophy {
+    font-size: 1.8rem;
+    filter: drop-shadow(0 0 10px rgba(34, 211, 238, 0.7));
+}
+
+.hall-champion-name {
+    color: #fff;
+    font-weight: 900;
+    font-size: 1.15rem;
+    margin-top: 4px;
+}
+
+.hall-champion-label {
+    color: #67e8f9;
+    font-size: 0.68rem;
+    letter-spacing: 0.28em;
+    font-weight: 800;
+    margin-top: 2px;
+}
+
+.hall-bracket-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    padding: 8px 4px 18px;
+    -webkit-overflow-scrolling: touch;
+}
+
+.hall-bracket-tree {
+    display: flex;
+    flex-direction: row-reverse;
+    align-items: stretch;
+    gap: 0;
+    min-width: min-content;
+    direction: ltr;
+}
+
+.hall-br-round {
+    display: flex;
+    flex-direction: column;
+    min-width: 210px;
+}
+
+.hall-br-round-title {
+    text-align: center;
+    color: #c4b5fd;
+    font-size: 0.72rem;
+    font-weight: 900;
+    letter-spacing: 0.12em;
+    margin-bottom: 10px;
+    white-space: nowrap;
+}
+
+.hall-br-round-body {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    flex: 1;
+    min-height: 280px;
+}
+
+.hall-br-pair {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    flex: 1;
+    position: relative;
+    padding-right: 22px;
+}
+
+.hall-br-pair::before {
+    content: "";
+    position: absolute;
+    right: 0;
+    top: 25%;
+    bottom: 25%;
+    width: 14px;
+    border-top: 2px solid #22d3ee;
+    border-bottom: 2px solid #a855f7;
+    border-right: 2px solid #7c3aed;
+    border-radius: 0 8px 8px 0;
+    box-shadow: 2px 0 10px rgba(34, 211, 238, 0.25);
+    pointer-events: none;
+}
+
+.hall-br-pair.single::before {
+    display: none;
+}
+
+.hall-br-round:last-child .hall-br-pair::before {
+    display: none;
+}
+
+.hall-br-round:last-child .hall-br-pair {
+    padding-right: 0;
+}
+
+.hall-br-match {
+    width: 188px;
+    margin: 8px 0;
+    border-radius: 14px;
+    border: 1px solid rgba(124, 58, 237, 0.45);
+    background: rgba(8, 10, 24, 0.92);
+    box-shadow: 0 0 16px rgba(124, 58, 237, 0.18);
+    overflow: hidden;
+    white-space: normal;
+}
+
+.hall-br-slot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    min-height: 42px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.hall-br-slot:last-child { border-bottom: none; }
+
+.hall-br-slot.winner {
+    background: rgba(34, 211, 238, 0.08);
+    box-shadow: inset 0 0 12px rgba(34, 197, 94, 0.15);
+}
+
+.hall-br-slot.bye {
+    background: rgba(250, 204, 21, 0.06);
+}
+
+.hall-br-slot.empty {
+    opacity: 0.45;
+}
+
+.hall-br-slot-ico {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.62rem;
+    font-weight: 900;
+    color: #67e8f9;
+    border: 1px solid rgba(34, 211, 238, 0.4);
+    background: #0b1020;
+    flex-shrink: 0;
+}
+
+.hall-br-slot-meta { flex: 1; min-width: 0; }
+
+.hall-br-slot-name {
+    color: #e2e8f0;
+    font-weight: 800;
+    font-size: 0.78rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hall-br-slot-score {
+    color: #22d3ee;
+    font-weight: 900;
+    font-size: 0.85rem;
+    min-width: 16px;
+    text-align: center;
+}
+
+.hall-br-check {
+    color: #22c55e;
+    font-weight: 900;
+    font-size: 0.85rem;
+}
+
+.hall-br-bye {
+    color: #facc15;
+    font-size: 0.65rem;
+    font-weight: 800;
+}
+
+@media (max-width: 640px) {
+    .hall-br-round { min-width: 190px; }
+    .hall-br-match { width: 170px; }
+}
