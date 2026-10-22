@@ -907,7 +907,7 @@
     <button class="admin-back-btn" onclick="document.getElementById('admin-page-6').style.display='none'; document.getElementById('admin-dashboard-overlay').style.display='flex';">[PH]</button>
     <div class="admin-page-content">
         <div class="admin-section">
-            <h3>🏆 قاعة المجد</h3>
+            <h3>قاعة المجد</h3>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
                 <button type="button" class="btn-primary hall-tab-btn active" data-hall-tab="rooms" onclick="switchHallAdminTab('rooms')">نتايج الرومات</button>
                 <button type="button" class="btn-secondary hall-tab-btn" data-hall-tab="tournaments" onclick="switchHallAdminTab('tournaments')">إدارة البطولات</button>
@@ -916,33 +916,36 @@
 
             <div id="hall-tab-rooms">
                 <input type="text" id="hall-room-name" placeholder="اسم الروم">
-                <button type="button" class="btn-success" style="margin-top:8px; width:100%;" onclick="createHallRoom()">إنشاء روم</button>
-                <div id="hall-current-room" style="margin-top:10px; color:var(--cyan); font-weight:800;"></div>
-                <div style="margin-top:14px; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                    <input type="text" id="hall-match-team-a" placeholder="فريق أ">
-                    <input type="text" id="hall-match-team-b" placeholder="فريق ب">
-                    <input type="number" id="hall-match-score-a" placeholder="نتيجة أ">
-                    <input type="number" id="hall-match-score-b" placeholder="نتيجة ب">
-                    <input type="text" id="hall-match-players-a" placeholder="لاعبو أ (مفصولة بفاصلة)" style="grid-column:1 / -1;">
-                    <input type="text" id="hall-match-players-b" placeholder="لاعبو ب (مفصولة بفاصلة)" style="grid-column:1 / -1;">
-                    <input type="text" id="hall-match-mvp-a" placeholder="MVP فريق أ">
-                    <input type="text" id="hall-match-mvp-b" placeholder="MVP فريق ب">
-                </div>
-                <button type="button" class="btn-primary" style="margin-top:10px; width:100%;" onclick="addHallMatch()">إضافة الماتش</button>
+                <div id="hall-admin-matches-list" style="margin-top:12px;"></div>
+                <button type="button" class="btn-secondary" style="margin-top:10px; width:100%;" onclick="addHallAdminMatchCard()">إضافة مباراة</button>
+                <button type="button" class="btn-success" style="margin-top:8px; width:100%;" onclick="saveHallRoomWithMatches()">حفظ الروم</button>
             </div>
 
             <div id="hall-tab-tournaments" style="display:none;">
                 <input type="text" id="hall-tournament-name" placeholder="اسم البطولة">
-                <textarea id="hall-tournament-players" placeholder="أسماء المشاركين (مفصولة بفاصلة)" style="width:100%; min-height:90px; margin-top:8px;"></textarea>
-                <button type="button" class="btn-success" style="margin-top:8px; width:100%;" onclick="createHallTournament()">إنشاء البطولة وتوليد الشجرة</button>
-                <div id="hall-bracket-list" style="margin-top:12px;"></div>
+                <input type="text" id="hall-tournament-players" placeholder="المشاركون" readonly style="margin-top:8px;">
+                <button type="button" class="btn-secondary" style="margin-top:8px; width:100%;" onclick="openPlayerSelector('hall-tournament-players')">اختيار المشاركين</button>
+                <button type="button" class="btn-success" style="margin-top:8px; width:100%;" onclick="generateHallLiveBracket()">توليد الشجرة</button>
+                <div id="hall-admin-bracket-tree" style="margin-top:12px;"></div>
             </div>
 
             <div id="hall-tab-mvp" style="display:none;">
-                <input type="text" id="hall-mvp-name" placeholder="اسم العضو">
+                <select id="hall-mvp-name"><option value="">اختر العضو</option></select>
                 <input type="text" id="hall-mvp-reason" placeholder="السبب" style="margin-top:8px;">
-                <button type="button" class="btn-success" style="margin-top:8px; width:100%;" onclick="saveHallWeeklyMvp()">حفظ نجم الأسبوع</button>
+                <button type="button" class="btn-success" style="margin-top:8px; width:100%;" onclick="saveHallWeeklyMvp()">حفظ</button>
             </div>
+        </div>
+    </div>
+</div>
+
+<div id="hall-player-selector-overlay" class="hall-player-selector-overlay" style="display:none;">
+    <div class="hall-player-selector-card">
+        <div class="hall-player-selector-head">اختيار اللاعبين</div>
+        <div id="hall-player-selector-list" class="hall-player-selector-list"></div>
+        <input type="text" id="hall-player-selector-extra" placeholder="لاعبين إضافيين (مفصولة بفاصلة)">
+        <div style="display:flex; gap:8px; margin-top:10px;">
+            <button type="button" class="btn-success" style="flex:1;" onclick="confirmPlayerSelector()">تأكيد</button>
+            <button type="button" class="btn-secondary" style="flex:1;" onclick="closePlayerSelector()">إلغاء</button>
         </div>
     </div>
 </div>

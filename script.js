@@ -14898,8 +14898,53 @@ function initAdminPage5() {
     renderClanHealthCenter();
 }
 
-let hallCurrentRoomId = null;
-let hallCurrentRoomName = '';
+let hallCurrentTournamentId = null;
+let hallCurrentTournamentName = '';
+let hallAdminMembersCache = [];
+let hallPlayerSelectorTarget = '';
+let hallAdminMatchCardSeq = 0;
+
+function generateHallId() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return Date.now().toString() + '_' + Math.random().toString(36).slice(2, 10);
+}
+
+function parseHallNameList(value) {
+    return String(value || '').split(/[,،\n]+/).map(n => n.trim()).filter(Boolean);
+}
+
+async function fetchHallMembers() {
+    const client = ensureSupabaseClient();
+    let names = [];
+    if (client) {
+        try {
+            const { data, error } = await client.from('members').select('name');
+            if (error) {
+                console.error(error);
+            } else if (Array.isArray(data)) {
+                names = data.map(m => m && m.name).filter(Boolean);
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+    if (!names.length && typeof getFullRoster === 'function') {
+        names = getFullRoster().map(m => m && m.name).filter(Boolean);
+    }
+    names.sort((a, b) => String(a).localeCompare(String(b), 'ar'));
+    hallAdminMembersCache = names;
+    return names;
+}
+
+function fillHallMvpMemberSelect(members) {
+    const select = document.getElementById('hall-mvp-name');
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = '<option value="">اختر العضو</option>' + (members || []).map(n => `<option value="${escapeHTML(n)}">${escapeHTML(n)}</option>`).join('');
+    if (current) select.value = current;
+}
 
 function switchHallAdminTab(tab) {
     const rooms = document.getElementById('hall-tab-rooms');
@@ -14916,76 +14961,164 @@ function switchHallAdminTab(tab) {
     });
 }
 
-function initHallOfFameAdmin() {
+async function initHallOfFameAdmin() {
     switchHallAdminTab('rooms');
+    const members = await fetchHallMembers();
+    fillHallMvpMemberSelect(members);
+    const list = document.getElementById('hall-admin-matches-list');
+    if (list && !list.children.length) addHallAdminMatchCard();
 }
 
-async function createHallRoom() {
-    const nameEl = document.getElementById('hall-room-name');
-    const name = nameEl ? nameEl.value.trim() : '';
+function refreshHallCardMvpSelects(cardId) {
+    const playersA = parseHallNameList((document.getElementById('hall-card-players-a-' + cardId) || {}).value || '');
+    const playersB = parseHallNameList((document.getElementById('hall-card-players-b-' + cardId) || {}).value || '');
+    const fill = (selectId, names) => {
+        const el = document.getElementById(selectId);
+        if (!el) return;
+        const current = el.value;
+        el.innerHTML = '<option value="">MVP</option>' + names.map(n => `<option value="${escapeHTML(n)}">${escapeHTML(n)}</option>`).join('');
+        if (current && names.indexOf(current) !== -1) el.value = current;
+    };
+    fill('hall-card-mvp-a-' + cardId, playersA);
+    fill('hall-card-mvp-b-' + cardId, playersB);
+}
+
+function addHallAdminMatchCard() {
+    const list = document.getElementById('hall-admin-matches-list');
+    if (!list) return;
+    hallAdminMatchCardSeq += 1;
+    const id = String(hallAdminMatchCardSeq);
+    const card = document.createElement('div');
+    card.className = 'hall-admin-match-card';
+    card.setAttribute('data-match-card', id);
+    card.innerHTML = `<div class="hall-admin-match-head">مباراة ${id}</div>
+        <div class="hall-admin-match-grid">
+            <input type="text" id="hall-card-team-a-${id}" placeholder="فريق أ">
+            <input type="text" id="hall-card-team-b-${id}" placeholder="فريق ب">
+            <input type="number" id="hall-card-score-a-${id}" placeholder="نتيجة أ">
+            <input type="number" id="hall-card-score-b-${id}" placeholder="نتيجة ب">
+            <input type="text" id="hall-card-players-a-${id}" placeholder="لاعبو أ" oninput="refreshHallCardMvpSelects('${id}')">
+            <input type="text" id="hall-card-players-b-${id}" placeholder="لاعبو ب" oninput="refreshHallCardMvpSelects('${id}')">
+            <button type="button" class="btn-secondary" onclick="openPlayerSelector('hall-card-players-a-${id}')">اختيار اللاعبين</button>
+            <button type="button" class="btn-secondary" onclick="openPlayerSelector('hall-card-players-b-${id}')">اختيار اللاعبين</button>
+            <select id="hall-card-mvp-a-${id}"><option value="">MVP أ</option></select>
+            <select id="hall-card-mvp-b-${id}"><option value="">MVP ب</option></select>
+        </div>`;
+    list.appendChild(card);
+}
+
+async function openPlayerSelector(targetInputId) {
+    hallPlayerSelectorTarget = targetInputId;
+    const overlay = document.getElementById('hall-player-selector-overlay');
+    const list = document.getElementById('hall-player-selector-list');
+    const extra = document.getElementById('hall-player-selector-extra');
+    if (!overlay || !list) return;
+    const members = hallAdminMembersCache.length ? hallAdminMembersCache : await fetchHallMembers();
+    const current = parseHallNameList(((document.getElementById(targetInputId) || {}).value || ''));
+    const currentSet = {};
+    current.forEach(n => { currentSet[n.toLowerCase()] = n; });
+    const memberSet = {};
+    list.innerHTML = members.map(n => {
+        memberSet[n.toLowerCase()] = true;
+        const checked = currentSet[n.toLowerCase()] ? 'checked' : '';
+        return `<label class="hall-player-option"><input type="checkbox" value="${escapeHTML(n)}" ${checked}><span>${escapeHTML(n)}</span></label>`;
+    }).join('') || '<div class="hall-empty">لا يوجد أعضاء</div>';
+    if (extra) {
+        extra.value = current.filter(n => !memberSet[n.toLowerCase()]).join(', ');
+    }
+    overlay.style.display = 'flex';
+}
+
+function closePlayerSelector() {
+    const overlay = document.getElementById('hall-player-selector-overlay');
+    if (overlay) overlay.style.display = 'none';
+    hallPlayerSelectorTarget = '';
+}
+
+function confirmPlayerSelector() {
+    const target = document.getElementById(hallPlayerSelectorTarget);
+    const list = document.getElementById('hall-player-selector-list');
+    const extra = document.getElementById('hall-player-selector-extra');
+    if (!target || !list) {
+        closePlayerSelector();
+        return;
+    }
+    const selected = Array.from(list.querySelectorAll('input[type="checkbox"]:checked')).map(el => el.value.trim()).filter(Boolean);
+    const custom = parseHallNameList(extra ? extra.value : '');
+    const seen = {};
+    const merged = [];
+    selected.concat(custom).forEach(n => {
+        const key = n.toLowerCase();
+        if (seen[key]) return;
+        seen[key] = true;
+        merged.push(n);
+    });
+    const targetId = hallPlayerSelectorTarget;
+    target.value = merged.join(', ');
+    target.dispatchEvent(new Event('input'));
+    const match = String(targetId).match(/hall-card-players-[ab]-(\d+)/);
+    if (match) refreshHallCardMvpSelects(match[1]);
+    closePlayerSelector();
+}
+
+async function saveHallRoomWithMatches() {
+    const name = ((document.getElementById('hall-room-name') || {}).value || '').trim();
     if (!name) {
         showToast('أدخل اسم الروم', 'error');
         return;
     }
-    const client = ensureSupabaseClient();
-    if (!client) {
-        showToast('تعذر الاتصال', 'error');
+    const cards = Array.from(document.querySelectorAll('.hall-admin-match-card'));
+    if (!cards.length) {
+        showToast('أضف مباراة واحدة على الأقل', 'error');
         return;
     }
-    const { data, error } = await client.from('hall_rooms').insert([{ name: name }]).select();
-    if (error) {
-        console.error(error);
-        showToast('فشل إنشاء الروم', 'error');
-        return;
-    }
-    const row = Array.isArray(data) ? data[0] : data;
-    hallCurrentRoomId = row && row.id;
-    hallCurrentRoomName = name;
-    const label = document.getElementById('hall-current-room');
-    if (label) label.textContent = 'الروم الحالي: ' + name;
-    if (nameEl) nameEl.value = '';
-    showToast('تم إنشاء الروم', 'success');
-}
-
-async function addHallMatch() {
-    if (!hallCurrentRoomId) {
-        showToast('أنشئ روم أولاً', 'error');
-        return;
-    }
-    const teamA = (document.getElementById('hall-match-team-a') || {}).value || '';
-    const teamB = (document.getElementById('hall-match-team-b') || {}).value || '';
-    const scoreA = Number((document.getElementById('hall-match-score-a') || {}).value || 0);
-    const scoreB = Number((document.getElementById('hall-match-score-b') || {}).value || 0);
-    const playersA = ((document.getElementById('hall-match-players-a') || {}).value || '').trim();
-    const playersB = ((document.getElementById('hall-match-players-b') || {}).value || '').trim();
-    const mvpA = ((document.getElementById('hall-match-mvp-a') || {}).value || '').trim();
-    const mvpB = ((document.getElementById('hall-match-mvp-b') || {}).value || '').trim();
-    if (!teamA.trim() || !teamB.trim()) {
-        showToast('أدخل اسمي الفريقين', 'error');
-        return;
+    const matches = [];
+    for (const card of cards) {
+        const id = card.getAttribute('data-match-card');
+        const teamA = ((document.getElementById('hall-card-team-a-' + id) || {}).value || '').trim();
+        const teamB = ((document.getElementById('hall-card-team-b-' + id) || {}).value || '').trim();
+        if (!teamA || !teamB) {
+            showToast('أكمل أسماء الفرق في كل مباراة', 'error');
+            return;
+        }
+        matches.push({
+            team_a_name: teamA,
+            team_b_name: teamB,
+            score_a: Number((document.getElementById('hall-card-score-a-' + id) || {}).value || 0),
+            score_b: Number((document.getElementById('hall-card-score-b-' + id) || {}).value || 0),
+            team_a_players: ((document.getElementById('hall-card-players-a-' + id) || {}).value || '').trim(),
+            team_b_players: ((document.getElementById('hall-card-players-b-' + id) || {}).value || '').trim(),
+            mvp_team_a: ((document.getElementById('hall-card-mvp-a-' + id) || {}).value || '').trim(),
+            mvp_team_b: ((document.getElementById('hall-card-mvp-b-' + id) || {}).value || '').trim()
+        });
     }
     const client = ensureSupabaseClient();
     if (!client) {
         showToast('تعذر الاتصال', 'error');
         return;
     }
-    const { error } = await client.from('hall_matches').insert([{
-        room_id: hallCurrentRoomId,
-        team_a_name: teamA.trim(),
-        team_b_name: teamB.trim(),
-        score_a: scoreA,
-        score_b: scoreB,
-        team_a_players: playersA,
-        team_b_players: playersB,
-        mvp_team_a: mvpA,
-        mvp_team_b: mvpB
-    }]);
-    if (error) {
-        console.error(error);
-        showToast('فشل حفظ الماتش', 'error');
-        return;
+    const roomId = generateHallId();
+    try {
+        const { data, error } = await client.from('hall_rooms').insert([{ id: roomId, name: name }]).select();
+        if (error) {
+            console.error(error);
+            showToast('فشل حفظ الروم', 'error');
+            return;
+        }
+        const saved = Array.isArray(data) ? data[0] : data;
+        const savedRoomId = (saved && saved.id) || roomId;
+        const rows = matches.map(m => Object.assign({ id: generateHallId(), room_id: savedRoomId }, m));
+        const { error: matchError } = await client.from('hall_matches').insert(rows);
+        if (matchError) {
+            console.error(matchError);
+            showToast('تم إنشاء الروم لكن فشل حفظ المباريات', 'error');
+            return;
+        }
+        showToast('تم حفظ الروم', 'success');
+    } catch (e) {
+        console.error(e);
+        showToast('فشل حفظ الروم', 'error');
     }
-    showToast('تم إضافة الماتش', 'success');
 }
 
 function pairHallParticipants(names) {
@@ -15001,10 +15134,38 @@ function pairHallParticipants(names) {
     return matches;
 }
 
-async function createHallTournament() {
+function buildHallLiveRounds(players) {
+    const rounds = [];
+    let current = players.slice();
+    let round = 1;
+    while (current.length > 0) {
+        const matches = [];
+        for (let i = 0; i < current.length; i += 2) {
+            const a = current[i] || null;
+            const b = current[i + 1] || null;
+            const isBye = !!a && !b;
+            matches.push({
+                player_a: a,
+                player_b: b,
+                winner: isBye ? a : null,
+                is_bye: isBye,
+                match_index: matches.length,
+                round: round,
+                score_a: null,
+                score_b: null
+            });
+        }
+        rounds.push(matches);
+        if (matches.length <= 1) break;
+        current = matches.map(m => m.winner || '');
+        round += 1;
+    }
+    return rounds;
+}
+
+async function generateHallLiveBracket() {
     const name = ((document.getElementById('hall-tournament-name') || {}).value || '').trim();
-    const raw = ((document.getElementById('hall-tournament-players') || {}).value || '');
-    const players = raw.split(',').map(n => n.trim()).filter(Boolean);
+    const players = parseHallNameList(((document.getElementById('hall-tournament-players') || {}).value || ''));
     if (!name || players.length < 2) {
         showToast('أدخل اسم البطولة ومشاركين', 'error');
         return;
@@ -15014,75 +15175,146 @@ async function createHallTournament() {
         showToast('تعذر الاتصال', 'error');
         return;
     }
-    const { data, error } = await client.from('hall_tournaments').insert([{
-        name: name,
-        participants: players.join(',')
-    }]).select();
-    if (error) {
-        console.error(error);
+    const tournamentId = generateHallId();
+    try {
+        const { data, error } = await client.from('hall_tournaments').insert([{
+            id: tournamentId,
+            name: name,
+            participants: players.join(',')
+        }]).select();
+        if (error) {
+            console.error(error);
+            showToast('فشل إنشاء البطولة', 'error');
+            return;
+        }
+        const tournament = Array.isArray(data) ? data[0] : data;
+        const savedId = (tournament && tournament.id) || tournamentId;
+        const rounds = buildHallLiveRounds(players);
+        const rows = [];
+        rounds.forEach(matches => {
+            matches.forEach(m => {
+                rows.push({
+                    id: generateHallId(),
+                    tournament_id: savedId,
+                    round: m.round,
+                    match_index: m.match_index,
+                    player_a: m.player_a,
+                    player_b: m.player_b,
+                    winner: m.winner,
+                    score_a: m.score_a,
+                    score_b: m.score_b,
+                    is_bye: m.is_bye
+                });
+            });
+        });
+        const { error: bracketError } = await client.from('hall_bracket').insert(rows);
+        if (bracketError) {
+            console.error(bracketError);
+            showToast('تم إنشاء البطولة لكن فشل توليد الشجرة', 'error');
+            return;
+        }
+        hallCurrentTournamentId = savedId;
+        hallCurrentTournamentName = name;
+        await renderHallAdminLiveBracket();
+        showToast('تم توليد الشجرة', 'success');
+    } catch (e) {
+        console.error(e);
         showToast('فشل إنشاء البطولة', 'error');
-        return;
     }
-    const tournament = Array.isArray(data) ? data[0] : data;
-    const pairs = pairHallParticipants(players);
-    const rows = pairs.map((m, idx) => ({
-        tournament_id: tournament.id,
-        round: 1,
-        match_index: idx,
-        player_a: m.player_a,
-        player_b: m.player_b,
-        winner: m.winner,
-        score_a: 0,
-        score_b: 0,
-        is_bye: m.bye
-    }));
-    const { data: bracketRows, error: bracketError } = await client.from('hall_bracket').insert(rows).select();
-    if (bracketError) {
-        console.error(bracketError);
-        showToast('تم إنشاء البطولة لكن فشل توليد الشجرة', 'error');
-        return;
-    }
-    renderHallBracket(bracketRows || rows);
-    showToast('تم إنشاء البطولة وتوليد الشجرة', 'success');
 }
 
-function renderHallBracket(matches) {
-    const list = document.getElementById('hall-bracket-list');
-    if (!list) return;
-    if (!matches || matches.length === 0) {
-        list.innerHTML = '';
+async function renderHallAdminLiveBracket() {
+    const container = document.getElementById('hall-admin-bracket-tree');
+    if (!container) return;
+    if (!hallCurrentTournamentId) {
+        container.innerHTML = '';
         return;
     }
-    list.innerHTML = matches.map(m => {
-        const id = m.id || '';
-        const a = escapeHTML(m.player_a || '-');
-        const b = m.is_bye || !m.player_b ? 'Bye' : escapeHTML(m.player_b);
-        const byeNote = (m.is_bye || !m.player_b) ? '<div style="color:#ffd700; font-size:0.8rem;">تأهل تلقائي</div>' : '';
-        return `<div class="admin-section" style="margin-top:8px;">
-            <div style="font-weight:800; color:#fff;">${a} vs ${b}</div>
-            ${byeNote}
-            ${(!m.is_bye && m.player_b) ? `<div style="display:flex; gap:8px; margin-top:8px;">
-                <input type="number" id="hall-br-score-a-${id}" placeholder="نتيجة أ" value="${m.score_a || 0}">
-                <input type="number" id="hall-br-score-b-${id}" placeholder="نتيجة ب" value="${m.score_b || 0}">
-            </div>
-            <button type="button" class="btn-primary" style="margin-top:8px; width:100%;" onclick="updateHallBracketScore('${id}')">حفظ النتيجة</button>` : ''}
-        </div>`;
-    }).join('');
+    const client = ensureSupabaseClient();
+    if (!client) return;
+    try {
+        const { data, error } = await client.from('hall_bracket').select('*').eq('tournament_id', hallCurrentTournamentId);
+        if (error) {
+            console.error(error);
+            container.innerHTML = '<div class="hall-empty">فشل تحميل الشجرة</div>';
+            return;
+        }
+        const grouped = hallGroupRounds(Array.isArray(data) ? data : []);
+        container.innerHTML = renderHallBracketTree(hallCurrentTournamentName || 'بطولة', grouped, true);
+    } catch (e) {
+        console.error(e);
+    }
 }
 
 async function updateHallBracketScore(matchId) {
     if (!matchId) return;
-    const scoreA = Number((document.getElementById('hall-br-score-a-' + matchId) || {}).value || 0);
-    const scoreB = Number((document.getElementById('hall-br-score-b-' + matchId) || {}).value || 0);
-    const client = ensureSupabaseClient();
-    if (!client) return;
-    const { error } = await client.from('hall_bracket').update({ score_a: scoreA, score_b: scoreB }).eq('id', matchId);
-    if (error) {
-        console.error(error);
-        showToast('فشل حفظ النتيجة', 'error');
+    const scoreAEl = document.getElementById('hall-br-score-a-' + matchId);
+    const scoreBEl = document.getElementById('hall-br-score-b-' + matchId);
+    if (!scoreAEl || !scoreBEl || scoreAEl.value === '' || scoreBEl.value === '') {
+        showToast('أدخل النتيجتين', 'error');
         return;
     }
-    showToast('تم حفظ النتيجة', 'success');
+    const scoreA = Number(scoreAEl.value);
+    const scoreB = Number(scoreBEl.value);
+    const client = ensureSupabaseClient();
+    if (!client) return;
+    try {
+        const { data: currentRows, error: readError } = await client.from('hall_bracket').select('*').eq('id', matchId).limit(1);
+        if (readError) {
+            console.error(readError);
+            showToast('فشل حفظ النتيجة', 'error');
+            return;
+        }
+        const match = Array.isArray(currentRows) ? currentRows[0] : currentRows;
+        if (!match) return;
+        const a = match.player_a || '';
+        const b = match.player_b || '';
+        let winner = '';
+        if (scoreA > scoreB) winner = a;
+        else if (scoreB > scoreA) winner = b;
+        else {
+            showToast('لا يمكن التعادل', 'error');
+            return;
+        }
+        const { error } = await client.from('hall_bracket').update({
+            score_a: scoreA,
+            score_b: scoreB,
+            winner: winner
+        }).eq('id', matchId);
+        if (error) {
+            console.error(error);
+            showToast('فشل حفظ النتيجة', 'error');
+            return;
+        }
+        const nextRound = Number(match.round) + 1;
+        const nextIndex = Math.floor(Number(match.match_index) / 2);
+        const slot = Number(match.match_index) % 2 === 0 ? 'player_a' : 'player_b';
+        const { data: nextRows, error: nextReadError } = await client.from('hall_bracket').select('*')
+            .eq('tournament_id', match.tournament_id)
+            .eq('round', nextRound)
+            .eq('match_index', nextIndex)
+            .limit(1);
+        if (nextReadError) console.error(nextReadError);
+        const nextMatch = Array.isArray(nextRows) ? nextRows[0] : nextRows;
+        if (nextMatch && nextMatch.id) {
+            const patch = {};
+            patch[slot] = winner;
+            const other = slot === 'player_a' ? nextMatch.player_b : nextMatch.player_a;
+            if (!other) {
+                patch.is_bye = true;
+                patch.winner = winner;
+            } else {
+                patch.is_bye = false;
+            }
+            const { error: nextError } = await client.from('hall_bracket').update(patch).eq('id', nextMatch.id);
+            if (nextError) console.error(nextError);
+        }
+        showToast('تم حفظ النتيجة', 'success');
+        await renderHallAdminLiveBracket();
+    } catch (e) {
+        console.error(e);
+        showToast('فشل حفظ النتيجة', 'error');
+    }
 }
 
 async function saveHallWeeklyMvp() {
@@ -15097,24 +15329,34 @@ async function saveHallWeeklyMvp() {
         showToast('تعذر الاتصال', 'error');
         return;
     }
-    const { error } = await client.from('hall_weekly_mvp').insert([{
-        member_name: name,
-        reason: reason
-    }]);
-    if (error) {
-        console.error(error);
+    try {
+        const { error } = await client.from('hall_weekly_mvp').insert([{
+            id: generateHallId(),
+            member_name: name,
+            reason: reason
+        }]);
+        if (error) {
+            console.error(error);
+            showToast('فشل الحفظ', 'error');
+            return;
+        }
+        showToast('تم حفظ نجم الأسبوع', 'success');
+    } catch (e) {
+        console.error(e);
         showToast('فشل الحفظ', 'error');
-        return;
     }
-    showToast('تم حفظ نجم الأسبوع', 'success');
 }
 
 window.switchHallAdminTab = switchHallAdminTab;
-window.createHallRoom = createHallRoom;
-window.addHallMatch = addHallMatch;
-window.createHallTournament = createHallTournament;
+window.addHallAdminMatchCard = addHallAdminMatchCard;
+window.saveHallRoomWithMatches = saveHallRoomWithMatches;
+window.openPlayerSelector = openPlayerSelector;
+window.closePlayerSelector = closePlayerSelector;
+window.confirmPlayerSelector = confirmPlayerSelector;
+window.generateHallLiveBracket = generateHallLiveBracket;
 window.updateHallBracketScore = updateHallBracketScore;
 window.saveHallWeeklyMvp = saveHallWeeklyMvp;
+window.refreshHallCardMvpSelects = refreshHallCardMvpSelects;
 
 function splitHallPlayers(value) {
     if (Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean);
@@ -15292,8 +15534,9 @@ function hallBracketName(match, side) {
 function hallBracketIsBye(match) {
     if (!match) return false;
     if (match.is_bye === true || match.bye === true) return true;
+    const a = hallBracketName(match, 'a');
     const b = hallBracketName(match, 'b');
-    return !b || String(b).toLowerCase() === 'bye';
+    return !!a && (!b || String(b).toLowerCase() === 'bye');
 }
 
 function hallBracketWinner(match) {
@@ -15399,25 +15642,33 @@ function renderHallBracketSlot(name, score, isWinner, isBye) {
         <div class="hall-br-slot-meta">
             <div class="hall-br-slot-name">${isBye && !empty ? label + ' <span class="hall-br-bye">Bye</span>' : label}</div>
         </div>
-        <div class="hall-br-slot-score">${empty || isBye ? '' : escapeHTML(score == null ? 0 : score)}</div>
+        <div class="hall-br-slot-score">${empty || isBye || score == null || score === '' ? '' : escapeHTML(score)}</div>
         ${isWinner ? '<div class="hall-br-check">✓</div>' : ''}
     </div>`;
 }
 
-function renderHallBracketMatch(match) {
+function renderHallBracketMatch(match, interactive) {
     const a = hallBracketName(match, 'a');
     const b = hallBracketName(match, 'b');
     const bye = hallBracketIsBye(match);
     const winner = hallBracketWinner(match);
     const aWin = winner && a && winner.toLowerCase() === String(a).toLowerCase();
     const bWin = !bye && winner && b && winner.toLowerCase() === String(b).toLowerCase();
+    const scoresNull = match.score_a == null && match.score_b == null;
+    const canEdit = !!(interactive && match.id && a && b && !bye && scoresNull && !winner);
+    const editor = canEdit ? `<div class="hall-br-editor">
+        <input type="number" id="hall-br-score-a-${match.id}" placeholder="أ">
+        <input type="number" id="hall-br-score-b-${match.id}" placeholder="ب">
+        <button type="button" class="btn-primary" onclick="updateHallBracketScore('${match.id}')">حفظ</button>
+    </div>` : '';
     return `<div class="hall-br-match">
         ${renderHallBracketSlot(a, match.score_a, aWin, bye && !!a)}
         ${renderHallBracketSlot(bye ? '' : b, match.score_b, bWin, false)}
+        ${editor}
     </div>`;
 }
 
-function renderHallBracketTree(tournamentName, roundList) {
+function renderHallBracketTree(tournamentName, roundList, interactive) {
     const total = roundList.length;
     const lastRound = roundList[roundList.length - 1];
     const champ = lastRound && lastRound.matches[0] ? hallBracketWinner(lastRound.matches[0]) : '';
@@ -15426,11 +15677,11 @@ function renderHallBracketTree(tournamentName, roundList) {
         const pairs = [];
         const ms = round.matches;
         if (ms.length === 1) {
-            pairs.push(`<div class="hall-br-pair single">${renderHallBracketMatch(ms[0])}</div>`);
+            pairs.push(`<div class="hall-br-pair single">${renderHallBracketMatch(ms[0], interactive)}</div>`);
         } else {
             for (let i = 0; i < ms.length; i += 2) {
-                const second = ms[i + 1] ? renderHallBracketMatch(ms[i + 1]) : '';
-                pairs.push(`<div class="hall-br-pair">${renderHallBracketMatch(ms[i])}${second}</div>`);
+                const second = ms[i + 1] ? renderHallBracketMatch(ms[i + 1], interactive) : '';
+                pairs.push(`<div class="hall-br-pair">${renderHallBracketMatch(ms[i], interactive)}${second}</div>`);
             }
         }
         return `<div class="hall-br-round" data-round="${idx + 1}">
