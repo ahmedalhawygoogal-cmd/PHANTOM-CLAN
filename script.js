@@ -14901,6 +14901,67 @@ function initAdminPage5() {
 let hallCurrentRoomId = null;
 let hallCurrentRoomName = '';
 
+function generateHallId() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return Date.now().toString() + '_' + Math.random().toString(36).slice(2, 10);
+}
+
+function collectHallSelectedNames(selectId) {
+    const select = document.getElementById(selectId);
+    if (!select) return [];
+    return Array.from(select.selectedOptions || []).map(opt => (opt.value || '').trim()).filter(Boolean);
+}
+
+function collectHallCustomNames(inputId) {
+    const raw = ((document.getElementById(inputId) || {}).value || '');
+    return raw.split(/[,،\n]+/).map(n => n.trim()).filter(Boolean);
+}
+
+function mergeHallPlayerNames(selectId, extraInputId) {
+    const names = collectHallSelectedNames(selectId).concat(collectHallCustomNames(extraInputId));
+    const seen = {};
+    const unique = [];
+    names.forEach(n => {
+        const key = n.toLowerCase();
+        if (seen[key]) return;
+        seen[key] = true;
+        unique.push(n);
+    });
+    return unique;
+}
+
+function fillHallMemberSelects(members) {
+    const options = (members || []).map(name => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join('');
+    ['hall-match-members-a', 'hall-match-members-b', 'hall-tournament-members'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = options;
+    });
+}
+
+async function loadHallAdminMembers() {
+    const client = ensureSupabaseClient();
+    let names = [];
+    if (client) {
+        try {
+            const { data, error } = await client.from('members').select('name');
+            if (error) {
+                console.error(error);
+            } else if (Array.isArray(data)) {
+                names = data.map(m => m && m.name).filter(Boolean);
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+    if (!names.length && typeof getFullRoster === 'function') {
+        names = getFullRoster().map(m => m && m.name).filter(Boolean);
+    }
+    names.sort((a, b) => String(a).localeCompare(String(b), 'ar'));
+    fillHallMemberSelects(names);
+}
+
 function switchHallAdminTab(tab) {
     const rooms = document.getElementById('hall-tab-rooms');
     const tournaments = document.getElementById('hall-tab-tournaments');
@@ -14918,6 +14979,7 @@ function switchHallAdminTab(tab) {
 
 function initHallOfFameAdmin() {
     switchHallAdminTab('rooms');
+    loadHallAdminMembers();
 }
 
 async function createHallRoom() {
@@ -14932,19 +14994,25 @@ async function createHallRoom() {
         showToast('تعذر الاتصال', 'error');
         return;
     }
-    const { data, error } = await client.from('hall_rooms').insert([{ name: name }]).select();
-    if (error) {
-        console.error(error);
+    const payload = { id: generateHallId(), name: name };
+    try {
+        const { data, error } = await client.from('hall_rooms').insert([payload]).select();
+        if (error) {
+            console.error(error);
+            showToast('فشل إنشاء الروم', 'error');
+            return;
+        }
+        const row = Array.isArray(data) ? data[0] : data;
+        hallCurrentRoomId = (row && row.id) || payload.id;
+        hallCurrentRoomName = name;
+        const label = document.getElementById('hall-current-room');
+        if (label) label.textContent = 'الروم الحالي: ' + name;
+        if (nameEl) nameEl.value = '';
+        showToast('تم إنشاء الروم', 'success');
+    } catch (e) {
+        console.error(e);
         showToast('فشل إنشاء الروم', 'error');
-        return;
     }
-    const row = Array.isArray(data) ? data[0] : data;
-    hallCurrentRoomId = row && row.id;
-    hallCurrentRoomName = name;
-    const label = document.getElementById('hall-current-room');
-    if (label) label.textContent = 'الروم الحالي: ' + name;
-    if (nameEl) nameEl.value = '';
-    showToast('تم إنشاء الروم', 'success');
 }
 
 async function addHallMatch() {
@@ -14956,8 +15024,8 @@ async function addHallMatch() {
     const teamB = (document.getElementById('hall-match-team-b') || {}).value || '';
     const scoreA = Number((document.getElementById('hall-match-score-a') || {}).value || 0);
     const scoreB = Number((document.getElementById('hall-match-score-b') || {}).value || 0);
-    const playersA = ((document.getElementById('hall-match-players-a') || {}).value || '').trim();
-    const playersB = ((document.getElementById('hall-match-players-b') || {}).value || '').trim();
+    const playersA = mergeHallPlayerNames('hall-match-members-a', 'hall-match-players-a').join(',');
+    const playersB = mergeHallPlayerNames('hall-match-members-b', 'hall-match-players-b').join(',');
     const mvpA = ((document.getElementById('hall-match-mvp-a') || {}).value || '').trim();
     const mvpB = ((document.getElementById('hall-match-mvp-b') || {}).value || '').trim();
     if (!teamA.trim() || !teamB.trim()) {
@@ -14969,7 +15037,8 @@ async function addHallMatch() {
         showToast('تعذر الاتصال', 'error');
         return;
     }
-    const { error } = await client.from('hall_matches').insert([{
+    const payload = {
+        id: generateHallId(),
         room_id: hallCurrentRoomId,
         team_a_name: teamA.trim(),
         team_b_name: teamB.trim(),
@@ -14979,13 +15048,19 @@ async function addHallMatch() {
         team_b_players: playersB,
         mvp_team_a: mvpA,
         mvp_team_b: mvpB
-    }]);
-    if (error) {
-        console.error(error);
+    };
+    try {
+        const { error } = await client.from('hall_matches').insert([payload]);
+        if (error) {
+            console.error(error);
+            showToast('فشل حفظ الماتش', 'error');
+            return;
+        }
+        showToast('تم إضافة الماتش', 'success');
+    } catch (e) {
+        console.error(e);
         showToast('فشل حفظ الماتش', 'error');
-        return;
     }
-    showToast('تم إضافة الماتش', 'success');
 }
 
 function pairHallParticipants(names) {
@@ -15003,8 +15078,7 @@ function pairHallParticipants(names) {
 
 async function createHallTournament() {
     const name = ((document.getElementById('hall-tournament-name') || {}).value || '').trim();
-    const raw = ((document.getElementById('hall-tournament-players') || {}).value || '');
-    const players = raw.split(',').map(n => n.trim()).filter(Boolean);
+    const players = mergeHallPlayerNames('hall-tournament-members', 'hall-tournament-players');
     if (!name || players.length < 2) {
         showToast('أدخل اسم البطولة ومشاركين', 'error');
         return;
@@ -15014,36 +15088,45 @@ async function createHallTournament() {
         showToast('تعذر الاتصال', 'error');
         return;
     }
-    const { data, error } = await client.from('hall_tournaments').insert([{
-        name: name,
-        participants: players.join(',')
-    }]).select();
-    if (error) {
-        console.error(error);
+    const tournamentId = generateHallId();
+    try {
+        const { data, error } = await client.from('hall_tournaments').insert([{
+            id: tournamentId,
+            name: name,
+            participants: players.join(',')
+        }]).select();
+        if (error) {
+            console.error(error);
+            showToast('فشل إنشاء البطولة', 'error');
+            return;
+        }
+        const tournament = Array.isArray(data) ? data[0] : data;
+        const savedId = (tournament && tournament.id) || tournamentId;
+        const pairs = pairHallParticipants(players);
+        const rows = pairs.map((m, idx) => ({
+            id: generateHallId(),
+            tournament_id: savedId,
+            round: 1,
+            match_index: idx,
+            player_a: m.player_a,
+            player_b: m.player_b,
+            winner: m.winner,
+            score_a: 0,
+            score_b: 0,
+            is_bye: m.bye
+        }));
+        const { data: bracketRows, error: bracketError } = await client.from('hall_bracket').insert(rows).select();
+        if (bracketError) {
+            console.error(bracketError);
+            showToast('تم إنشاء البطولة لكن فشل توليد الشجرة', 'error');
+            return;
+        }
+        renderHallBracket(bracketRows || rows);
+        showToast('تم إنشاء البطولة وتوليد الشجرة', 'success');
+    } catch (e) {
+        console.error(e);
         showToast('فشل إنشاء البطولة', 'error');
-        return;
     }
-    const tournament = Array.isArray(data) ? data[0] : data;
-    const pairs = pairHallParticipants(players);
-    const rows = pairs.map((m, idx) => ({
-        tournament_id: tournament.id,
-        round: 1,
-        match_index: idx,
-        player_a: m.player_a,
-        player_b: m.player_b,
-        winner: m.winner,
-        score_a: 0,
-        score_b: 0,
-        is_bye: m.bye
-    }));
-    const { data: bracketRows, error: bracketError } = await client.from('hall_bracket').insert(rows).select();
-    if (bracketError) {
-        console.error(bracketError);
-        showToast('تم إنشاء البطولة لكن فشل توليد الشجرة', 'error');
-        return;
-    }
-    renderHallBracket(bracketRows || rows);
-    showToast('تم إنشاء البطولة وتوليد الشجرة', 'success');
 }
 
 function renderHallBracket(matches) {
@@ -15076,13 +15159,18 @@ async function updateHallBracketScore(matchId) {
     const scoreB = Number((document.getElementById('hall-br-score-b-' + matchId) || {}).value || 0);
     const client = ensureSupabaseClient();
     if (!client) return;
-    const { error } = await client.from('hall_bracket').update({ score_a: scoreA, score_b: scoreB }).eq('id', matchId);
-    if (error) {
-        console.error(error);
+    try {
+        const { error } = await client.from('hall_bracket').update({ score_a: scoreA, score_b: scoreB }).eq('id', matchId);
+        if (error) {
+            console.error(error);
+            showToast('فشل حفظ النتيجة', 'error');
+            return;
+        }
+        showToast('تم حفظ النتيجة', 'success');
+    } catch (e) {
+        console.error(e);
         showToast('فشل حفظ النتيجة', 'error');
-        return;
     }
-    showToast('تم حفظ النتيجة', 'success');
 }
 
 async function saveHallWeeklyMvp() {
@@ -15097,16 +15185,22 @@ async function saveHallWeeklyMvp() {
         showToast('تعذر الاتصال', 'error');
         return;
     }
-    const { error } = await client.from('hall_weekly_mvp').insert([{
-        member_name: name,
-        reason: reason
-    }]);
-    if (error) {
-        console.error(error);
+    try {
+        const { error } = await client.from('hall_weekly_mvp').insert([{
+            id: generateHallId(),
+            member_name: name,
+            reason: reason
+        }]);
+        if (error) {
+            console.error(error);
+            showToast('فشل الحفظ', 'error');
+            return;
+        }
+        showToast('تم حفظ نجم الأسبوع', 'success');
+    } catch (e) {
+        console.error(e);
         showToast('فشل الحفظ', 'error');
-        return;
     }
-    showToast('تم حفظ نجم الأسبوع', 'success');
 }
 
 window.switchHallAdminTab = switchHallAdminTab;

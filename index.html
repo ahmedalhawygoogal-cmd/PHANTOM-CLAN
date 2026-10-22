@@ -923,8 +923,16 @@
                     <input type="text" id="hall-match-team-b" placeholder="فريق ب">
                     <input type="number" id="hall-match-score-a" placeholder="نتيجة أ">
                     <input type="number" id="hall-match-score-b" placeholder="نتيجة ب">
-                    <input type="text" id="hall-match-players-a" placeholder="لاعبو أ (مفصولة بفاصلة)" style="grid-column:1 / -1;">
-                    <input type="text" id="hall-match-players-b" placeholder="لاعبو ب (مفصولة بفاصلة)" style="grid-column:1 / -1;">
+                    <div style="grid-column:1 / -1;">
+                        <label style="display:block; color:#c4b5fd; font-size:0.8rem; font-weight:800; margin-bottom:4px;">لاعبو أ</label>
+                        <select id="hall-match-members-a" multiple style="width:100%; min-height:110px;"></select>
+                        <input type="text" id="hall-match-players-a" placeholder="لاعبين إضافيين (غير مسجلين)" style="margin-top:6px;">
+                    </div>
+                    <div style="grid-column:1 / -1;">
+                        <label style="display:block; color:#67e8f9; font-size:0.8rem; font-weight:800; margin-bottom:4px;">لاعبو ب</label>
+                        <select id="hall-match-members-b" multiple style="width:100%; min-height:110px;"></select>
+                        <input type="text" id="hall-match-players-b" placeholder="لاعبين إضافيين (غير مسجلين)" style="margin-top:6px;">
+                    </div>
                     <input type="text" id="hall-match-mvp-a" placeholder="MVP فريق أ">
                     <input type="text" id="hall-match-mvp-b" placeholder="MVP فريق ب">
                 </div>
@@ -933,7 +941,9 @@
 
             <div id="hall-tab-tournaments" style="display:none;">
                 <input type="text" id="hall-tournament-name" placeholder="اسم البطولة">
-                <textarea id="hall-tournament-players" placeholder="أسماء المشاركين (مفصولة بفاصلة)" style="width:100%; min-height:90px; margin-top:8px;"></textarea>
+                <label style="display:block; color:#c4b5fd; font-size:0.8rem; font-weight:800; margin:8px 0 4px;">المشاركون</label>
+                <select id="hall-tournament-members" multiple style="width:100%; min-height:140px;"></select>
+                <input type="text" id="hall-tournament-players" placeholder="لاعبين إضافيين (غير مسجلين)" style="margin-top:6px;">
                 <button type="button" class="btn-success" style="margin-top:8px; width:100%;" onclick="createHallTournament()">إنشاء البطولة وتوليد الشجرة</button>
                 <div id="hall-bracket-list" style="margin-top:12px;"></div>
             </div>
