@@ -16126,3 +16126,88 @@ document.addEventListener('click', (e) => {
         codoModelMenu.style.display = 'none';
     }
 });
+
+/* ========================================================
+   📲 PWA Install Banner
+   ======================================================== */
+(function setupPwaInstallBanner() {
+    const DISMISS_KEY = 'phantom_pwa_dismissed';
+    const banner = document.getElementById('pwa-install-banner');
+    const installBtn = document.getElementById('pwa-install-btn');
+    const closeBtn = document.getElementById('pwa-banner-close');
+
+    if (!banner) return;
+
+    let deferredPrompt = null;
+
+    const isDismissed = () => {
+        try {
+            return localStorage.getItem(DISMISS_KEY) === 'true';
+        } catch (e) {
+            return false;
+        }
+    };
+
+    const persistDismissed = () => {
+        try {
+            localStorage.setItem(DISMISS_KEY, 'true');
+        } catch (e) {
+            /* التخزين غير متاح (وضع خاص) - نتجاهل بهدوء */
+        }
+    };
+
+    const showBanner = () => {
+        if (isDismissed()) return;
+        banner.classList.add('visible');
+    };
+
+    const hideBanner = () => {
+        banner.classList.remove('visible');
+    };
+
+    const dismissBanner = () => {
+        persistDismissed();
+        hideBanner();
+    };
+
+    window.addEventListener('beforeinstallprompt', (event) => {
+        // منع ظهور النافذة الافتراضية للمتصفح
+        event.preventDefault();
+        deferredPrompt = event;
+        showBanner();
+    });
+
+    if (installBtn) {
+        installBtn.addEventListener('click', async () => {
+            if (!deferredPrompt) {
+                hideBanner();
+                return;
+            }
+
+            try {
+                deferredPrompt.prompt();
+                await deferredPrompt.userChoice;
+            } catch (e) {
+                /* المستخدم أغلق النافذة أو فشل العرض */
+            } finally {
+                deferredPrompt = null;
+                dismissBanner();
+            }
+        });
+    }
+
+    if (closeBtn) {
+        closeBtn.addEventListener('click', dismissBanner);
+    }
+
+    window.addEventListener('appinstalled', () => {
+        deferredPrompt = null;
+        persistDismissed();
+        hideBanner();
+    });
+
+    // إذا كان التطبيق مثبتاً بالفعل أو تم الإغلاق سابقاً، لا تظهر البانر
+    if (isDismissed()) {
+        hideBanner();
+    }
+})();
