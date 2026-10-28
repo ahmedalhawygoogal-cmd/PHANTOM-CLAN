@@ -16130,84 +16130,35 @@ document.addEventListener('click', (e) => {
 /* ========================================================
    📲 PWA Install Banner
    ======================================================== */
-(function setupPwaInstallBanner() {
-    const DISMISS_KEY = 'phantom_pwa_dismissed';
-    const banner = document.getElementById('pwa-install-banner');
-    const installBtn = document.getElementById('pwa-install-btn');
-    const closeBtn = document.getElementById('pwa-banner-close');
+let deferredPrompt;
 
-    if (!banner) return;
-
-    let deferredPrompt = null;
-
-    const isDismissed = () => {
-        try {
-            return localStorage.getItem(DISMISS_KEY) === 'true';
-        } catch (e) {
-            return false;
-        }
-    };
-
-    const persistDismissed = () => {
-        try {
-            localStorage.setItem(DISMISS_KEY, 'true');
-        } catch (e) {
-            /* التخزين غير متاح (وضع خاص) - نتجاهل بهدوء */
-        }
-    };
-
-    const showBanner = () => {
-        if (isDismissed()) return;
-        banner.classList.add('visible');
-    };
-
-    const hideBanner = () => {
-        banner.classList.remove('visible');
-    };
-
-    const dismissBanner = () => {
-        persistDismissed();
-        hideBanner();
-    };
-
-    window.addEventListener('beforeinstallprompt', (event) => {
-        // منع ظهور النافذة الافتراضية للمتصفح
-        event.preventDefault();
-        deferredPrompt = event;
-        showBanner();
-    });
-
-    if (installBtn) {
-        installBtn.addEventListener('click', async () => {
-            if (!deferredPrompt) {
-                hideBanner();
-                return;
-            }
-
-            try {
-                deferredPrompt.prompt();
-                await deferredPrompt.userChoice;
-            } catch (e) {
-                /* المستخدم أغلق النافذة أو فشل العرض */
-            } finally {
-                deferredPrompt = null;
-                dismissBanner();
-            }
-        });
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    if (localStorage.getItem('phantom_pwa_dismissed') !== 'true') {
+        const banner = document.getElementById('pwa-install-banner');
+        if (banner) banner.classList.add('visible');
     }
+});
 
-    if (closeBtn) {
-        closeBtn.addEventListener('click', dismissBanner);
-    }
-
-    window.addEventListener('appinstalled', () => {
+const pwaInstallBtn = document.getElementById('pwa-install-btn');
+if (pwaInstallBtn) {
+    pwaInstallBtn.addEventListener('click', async () => {
+        const banner = document.getElementById('pwa-install-banner');
+        if (banner) banner.classList.remove('visible');
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        await deferredPrompt.userChoice;
+        localStorage.setItem('phantom_pwa_dismissed', 'true');
         deferredPrompt = null;
-        persistDismissed();
-        hideBanner();
     });
+}
 
-    // إذا كان التطبيق مثبتاً بالفعل أو تم الإغلاق سابقاً، لا تظهر البانر
-    if (isDismissed()) {
-        hideBanner();
-    }
-})();
+const pwaBannerClose = document.getElementById('pwa-banner-close');
+if (pwaBannerClose) {
+    pwaBannerClose.addEventListener('click', () => {
+        const banner = document.getElementById('pwa-install-banner');
+        if (banner) banner.classList.remove('visible');
+        localStorage.setItem('phantom_pwa_dismissed', 'true');
+    });
+}
