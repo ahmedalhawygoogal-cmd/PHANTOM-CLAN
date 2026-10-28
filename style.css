@@ -1505,6 +1505,7 @@ input:focus, select:focus, textarea:focus {
 .hub-card:hover .hub-card-title { color: var(--white); }
 .hub-card-desc { color: var(--muted); font-size: 0.65rem !important; }
 .hub-badge { position: absolute; top: -6px; right: -6px; background: #00ff88; color: #000; padding: 2px 6px; border-radius: 20px; font-size: 0.5rem; font-weight: 900; box-shadow: 0 0 10px rgba(0,255,136,0.4); }
+#open-hall-fullscreen-btn { display: none !important; }
 
 /* =========================================================
    59. ✅ FULLSCREEN OVERLAYS
