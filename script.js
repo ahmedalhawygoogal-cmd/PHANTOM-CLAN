@@ -16211,3 +16211,23 @@ document.addEventListener('click', (e) => {
         hideBanner();
     }
 })();
+
+let deferredPrompt = null;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+});
+
+const settingsPwaInstallBtn = document.getElementById('settings-pwa-install-btn');
+if (settingsPwaInstallBtn) {
+    settingsPwaInstallBtn.addEventListener('click', async () => {
+        if (deferredPrompt) {
+            deferredPrompt.prompt();
+            await deferredPrompt.userChoice;
+            deferredPrompt = null;
+        } else {
+            showToast("التطبيق مثبت بالفعل أو أن متصفحك لا يدعم هذه الميزة.", "info");
+        }
+    });
+}
